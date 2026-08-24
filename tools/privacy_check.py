@@ -2,21 +2,26 @@
 
 Ein Foto-Archiv ist voller Namen von Menschen, die nie gefragt wurden, ob sie
 in einem öffentlichen Repository auftauchen wollen. Beim Schreiben von Tests
-und Dokumentation greift man aber genau nach diesen Namen -- sie sind die
+und Dokumentation greift man aber genau nach diesen Namen — sie sind die
 Beispiele, die zur Hand liegen. In dieser Codebasis standen so 176 Stellen in
 33 Dateien, bevor jemand hinsah.
 
-Der Trick dieser Prüfung: **sie kennt die echten Namen**, weil sie im
-laufenden Index stehen. Eine handgepflegte Liste veraltet mit jedem neuen
-Label; Qdrant ist immer aktuell.
+Der Kniff: **die Prüfung kennt die echten Namen**, weil sie im laufenden Index
+stehen. Eine handgepflegte Liste veraltet mit jedem neuen Label; Qdrant ist
+immer aktuell.
 
     python -m tools.privacy_check              # alle versionierten Dateien
     python -m tools.privacy_check --staged     # nur was im Commit landet
-    python -m tools.privacy_check --install    # als pre-commit-Hook einrichten
+    python -m tools.privacy_check --message F  # eine Commit-Nachricht
+    python -m tools.privacy_check --install    # als Git-Hooks einrichten
 
-Ist Qdrant nicht erreichbar, greift `.privacy-denylist` -- eine lokale Kopie
-der Namen, die selbst nicht versioniert wird. Ohne beides prüft das Werkzeug
-nur die Muster (Schlüssel, private Adressen) und sagt das deutlich.
+**Auch die Commit-Nachricht wird geprüft.** Sie ist Teil dessen, was ein
+öffentliches Repository zeigt, und beim Beschreiben einer Änderung greift man
+erst recht nach dem konkreten Beispiel — genau so ist hier eine echte Adresse
+in eine Commit-Nachricht geraten.
+
+Ist Qdrant nicht erreichbar, greift `.privacy-denylist` — eine lokale Kopie der
+Namen, die selbst nicht versioniert wird.
 """
 from __future__ import annotations
 
@@ -26,10 +31,12 @@ import re
 import subprocess
 import sys
 
+#: Von der Pruefung erzeugt: Kopie der Namen aus dem Index.
 DENYLIST = ".privacy-denylist"
+
 #: Von Hand gepflegt: alles Private, das kein Personenname ist -- Strassen,
-#: Arbeitgeber, Vereine, Spitznamen. Die Namensliste kommt aus dem Index, das
-#: hier kann sie nicht wissen. Wird nie ueberschrieben und nie versioniert.
+#: Arbeitgeber, Vereine, Spitznamen. Die Namensliste kommt aus dem Index und
+#: kann so etwas nicht wissen. Wird nie ueberschrieben, nie versioniert.
 EXTRA_TERMS = ".privacy-terms"
 
 #: Muster, die unabhaengig vom Bestand nie ins Repository gehoeren.
@@ -43,17 +50,35 @@ PATTERNS: list[tuple[str, str]] = [
     (r"\bfritz\.box\b", "Router-Hostname"),
 ]
 
-#: Ausnahmen: Beispieladressen aus RFC 5737 und die Signatur der Commits.
+#: Beispieladressen aus RFC 5737 und die Signatur der Commits.
 ALLOWED = re.compile(r"192\.0\.2\.\d+|198\.51\.100\.\d+|203\.0\.113\.\d+|noreply@anthropic\.com")
 
-#: Dateien, in denen Treffer erwartbar und harmlos sind.
+#: Hier sind Treffer erwartbar und harmlos.
 SKIP_FILES = {DENYLIST, EXTRA_TERMS, "tools/privacy_check.py"}
 SKIP_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".ico", ".pdf", ".zip", ".onnx")
+
+#: Welcher Git-Hook womit prueft.
+HOOKS = {
+    "pre-commit": "--staged",
+    # Git uebergibt den Pfad zur Nachrichtendatei als erstes Argument.
+    "commit-msg": '--message "$1"',
+}
 
 
 def _git(*args: str) -> list[str]:
     out = subprocess.run(["git", *args], capture_output=True, text=True)
     return [line for line in out.stdout.split("\n") if line.strip()]
+
+
+def _write_denylist(names: set[str]) -> None:
+    """Namen lokal ablegen, damit die Pruefung auch ohne Qdrant greift."""
+    try:
+        with open(DENYLIST, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# Von tools/privacy_check.py erzeugt. Nicht versionieren.\n")
+            for name in sorted(names):
+                fh.write(name + "\n")
+    except OSError:
+        pass
 
 
 def names_from_index(url: str | None = None) -> tuple[set[str], str]:
@@ -62,7 +87,8 @@ def names_from_index(url: str | None = None) -> tuple[set[str], str]:
         from qdrant_client import QdrantClient
 
         client = QdrantClient(url=url or os.environ.get("QDRANT_URL", "http://localhost:6333"))
-        found, offset = set(), None
+        found: set[str] = set()
+        offset = None
         while True:
             batch, offset = client.scroll(
                 collection_name="faces", limit=512, offset=offset,
@@ -83,25 +109,10 @@ def names_from_index(url: str | None = None) -> tuple[set[str], str]:
         pass
     if os.path.exists(DENYLIST):
         with open(DENYLIST, encoding="utf-8") as fh:
-            cached = {line.strip() for line in fh if line.strip() and not line.startswith("#")}
+            cached = {ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")}
         if cached:
             return cached, f"{DENYLIST} (Index nicht erreichbar)"
     return set(), ""
-
-
-def _write_denylist(names: set[str]) -> None:
-    """Namen lokal ablegen, damit die Pruefung auch ohne Qdrant greift.
-
-    Die Datei gehoert in `.gitignore` -- sie enthaelt genau das, was nicht ins
-    Repository soll.
-    """
-    try:
-        with open(DENYLIST, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("# Von tools/privacy_check.py erzeugt. Nicht versionieren.\n")
-            for name in sorted(names):
-                fh.write(name + "\n")
-    except OSError:
-        pass
 
 
 def extra_terms() -> set[str]:
@@ -109,8 +120,7 @@ def extra_terms() -> set[str]:
     if not os.path.exists(EXTRA_TERMS):
         return set()
     with open(EXTRA_TERMS, encoding="utf-8") as fh:
-        return {line.strip() for line in fh
-                if line.strip() and not line.lstrip().startswith("#")}
+        return {ln.strip() for ln in fh if ln.strip() and not ln.lstrip().startswith("#")}
 
 
 def terms_from(names: set[str]) -> list[str]:
@@ -121,8 +131,8 @@ def terms_from(names: set[str]) -> list[str]:
             # Kurze Teile ("von", "de") wuerden zu viel Rauschen erzeugen.
             if len(part) > 3:
                 terms.add(part)
-    # Selbstgepflegte Begriffe unzerlegt: "Uhrmacherweg" ist ein Wort, und
-    # es in Teile zu zerlegen wuerde nur Fehlalarme erzeugen.
+    # Selbstgepflegte Begriffe bleiben unzerlegt -- sie in Teile zu schneiden
+    # erzeugt nur Fehlalarme.
     terms |= extra_terms()
     return sorted(terms, key=len, reverse=True)
 
@@ -159,30 +169,42 @@ def scan(paths: list[str], terms: list[str]) -> list[tuple[str, int, str, str]]:
 
 def install_hook() -> int:
     root = (_git("rev-parse", "--git-dir") or [".git"])[0]
-    hook = os.path.join(root, "hooks", "pre-commit")
-    os.makedirs(os.path.dirname(hook), exist_ok=True)
-    body = (
-        "#!/bin/sh\n"
-        "# Von tools/privacy_check.py eingerichtet.\n"
-        "python -m tools.privacy_check --staged || {\n"
-        '  echo "Commit abgebrochen. Mit --no-verify erzwingbar, wenn es ein Fehlalarm ist."\n'
-        "  exit 1\n"
-        "}\n"
-    )
-    with open(hook, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(body)
-    try:
-        os.chmod(hook, 0o755)
-    except OSError:
-        pass
-    print(f"Hook eingerichtet: {hook}")
+    for name, arg in HOOKS.items():
+        hook = os.path.join(root, "hooks", name)
+        os.makedirs(os.path.dirname(hook), exist_ok=True)
+        with open(hook, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(
+                "#!/bin/sh\n"
+                "# Von tools/privacy_check.py eingerichtet.\n"
+                f"python -m tools.privacy_check {arg} || {{\n"
+                '  echo "Abgebrochen. Mit --no-verify erzwingbar, wenn es ein Fehlalarm ist."\n'
+                "  exit 1\n"
+                "}\n"
+            )
+        try:
+            os.chmod(hook, 0o755)
+        except OSError:
+            pass
+        print(f"Hook eingerichtet: {hook}")
     return 0
+
+
+def _report(hits: list[tuple[str, int, str, str]], headline: str, with_path: bool) -> None:
+    print(f"{len(hits)} Fundstelle(n) {headline}:")
+    print()
+    for path, no, why, text in hits[:60]:
+        print(f"  {path}:{no}  {why}" if with_path else f"  Zeile {no}: {why}")
+        print(f"      {text}")
+    if len(hits) > 60:
+        print(f"  … und {len(hits) - 60} weitere")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--staged", action="store_true", help="Nur was im Commit landet")
-    parser.add_argument("--install", action="store_true", help="Als pre-commit-Hook einrichten")
+    parser.add_argument("--message", metavar="DATEI",
+                        help="Eine Commit-Nachricht pruefen (fuer den commit-msg-Hook)")
+    parser.add_argument("--install", action="store_true", help="Als Git-Hooks einrichten")
     parser.add_argument("--qdrant-url", default=None)
     args = parser.parse_args()
 
@@ -191,35 +213,41 @@ def main() -> int:
 
     names, source = names_from_index(args.qdrant_url)
     extra = extra_terms()
+    terms = terms_from(names)
+
+    if args.message:
+        hits = scan([args.message], terms)
+        if not hits:
+            return 0
+        _report(hits, "in der Commit-Nachricht", with_path=False)
+        print()
+        print("Bitte umformulieren.")
+        return 1
+
     paths = files_to_check(args.staged)
     if not paths:
         print("Nichts zu prüfen.")
         return 0
 
-    hits = scan(paths, terms_from(names))
+    hits = scan(paths, terms)
     scope = "im Commit" if args.staged else "im Repository"
+    zusatz = f" + {len(extra)} eigene Begriffe" if extra else ""
     if names:
-        zusatz = f" + {len(extra)} eigene Begriffe" if extra else ""
         print(f"{len(names)} Personennamen aus {source}{zusatz}, "
               f"{len(paths)} Dateien {scope} geprüft.")
     else:
-        print(f"Keine Namensliste verfügbar — nur Muster"
-              f"{f' und {len(extra)} eigene Begriffe' if extra else ''} geprüft "
+        print(f"Keine Namensliste verfügbar — nur Muster{zusatz} geprüft "
               f"({len(paths)} Dateien {scope}).")
-        print("Für die Namensprüfung muss Qdrant laufen oder "
-              f"{DENYLIST} vorhanden sein.")
+        print(f"Für die Namensprüfung muss Qdrant laufen oder {DENYLIST} vorhanden sein.")
 
     if not hits:
         print("Nichts gefunden.")
         return 0
 
-    print(f"\n{len(hits)} Fundstelle(n):\n")
-    for path, no, why, text in hits[:60]:
-        print(f"  {path}:{no}  {why}")
-        print(f"      {text}")
-    if len(hits) > 60:
-        print(f"  … und {len(hits) - 60} weitere")
-    print("\nBitte durch erfundene Namen ersetzen. Beispiele in tests/ zeigen, wie.")
+    print()
+    _report(hits, scope, with_path=True)
+    print()
+    print("Bitte durch erfundene Namen ersetzen. Beispiele in tests/ zeigen, wie.")
     return 1
 
 
