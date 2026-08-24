@@ -1,0 +1,14 @@
+# Private Begriffe, die kein Personenname sind — die Namensliste kommt aus dem
+# Index, dieses hier kann sie nicht wissen.
+#
+# Kopiere die Datei nach `.privacy-terms` (nicht versioniert) und trage ein,
+# was nie in einem Commit landen soll. Ein Begriff je Zeile, '#' kommentiert aus.
+#
+# Typisch:
+#   Strassennamen aus Albumtiteln ("Uhrmacherweg" war hier eine echte Adresse)
+#   Arbeitgeber, Schulen, Vereine
+#   Spitznamen, die nicht als person_name im Index stehen
+#   Ortsteile, Hausnummern, Kfz-Kennzeichen
+
+# Musterstrasse
+# Musterfirma GmbH

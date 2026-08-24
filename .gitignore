@@ -41,3 +41,6 @@ places.json
 
 # Maschinenspezifische Quellenauswahl. Vorlage: sources.example.txt
 sources.txt
+
+# Selbst gepflegte Liste privater Begriffe. Vorlage: .privacy-terms.example
+.privacy-terms

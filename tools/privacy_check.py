@@ -27,6 +27,10 @@ import subprocess
 import sys
 
 DENYLIST = ".privacy-denylist"
+#: Von Hand gepflegt: alles Private, das kein Personenname ist -- Strassen,
+#: Arbeitgeber, Vereine, Spitznamen. Die Namensliste kommt aus dem Index, das
+#: hier kann sie nicht wissen. Wird nie ueberschrieben und nie versioniert.
+EXTRA_TERMS = ".privacy-terms"
 
 #: Muster, die unabhaengig vom Bestand nie ins Repository gehoeren.
 PATTERNS: list[tuple[str, str]] = [
@@ -43,7 +47,7 @@ PATTERNS: list[tuple[str, str]] = [
 ALLOWED = re.compile(r"192\.0\.2\.\d+|198\.51\.100\.\d+|203\.0\.113\.\d+|noreply@anthropic\.com")
 
 #: Dateien, in denen Treffer erwartbar und harmlos sind.
-SKIP_FILES = {DENYLIST, "tools/privacy_check.py"}
+SKIP_FILES = {DENYLIST, EXTRA_TERMS, "tools/privacy_check.py"}
 SKIP_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".ico", ".pdf", ".zip", ".onnx")
 
 
@@ -100,6 +104,15 @@ def _write_denylist(names: set[str]) -> None:
         pass
 
 
+def extra_terms() -> set[str]:
+    """Selbst gepflegte Begriffe aus `.privacy-terms`."""
+    if not os.path.exists(EXTRA_TERMS):
+        return set()
+    with open(EXTRA_TERMS, encoding="utf-8") as fh:
+        return {line.strip() for line in fh
+                if line.strip() and not line.lstrip().startswith("#")}
+
+
 def terms_from(names: set[str]) -> list[str]:
     """Voller Name und seine Bestandteile, laengste zuerst."""
     terms = set(names)
@@ -108,6 +121,9 @@ def terms_from(names: set[str]) -> list[str]:
             # Kurze Teile ("von", "de") wuerden zu viel Rauschen erzeugen.
             if len(part) > 3:
                 terms.add(part)
+    # Selbstgepflegte Begriffe unzerlegt: "Uhrmacherweg" ist ein Wort, und
+    # es in Teile zu zerlegen wuerde nur Fehlalarme erzeugen.
+    terms |= extra_terms()
     return sorted(terms, key=len, reverse=True)
 
 
@@ -174,6 +190,7 @@ def main() -> int:
         return install_hook()
 
     names, source = names_from_index(args.qdrant_url)
+    extra = extra_terms()
     paths = files_to_check(args.staged)
     if not paths:
         print("Nichts zu prüfen.")
@@ -182,9 +199,13 @@ def main() -> int:
     hits = scan(paths, terms_from(names))
     scope = "im Commit" if args.staged else "im Repository"
     if names:
-        print(f"{len(names)} Personennamen aus {source}, {len(paths)} Dateien {scope} geprüft.")
+        zusatz = f" + {len(extra)} eigene Begriffe" if extra else ""
+        print(f"{len(names)} Personennamen aus {source}{zusatz}, "
+              f"{len(paths)} Dateien {scope} geprüft.")
     else:
-        print(f"Keine Namensliste verfügbar — nur Muster geprüft ({len(paths)} Dateien {scope}).")
+        print(f"Keine Namensliste verfügbar — nur Muster"
+              f"{f' und {len(extra)} eigene Begriffe' if extra else ''} geprüft "
+              f"({len(paths)} Dateien {scope}).")
         print("Für die Namensprüfung muss Qdrant laufen oder "
               f"{DENYLIST} vorhanden sein.")
 

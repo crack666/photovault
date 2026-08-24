@@ -87,8 +87,43 @@ ersten Lauf selbst, rund 1,5 GB.
 
 ## Loslegen
 
+### Der einfache Weg
+
+Auch ohne Vorkenntnisse. Drei Schritte, danach läuft es.
+
+**1. Docker Desktop installieren.** Docker ist ein Programm, das andere
+Programme mitsamt allem, was sie brauchen, in einem Paket startet — damit man
+nicht Python, Datenbanken und Bibliotheken einzeln einrichten muss.
+
+* [Download für Windows und macOS](https://www.docker.com/products/docker-desktop/)
+* Installieren, Rechner neu starten, Docker Desktop öffnen
+* Warten, bis das Wal-Symbol ruhig steht (beim ersten Mal ein, zwei Minuten)
+
+**2. PhotoVault herunterladen.**
+[Als ZIP herunterladen](https://github.com/crack666/photovault/archive/refs/heads/master.zip)
+und irgendwohin entpacken — auf den Desktop reicht.
+
+**3. Starten.**
+
+| | |
+|---|---|
+| Windows | Doppelklick auf **`start.bat`** |
+| macOS / Linux | Terminal im Ordner öffnen, `./start.sh` eingeben |
+
+Das Skript fragt einmal nach deinem Fotoordner, lädt beim ersten Mal rund 2 GB
+herunter und öffnet danach den Browser. Anschließend fragt es, ob es die Fotos
+einlesen soll — und zeigt vorher, was es gefunden hat, damit du es abnicken
+kannst.
+
+Beim nächsten Mal genügt derselbe Doppelklick; die Antworten sind gemerkt.
+
+> **Nichts verlässt deinen Rechner.** Weder Fotos noch Gesichter noch Namen.
+> Es gibt keinen Server, bei dem man sich anmeldet.
+
+### Der Weg für Geübte
+
 ```bash
-git clone https://github.com/<dein-konto>/photovault.git
+git clone https://github.com/crack666/photovault.git
 cd photovault
 cp .env.example .env        # PHOTO_DIR auf dein Fotoverzeichnis setzen
 docker compose up -d
@@ -114,6 +149,17 @@ docker compose exec api python -m ingest.pipeline --sources-file sources.txt --s
 Auf getesteter Hardware (RTX 5090, NAS über SMB) sind das **26 Fotos pro
 Sekunde** — 50 000 Bilder in gut einer halben Stunde. `--skip-caption` lässt
 die Bildbeschreibungen weg; die kommen später und dauern deutlich länger.
+
+### Wenn etwas klemmt
+
+| | |
+|---|---|
+| „Docker laeuft nicht" | Docker Desktop öffnen und warten, bis das Symbol ruhig steht |
+| Port 8000 belegt | in `.env` `API_PORT=8080` setzen, neu starten |
+| Nichts wird gefunden | `sources.txt` prüfen — die Pfade beginnen mit `/photos`, nicht mit `D:\` |
+| Seite lädt nicht | `docker compose logs api` zeigt, woran es liegt |
+| Von vorn anfangen | `docker compose down -v` löscht den Index. Die Fotos bleiben unberührt. |
+
 
 ## Und dann?
 
