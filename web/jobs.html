@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PhotoVault — Jobs</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .jobs { display: flex; flex-direction: column; gap: .75rem; max-width: 60rem; }
+    .job {
+      border: 1px solid var(--line, #2a2f36); border-radius: 10px;
+      padding: .9rem 1.05rem; display: flex; flex-direction: column; gap: .55rem;
+      background: var(--card, #161a1f);
+    }
+    .job-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+    .job-kind { font-weight: 600; }
+    .job-src { font-size: .82rem; opacity: .6; font-family: ui-monospace, monospace;
+               overflow-wrap: anywhere; }
+    .badge {
+      font-size: .66rem; letter-spacing: .08em; text-transform: uppercase;
+      padding: .16rem .48rem; border-radius: 999px; font-weight: 600;
+      font-family: ui-monospace, monospace;
+    }
+    .b-running { background: #123b46; color: #5cc8dc; }
+    .b-done    { background: #123020; color: #5cbe8a; }
+    .b-stale   { background: #3a2a0e; color: #d8ae4c; }
+    .b-error   { background: #3a1c1b; color: #e88c89; }
+    .bar { height: .5rem; border-radius: 999px; background: #2a2f36; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: #5cc8dc; transition: width .4s ease; }
+    .bar.done > i { background: #5cbe8a; }
+    .nums {
+      display: flex; gap: 1.35rem; flex-wrap: wrap;
+      font-family: ui-monospace, monospace; font-size: .8rem; opacity: .82;
+      font-variant-numeric: tabular-nums;
+    }
+    .nums b { opacity: 1; }
+    .none { opacity: .6; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">PhotoVault</div>
+    <nav>
+      <button class="tab" onclick="location.href='/'">Wer ist das?</button>
+      <button class="tab on">Jobs</button>
+    </nav>
+  </header>
+
+  <main class="view">
+    <h1>Jobs</h1>
+    <p id="meta" class="muted"></p>
+    <div id="jobs" class="jobs"></div>
+  </main>
+
+<script>
+const fmtDur = (s) => {
+  s = Math.max(0, Math.round(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : (m ? `${m}m ${s % 60}s` : `${s}s`);
+};
+const fmtTime = (t) => t ? new Date(t * 1000).toLocaleString("de-DE") : "—";
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const badgeClass = (s) => ({
+  running: "b-running", done: "b-done", stale: "b-stale",
+}[s] || (String(s).includes("error") ? "b-error" : "b-done"));
+
+function render(data) {
+  const box = document.getElementById("jobs");
+  const jobs = data.jobs || [];
+  document.getElementById("meta").textContent =
+    jobs.length ? `${data.running} laufend · ${jobs.length} insgesamt` : "";
+  if (!jobs.length) {
+    box.innerHTML = "<p class='none'>Noch keine Jobs. Starte einen Ingest.</p>";
+    return;
+  }
+  box.innerHTML = jobs.map(j => {
+    const pct = Math.min(100, Number(j.percent) || 0);
+    const done = j.status !== "running";
+    return `
+      <div class="job">
+        <div class="job-head">
+          <span class="job-kind">${esc(j.kind || "job")}</span>
+          <span class="badge ${badgeClass(j.status)}">${esc(j.status)}</span>
+          <span class="job-src">${esc(j.source || "")}</span>
+        </div>
+        <div class="bar ${done ? "done" : ""}"><i style="width:${pct}%"></i></div>
+        <div class="nums">
+          <span><b>${j.processed ?? 0}</b> / ${j.total ?? 0} (${pct.toFixed(1)}%)</span>
+          ${j.errors ? `<span style="color:#e88c89"><b>${j.errors}</b> Fehler</span>` : ""}
+          ${j.skipped ? `<span>${j.skipped} übersprungen</span>` : ""}
+          <span><b>${(Number(j.rate_per_s) || 0).toFixed(2)}</b>/s</span>
+          <span>Laufzeit ${fmtDur(j.elapsed_s)}</span>
+          ${!done && j.eta_s ? `<span>ETA ${fmtDur(j.eta_s)}</span>` : ""}
+          <span>${esc(j.phase || "")}</span>
+        </div>
+        <div class="nums" style="opacity:.5">
+          <span>gestartet ${fmtTime(j.started_at)}</span>
+          ${j.finished_at ? `<span>fertig ${fmtTime(j.finished_at)}</span>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+}
+
+async function tick() {
+  try {
+    const res = await fetch("/api/jobs");
+    if (!res.ok) throw new Error(res.status);
+    render(await res.json());
+  } catch (e) {
+    document.getElementById("meta").textContent = `API nicht erreichbar: ${e.message}`;
+  }
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

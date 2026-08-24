@@ -1,0 +1,23 @@
+# Welche Verzeichnisse PhotoVault indiziert.
+#
+# Diese Datei ist eine Vorlage. Kopiere sie nach `sources.txt` und trage deine
+# eigenen Pfade ein -- `sources.txt` ist bewusst nicht versioniert, weil
+# Ordnernamen eines privaten Archivs schon viel verraten.
+#
+# Eine Zeile je Verzeichnis. '#' kommentiert aus, ein fuehrendes '-' schliesst
+# gezielt einen Unterordner aus. Aenderungen wirken beim naechsten Lauf:
+#
+#   python -m ingest.pipeline --sources-file sources.txt --dry-run
+#   python -m ingest.pipeline --sources-file sources.txt --skip-caption
+#
+# Nimm nur auf, was in eine Foto-Bibliothek gehoert. Ein Archiv enthaelt
+# selten nur Alben -- daneben liegen Screenshots, Scans und Privates.
+
+/mnt/photo/Alben
+/mnt/photo/Handys
+
+# Ausschluesse innerhalb aktiver Quellen. Punkt-Verzeichnisse (.thumbnails und
+# Konsorten) laesst der Scanner ohnehin aus, dafuer braucht es nichts.
+-/mnt/photo/Handys/Screenshots
+-/mnt/photo/Handys/Download
+-/mnt/photo/Handys/Office Lens

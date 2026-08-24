@@ -1,0 +1,56 @@
+# Startfertiges Bündel: Qdrant + PhotoVault-API samt Oberfläche.
+#
+# Was hier NICHT drin ist: Ollama. Es braucht GPU-Durchreichung und lädt
+# zweistellige Gigabyte an Modellen — das gehört in die Hand dessen, der die
+# Maschine kennt. PhotoVault läuft auch ohne: Gesichter, Szenen, Datum und
+# Suche funktionieren, nur die deutschen Bildbeschreibungen fehlen dann.
+#
+#   cp .env.example .env     # PHOTO_DIR eintragen
+#   docker compose up -d
+#   → http://localhost:8000
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.18.3
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      # Das schlanke Image bringt weder curl noch wget mit; Qdrant selbst
+      # kann aber nachsehen, ob sein Port offen ist.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: .
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      # Ollama läuft auf dem Host, nicht im Verbund. Ohne bleibt es bei
+      # Metadaten, Gesichtern und CLIP -- die Captions entfallen.
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-qwen3.8:27b-ctx128k}
+      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-qwen3-embedding:4b-ctx2k}
+      MODEL_DIR: /models
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Die Fotos werden nur gelesen. Schreibend nötig ist der Mount erst,
+      # wenn `tools/exif_repair.py` Aufnahmezeiten zurückschreiben soll --
+      # dann das :ro entfernen.
+      - ${PHOTO_DIR:?PHOTO_DIR fehlt -- .env.example nach .env kopieren}:/photos:ro
+      # Modellgewichte (insightface, CLIP) überleben so einen Neubau des Images.
+      - model_cache:/models
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  model_cache:

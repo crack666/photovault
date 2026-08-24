@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PhotoVault — Wer ist das?</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">PhotoVault</div>
+    <nav>
+      <button class="tab on" data-tab="label">Wer ist das?</button>
+      <button class="tab" data-tab="unknown">Unbekannte</button>
+      <button class="tab" data-tab="people">Personen</button>
+      <button class="tab" data-tab="events">Serien</button>
+      <button class="tab" data-tab="search">Suche</button>
+      <button class="tab" onclick="location.href='/jobs.html'">Jobs</button>
+    </nav>
+  </header>
+
+  <main id="view-label" class="view">
+    <p id="queue-meta" class="muted"></p>
+    <section id="empty" class="empty hidden">
+      <h2>Keine unbekannten Gesichter</h2>
+      <p>Entweder ist noch nichts ingestiert, oder alle Gesichter sind zugeordnet.</p>
+    </section>
+    <section id="card" class="card hidden">
+      <div class="hero">
+        <img id="cover" alt="Gesicht" />
+      </div>
+      <h1>Wer ist das?</h1>
+      <p id="cluster-size" class="muted"></p>
+      <div id="thumbs" class="thumbs"></div>
+      <div id="suggestions" class="chips"></div>
+      <form id="name-form" autocomplete="off">
+        <input id="name-input" list="dl-persons" autocomplete="off" type="text" placeholder="Name eingeben — neue Person oder bekanntes Gesicht" />
+        <button type="submit" class="primary">Zuordnen</button>
+      </form>
+      <div class="row">
+        <button type="button" id="btn-skip" class="ghost">Überspringen</button>
+      </div>
+    </section>
+  </main>
+
+  <main id="view-unknown" class="view wide hidden">
+    <details id="uk-cands" class="cands">
+      <summary>Bereits benannte Personen — <span id="ukc-sum">wird geprüft …</span></summary>
+      <p class="muted">
+        Diese Gesichter ähneln jemandem, den du schon benannt hast. Bestätigen
+        heißt: alle gezeigten Gesichter bekommen diesen Namen.
+      </p>
+      <div id="ukc-list"></div>
+    </details>
+
+    <div id="uk-overview">
+      <h1>Unbekannte Gesichter</h1>
+      <p id="uk-meta" class="muted"></p>
+      <div class="uk-bar">
+        <label>Ansicht
+          <select id="uk-sort">
+            <option value="groups">Personen-Gruppen</option>
+            <option value="quality">einzeln, beste zuerst</option>
+            <option value="worst">einzeln, schlechteste zuerst (Ohren, Profile)</option>
+          </select>
+        </label>
+        <span id="uk-sel" class="muted"></span>
+        <button type="button" id="uk-name" class="mini">Benennen …</button>
+        <button type="button" id="uk-ignore" class="mini undo">Dauerhaft ignorieren</button>
+        <button type="button" id="uk-none" class="mini">Auswahl aufheben</button>
+      </div>
+      <p id="uk-hint" class="muted hint"></p>
+      <div id="uk-clusters" class="people-grid"></div>
+      <div id="uk-faces" class="face-grid"></div>
+      <div class="uk-more"><button type="button" id="uk-more" class="mini hidden">Mehr laden</button></div>
+    </div>
+
+    <div id="uk-detail" class="hidden">
+      <button type="button" class="ghost" id="uk-back">← Alle Unbekannten</button>
+      <header class="person-head">
+        <img id="ukd-face" alt="" />
+        <div>
+          <h1 id="ukd-name">Unbekannt</h1>
+          <p id="ukd-meta" class="muted"></p>
+        </div>
+        <button type="button" id="ukd-check" class="mini">Gesichter prüfen</button>
+      </header>
+      <div id="ukd-suggest" class="chips"></div>
+      <form id="ukd-form" class="name-bar" autocomplete="off">
+        <input id="ukd-input" list="dl-persons" autocomplete="off" type="text" placeholder="Namen vergeben — neue Person oder bekannte" />
+        <button type="submit" class="primary">Zuordnen</button>
+        <button type="button" id="ukd-ignore" class="mini undo">Cluster ignorieren</button>
+      </form>
+      <nav id="ukd-timeline" class="timeline" aria-label="Jahre"></nav>
+      <div id="ukd-stream" class="stream"></div>
+      <h2 id="ukd-faces-title" class="people-section">Gesichter dieser Gruppe</h2>
+      <div id="ukd-faces" class="face-grid"></div>
+    </div>
+  </main>
+
+  <main id="view-people" class="view wide hidden">
+    <div id="people-overview">
+      <h1>Personen</h1>
+      <p class="muted hint">Favoriten oben, unwichtige Bekannte unten — die Suche findet sie trotzdem.</p>
+      <div id="people-list" class="people-grid"></div>
+    </div>
+
+    <div id="person-photos" class="hidden">
+      <button type="button" class="ghost back-people">← Alle Personen</button>
+      <header class="person-head">
+        <img id="pp-face" alt="" />
+        <div>
+          <h1 id="pp-name"></h1>
+          <p id="pp-meta" class="muted"></p>
+        </div>
+        <button type="button" id="btn-select-mode" class="mini">Fotos auswählen</button>
+        <button type="button" id="btn-check-faces" class="mini">Gesichter prüfen</button>
+      </header>
+      <div id="pp-actions" class="detail-actions hidden">
+        <span id="pp-sel" class="muted"></span>
+        <button type="button" id="pp-tag" class="mini">Notiz vergeben …</button>
+        <button type="button" id="pp-untag" class="mini undo">Notiz entfernen …</button>
+        <button type="button" id="pp-cap" class="mini">Beschreibung setzen …</button>
+        <button type="button" id="pp-clear" class="mini">Auswahl aufheben</button>
+      </div>
+      <nav id="pp-timeline" class="timeline" aria-label="Jahre"></nav>
+      <div id="pp-stream" class="stream"></div>
+    </div>
+
+    <div id="person-detail" class="hidden">
+      <button type="button" class="ghost back-people">← Alle Personen</button>
+      <h1 id="detail-name"></h1>
+      <p class="muted">
+        Falsch zugeordnete Gesichter anklicken und unten korrigieren.
+        Schwächste Erkennungen stehen vorn — dort sind Fehler am wahrscheinlichsten.
+      </p>
+      <div id="detail-actions" class="detail-actions hidden">
+        <span id="sel-count" class="muted"></span>
+        <button type="button" id="btn-unassign" class="mini undo">Aus Person entfernen</button>
+        <button type="button" id="btn-move" class="mini">Anderer Person zuordnen …</button>
+      </div>
+      <div id="detail-faces" class="face-grid"></div>
+    </div>
+  </main>
+
+  <div id="lightbox" class="lightbox hidden">
+    <button type="button" class="lb-close" aria-label="Schließen">✕</button>
+    <button type="button" class="lb-nav lb-prev" aria-label="Zurück">‹</button>
+    <figure>
+      <img id="lb-img" alt="" />
+      <figcaption id="lb-cap"></figcaption>
+    </figure>
+    <button type="button" class="lb-nav lb-next" aria-label="Weiter">›</button>
+    <button type="button" id="lb-reveal" class="lb-reveal hidden" title="Details einblenden (i)">Details</button>
+    <aside id="lb-info" class="lb-info">
+      <header class="lb-info-head">
+        <h3>Details</h3>
+        <button type="button" id="lb-toggle" class="mini" title="Einklappen (i)">Einklappen</button>
+      </header>
+      <dl id="lb-meta"></dl>
+      <div class="lb-capedit">
+        <label for="lb-caption">Beschreibung</label>
+        <textarea id="lb-caption" rows="4"></textarea>
+        <div class="row">
+          <button type="button" id="lb-save-caption" class="mini">Speichern</button>
+          <span id="lb-cap-state" class="muted"></span>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Serien benennen: derselbe Ablauf wie "Wer ist das?", nur auf der
+       Zeitachse. Ein Name deckt 50 bis 150 Fotos auf einmal ab. -->
+  <main id="view-events" class="view wide hidden">
+    <h1>Unbenannte Serien</h1>
+    <p class="muted" id="ev-meta">Lade …</p>
+    <p class="muted" id="ev-hint">
+      Zusammenhängende Aufnahmen derselben Gelegenheit. Erkennst du sie wieder,
+      gib ihr einen Namen — er gilt dann für alle Fotos der Serie.
+    </p>
+    <div class="chanbar" id="ev-chan"></div>
+    <div id="ev-list"></div>
+  </main>
+
+  <main id="view-search" class="view wide hidden">
+    <h1>Suche</h1>
+    <form id="search-form" class="builder">
+      <p class="lead">Zeig mir Fotos, die …</p>
+      <div id="qb-root"></div>
+      <div class="qb-add">
+        <button type="button" class="mini" data-add="cond">+ Bedingung</button>
+        <button type="button" class="mini" data-add="group">+ Klammer</button>
+      </div>
+
+      <div class="field">
+        <input id="q-text" placeholder="Freitext — z.B. „Feuerwerk in der Nacht“" />
+        <p class="hint muted">
+          Sortiert nach Ähnlichkeit, filtert nicht. Die Bedingungen oben grenzen ein,
+          der Freitext bestimmt die Reihenfolge darin.
+        </p>
+      </div>
+
+      <div class="qb-run">
+        <button class="primary" type="submit">Suchen</button>
+        <output id="qb-expr" class="expr"></output>
+      </div>
+    </form>
+    <div id="search-results" class="results"></div>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
+       Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
+       es schreibt nicht vor. -->
+  <datalist id="dl-persons"></datalist>
+  <datalist id="dl-events"></datalist>
+</body>
+</html>
