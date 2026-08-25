@@ -1,6 +1,7 @@
 """Kopfzeile und eingebettetes Dokument."""
 from ingest.grounding import (
     caption_display,
+    caption_for_vector,
     event_name,
     format_date,
     grounded_document,
@@ -129,3 +130,62 @@ class TestGroundedDocument:
         doc = grounded_document(self._payload(caption_de=None, scene_tags=["party"]))
         assert "party" in doc
         assert "Junggesellenabschied" in doc
+
+    def test_written_date_leaves_the_vector(self):
+        """Das Datum steht schon in der Kopfzeile und im Payload — im Satz ist
+        es die dritte Kopie. An 200 Fotos gemessen kostet sie Trennschärfe."""
+        doc = grounded_document(self._payload(
+            caption_de="Fünf Männer in Piratenkostümen, aufgenommen am 23. August 2015."
+        ))
+        assert "Piratenkostümen" in doc
+        assert "23. August 2015." not in doc.split("\n")[0]
+        # Die Kopfzeile behält das Datum — dort gehört es hin.
+        assert doc.split("\n")[-1].startswith("23. August 2015")
+
+    def test_caption_itself_is_untouched(self):
+        """Für Menschen liest sich die Caption mit Datum besser. Nur der Vektor
+        verzichtet darauf, also darf `caption_de` nicht angefasst werden."""
+        payload = self._payload(caption_de="Ein Fest im August 2015.")
+        grounded_document(payload)
+        assert payload["caption_de"] == "Ein Fest im August 2015."
+
+
+class TestCaptionForVector:
+    def test_removes_written_month_and_year(self):
+        assert caption_for_vector(
+            "Ada Lovelace klettert im Juni 2024 an einer Seilbahn.", "2024-06-15"
+        ) == "Ada Lovelace klettert an einer Seilbahn."
+
+    def test_removes_the_trailing_shot_date(self):
+        assert caption_for_vector(
+            "Eine leere Autobahn, aufgenommen am 26. Juli 2025.", "2025-07-26"
+        ) == "Eine leere Autobahn."
+
+    def test_removes_the_boilerplate_sentence_entirely(self):
+        """„Das Foto wurde am 3. Mai 2019 aufgenommen." lässt sich nicht in
+        einem Zug fassen — der Punkt in „3." beendet jede Zeichenstrecke."""
+        assert caption_for_vector(
+            "Zwei Personen im Garten. Das Foto wurde am 3. Mai 2019 aufgenommen.",
+            "2019-05-03",
+        ) == "Zwei Personen im Garten."
+
+    def test_removes_a_numeric_date(self):
+        assert caption_for_vector(
+            "Screenshot eines Artikels vom 30.11.2022 über Fahrverbote.", "2022-12-01"
+        ) == "Screenshot eines Artikels über Fahrverbote."
+
+    def test_a_foreign_year_is_content_and_stays(self):
+        """„WM 2014" auf einem Foto von 2018 ist keine Datumsangabe."""
+        text = "Ein Mann mit WM 2014 Trikot auf einer Feier."
+        assert caption_for_vector(text, "2018-10-21") == text
+
+    def test_a_year_in_a_name_survives_when_it_is_not_the_photo_year(self):
+        text = "Vier Freunde beim Abi 08 auf dem Schulhof, aufgenommen im Juni 2008."
+        assert caption_for_vector(text, "2008-06-27") == "Vier Freunde beim Abi 08 auf dem Schulhof."
+
+    def test_caption_without_a_date_is_returned_as_is(self):
+        text = "Eine Person hält ein Bierglas."
+        assert caption_for_vector(text, "2020-01-01") == text
+
+    def test_missing_date_only_strips_the_phrases(self):
+        assert caption_for_vector("Ein Fest im August 2015.", None) == "Ein Fest."

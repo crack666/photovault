@@ -529,7 +529,40 @@ rekonstruierbar ist, wird deshalb vorher gelesen und zurückgeschrieben:
 python -m tools.quality_report --prefix /mnt/photo   # Datum, Gesichter, Tags, Vollständigkeit
 python -m tools.acceptance --prefix /mnt/photo       # Szenarien aus docs/spec.md + Latenz
 python -m tools.atlas_build                          # Karte fuer den Tab "Atlas"
+python -m tools.reembed_all --dry-run                # Text-Vektoren neu bauen
 ```
+
+### Warum im Text-Vektor das Datum fehlt
+
+Die Caption nennt das Aufnahmedatum absichtlich — der Prompt verlangt es, damit
+der Satz für Menschen im Kontext steht. Im eingebetteten Dokument steht es
+damit aber **dreimal**: strukturiert im Payload (dort filtert es exakt), in der
+Kopfzeile, und ausgeschrieben mitten im Satz. `das foto wurde am` kommt 916 mal
+vor, `das foto entstand am` 446 mal.
+
+`grounding.caption_for_vector` nimmt nur die dritte Kopie heraus. `caption_de`
+selbst bleibt unberührt. An 200 Fotos über alle 40 Kontinente gemessen, mit
+`qwen3-embedding:4b`:
+
+| | mit Datum | ohne |
+|---|---|---|
+| Cosinus zwischen zwei Fotos (Median) | 0,429 | **0,411** |
+| Personen finden (R-Präzision) | 55 % | **57 %** |
+| Szenen finden (Präzision unter 20) | 46 % | **47 %** |
+
+Eine nackte Jahreszahl fliegt nur heraus, wenn sie das Jahr *dieses* Fotos ist —
+sonst verlöre „Abi 08" oder „WM 2014 Trikot" seinen Sinn.
+
+**Verschlagwortung wäre schlechter, nicht besser.** Dieselbe Messung mit
+Komma-Listen statt Sätzen: die Streuung wird deutlich größer (Cosinus 0,329),
+das Finden aber schlechter (Szenen 31 % statt 46 %). Streuung ist nicht
+Trennschärfe — hier war sie Signalverlust. Das Modell ist auf Sprache
+trainiert; „Ada, gestikuliert, Weihnachtsfeier" wirft die Beziehungen weg,
+die „Ada Lovelace gestikuliert bei der Weihnachtsfeier" trägt.
+
+Bei der **Anfrage** ist es dagegen fast gleichgültig: „Niki und Jonas trinken
+gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefern
+16 bis 18 derselben ersten 20 Treffer. Man darf tippen, wie man mag.
 
 ### API-Endpunkte
 
