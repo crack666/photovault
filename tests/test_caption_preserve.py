@@ -56,12 +56,12 @@ class TestPreserveUserData:
         client = _FakeClient({
             _point_id(path): {
                 "person_ids": ["stefan-menzel", "lennart-behr"],
-                "person_names": ["Michael Braun", "Jonas Meyer"],
+                "person_names": ["Quirin Falkenstein", "Zelda Quastel"],
             }
         })
         out = self.pipeline._load_preserved(_FakeWriter(client), [path])
         assert out[_photo_id(path)]["person_ids"] == ["stefan-menzel", "lennart-behr"]
-        assert out[_photo_id(path)]["person_names"] == ["Michael Braun", "Jonas Meyer"]
+        assert out[_photo_id(path)]["person_names"] == ["Quirin Falkenstein", "Zelda Quastel"]
 
     def test_annotations_survive(self):
         path = "/photos/A/1.jpg"

@@ -45,6 +45,10 @@ sources.txt
 # Selbst gepflegte Liste privater Begriffe. Vorlage: .privacy-terms.example
 .privacy-terms
 
+# Namensbestandteile, die zugleich Alltagswoerter sind. Die Liste selbst
+# waere ein Leck: sie verraet, welche Woerter Nachnamen im Archiv sind.
+.privacy-allow
+
 # Die gerechnete Karte. Ihre Kontinentnamen kommen aus den Captions und
 # enthalten damit echte Personennamen -- wie der Index selbst gehoert sie
 # nicht ins Repository. Neu bauen: python -m tools.atlas_build

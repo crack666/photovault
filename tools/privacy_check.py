@@ -39,6 +39,16 @@ DENYLIST = ".privacy-denylist"
 #: kann so etwas nicht wissen. Wird nie ueberschrieben, nie versioniert.
 EXTRA_TERMS = ".privacy-terms"
 
+#: Von Hand gepflegt: Namensbestandteile, die zugleich gewoehnliche Woerter
+#: sind. Nachnamen werden in Bestandteile zerlegt, damit "Behr" auch ohne
+#: Vornamen auffaellt -- deutsche Nachnamen sind aber oft Alltagswoerter
+#: ("Baum", "Beck", "Fuchs"), und dann schlaegt die Pruefung bei jedem
+#: Fachbegriff an. Was hier steht, wird *nur als Einzelteil* durchgelassen:
+#: der vollstaendige Name trifft weiter. Nicht versioniert -- eine Liste, die
+#: verraet welche Alltagswoerter Nachnamen im Archiv sind, waere selbst ein
+#: Leck.
+ALLOW_TERMS = ".privacy-allow"
+
 #: Muster, die unabhaengig vom Bestand nie ins Repository gehoeren.
 PATTERNS: list[tuple[str, str]] = [
     (r"sk-[A-Za-z0-9_\-]{16,}", "API-Schluessel"),
@@ -54,7 +64,7 @@ PATTERNS: list[tuple[str, str]] = [
 ALLOWED = re.compile(r"192\.0\.2\.\d+|198\.51\.100\.\d+|203\.0\.113\.\d+|noreply@anthropic\.com")
 
 #: Hier sind Treffer erwartbar und harmlos.
-SKIP_FILES = {DENYLIST, EXTRA_TERMS, "tools/privacy_check.py"}
+SKIP_FILES = {DENYLIST, EXTRA_TERMS, ALLOW_TERMS, "tools/privacy_check.py"}
 SKIP_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".ico", ".pdf", ".zip", ".onnx")
 
 #: Welcher Git-Hook womit prueft.
@@ -123,14 +133,30 @@ def extra_terms() -> set[str]:
         return {ln.strip() for ln in fh if ln.strip() and not ln.lstrip().startswith("#")}
 
 
+def allowed_parts() -> set[str]:
+    """Namensbestandteile aus `.privacy-allow`, klein geschrieben."""
+    if not os.path.exists(ALLOW_TERMS):
+        return set()
+    with open(ALLOW_TERMS, encoding="utf-8") as fh:
+        return {ln.strip().lower() for ln in fh
+                if ln.strip() and not ln.lstrip().startswith("#")}
+
+
 def terms_from(names: set[str]) -> list[str]:
     """Voller Name und seine Bestandteile, laengste zuerst."""
     terms = set(names)
+    allow = allowed_parts()
     for name in names:
         for part in name.split():
             # Kurze Teile ("von", "de") wuerden zu viel Rauschen erzeugen.
-            if len(part) > 3:
-                terms.add(part)
+            if len(part) <= 3:
+                continue
+            # Alltagswoerter nur als Einzelteil durchlassen. Der volle Name
+            # bleibt in `terms` -- wer "Kim Baum" schreibt, wird erwischt,
+            # wer den Ausdrucksbaum erklaert, nicht.
+            if part.lower() in allow:
+                continue
+            terms.add(part)
     # Selbstgepflegte Begriffe bleiben unzerlegt -- sie in Teile zu schneiden
     # erzeugt nur Fehlalarme.
     terms |= extra_terms()
