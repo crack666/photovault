@@ -133,74 +133,69 @@ def invalidate_clusters() -> None:
 
 @router.get("/unlabeled")
 def unlabeled_clusters(limit: int = 40, max_faces: int = 30000,
-                       min_size: int = 3) -> dict:
+                       min_size: int = 10) -> dict:
+    """Queue für „Wer ist das?": Nachzügler bekannter Personen zuerst.
+
+    Kleingruppen unter `min_size` (Passanten, 3–9 Bilder) bleiben unbenannt
+    und tauchen in der Einzelansicht auf, nicht als eigene Karte.
+    """
+    from api.known_faces import queue_cards
+
     q = client()
     stats = _face_stats(q)
-    signature = f"{stats['faces_unlabeled']}:{max_faces}"
+    signature = f"{stats['faces_unlabeled']}:{stats['faces_labeled']}:{max_faces}:{min_size}"
 
-    clusters = _cluster_cache["clusters"] if _cluster_cache["signature"] == signature else None
-    if clusters is None:
+    cards = _cluster_cache["clusters"] if _cluster_cache["signature"] == signature else None
+    if cards is None:
+        labeled_filter = Filter(
+            must_not=[IsEmptyCondition(is_empty=PayloadField(key="person_id"))]
+        )
         try:
-            raw = _scroll_faces(q, _unlabeled_filter(), limit=max_faces)
+            unlabeled_pts = _scroll_faces(q, _unlabeled_filter(), limit=max_faces)
+            labeled_pts = _scroll_faces(q, labeled_filter, limit=20000)
         except Exception:
             logger.exception("Loading unlabeled faces failed")
             return {"clusters": [], "remaining": 0, "stats": stats}
-        items = []
-        for p in raw:
-            vec = p.vector
-            if isinstance(vec, dict):
-                vec = next(iter(vec.values()), None)
-            if vec is None:
-                continue
-            items.append({"id": str(p.id), "vector": vec, "payload": p.payload or {}})
-        clusters = cluster_faces(items)
+
+        def to_items(points):
+            out = []
+            for p in points:
+                vec = p.vector
+                if isinstance(vec, dict):
+                    vec = next(iter(vec.values()), None)
+                if vec is None:
+                    continue
+                out.append({"id": str(p.id), "vector": vec, "payload": p.payload or {}})
+            return out
+
+        cards = queue_cards(to_items(unlabeled_pts), to_items(labeled_pts), min_new_size=min_size)
         _cluster_cache["signature"] = signature
-        _cluster_cache["clusters"] = clusters
-        logger.info("Clustered %d unlabeled faces into %d groups", len(items), len(clusters))
+        _cluster_cache["clusters"] = cards
+        known_n = sum(1 for c in cards if c.get("kind") == "known")
+        logger.info(
+            "Label queue: %d known-person batches, %d new groups (>=%d)",
+            known_n, len(cards) - known_n, min_size,
+        )
 
-    def cluster_quality(cluster) -> float:
-        members = cluster["members"]
-        fronts = [
-            (m.get("payload") or {}).get("frontality")
-            for m in members
-            if (m.get("payload") or {}).get("frontality") is not None
-        ]
-        # Ohne Landmarks (vor dem Re-Ingest) bleibt die Groesse das Kriterium.
-        front = sum(fronts) / len(fronts) if fronts else 0.5
-        return front * (len(members) ** 0.5)
-
-    # Einzelne und Paare fuellen die Liste, ohne sie brauchbar zu machen:
-    # bei vollstaendiger Abdeckung sind es 4200 von 5350 Gruppen, decken aber
-    # nur ein Drittel der Gesichter. Wer sie sucht, findet sie in der
-    # Einzelansicht ueber "Sortierung".
-    big = [c for c in clusters if len(c["members"]) >= min_size]
-    ordered = sorted(big, key=cluster_quality, reverse=True)
     matcher = FaceMatcher(q)
+    page = cards[:limit]
     out = []
-    for i, cluster in enumerate(ordered[:limit]):
-        members = sorted(
-            cluster["members"],
-            key=lambda m: (m.get("payload") or {}).get("frontality") or 0,
-            reverse=True,
-        )
-        cover = members[0]
-        out.append(
-            {
-                "id": f"c{i}-{cover['id'][:8]}",
-                "size": len(members),
-                "cover_face_id": cover["id"],
-                "file_path": (cover.get("payload") or {}).get("file_path"),
-                "face_ids": [m["id"] for m in members],
-                "suggestions": matcher.suggest(cluster["centroid"].tolist()),
-            }
-        )
+    for i, card in enumerate(page):
+        rec = {k: v for k, v in card.items() if k != "centroid"}
+        rec["id"] = f"c{i}-{(rec.get('cover_face_id') or 'x')[:8]}"
+        if rec.get("kind") != "known":
+            centroid = card.get("centroid")
+            rec["suggestions"] = (
+                matcher.suggest(centroid.tolist()) if centroid is not None else []
+            )
+            rec["kind"] = rec.get("kind") or "new"
+        out.append(rec)
     return {
         "clusters": out,
-        "remaining": max(0, len(big) - limit),
-        # Zum Einordnen: wie viele Gruppen es insgesamt gibt und wie viele
-        # davon die Mindestgroesse erreichen.
-        "groups_total": len(clusters),
-        "groups_usable": len(big),
+        "remaining": max(0, len(cards) - limit),
+        "groups_total": len(cards),
+        "groups_usable": len(cards),
+        "known_batches": sum(1 for c in cards if c.get("kind") == "known"),
         "min_size": min_size,
         "stats": stats,
     }

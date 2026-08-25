@@ -78,7 +78,15 @@ def format_date(date: str | None, confidence: float | None) -> str | None:
 
 
 def event_name(payload: dict[str, Any]) -> str | None:
-    """Der Anlass aus dem Ordnernamen, ohne Datum und ohne Kameraverzeichnis."""
+    """Der Anlass: erst der vergebene Serienname, sonst der Ordner.
+
+    Ein Dump-Ordner wie HandyPics ist kein Anlass. Ein von Hand vergebener
+    Name ("Games Convention 2007") schon — der überlebt auch, wenn die Datei
+    noch im alten Ordner liegt.
+    """
+    given = (payload.get("event_name") or "").strip()
+    if given:
+        return given
     folder = (payload.get("folder_name") or "").strip()
     if not folder:
         return None
@@ -157,4 +165,5 @@ def record_payload(record) -> dict[str, Any]:
         "annotations": getattr(record, "annotations", None),
         "caption_de": getattr(record, "caption_de", None),
         "scene_tags": getattr(record, "scene_tags", None),
+        "event_name": getattr(record, "event_name", None),
     }

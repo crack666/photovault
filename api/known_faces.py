@@ -23,10 +23,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-#: Ab hier gilt ein Gesicht als Kandidat. Gemessen am Bestand: 0,50 erfasst
-#: 29 % der unbenannten Gesichter, 0,60 noch 21,5 %. Tiefer zu gehen bringt
-#: kaum mehr und holt Fremde herein.
-DEFAULT_THRESHOLD = 0.50
+#: Ab hier gilt ein Gesicht als Kandidat. 0,50 war konservativ und hat dieselbe
+#: Person als dutzende Kleingruppen in der Queue gelassen. 0,45 holt mehr
+#: Nachzügler, ohne so tief zu gehen wie das Clustering (0,35).
+DEFAULT_THRESHOLD = 0.45
 
 #: Unter so vielen Kandidaten lohnt keine eigene Rückfrage -- die gehen den
 #: gewohnten Weg über die Cluster.
@@ -114,3 +114,70 @@ def candidates(
         })
     out.sort(key=lambda b: -b["count"])
     return out
+
+
+#: Kleiner als das sind eher Passanten im Hintergrund, keine eigene Karte wert.
+MIN_NEW_SIZE = 10
+
+
+def queue_cards(
+    unlabeled: list[dict[str, Any]],
+    labeled: list[dict[str, Any]],
+    *,
+    threshold: float = DEFAULT_THRESHOLD,
+    min_new_size: int = MIN_NEW_SIZE,
+) -> list[dict[str, Any]]:
+    """Wer-ist-das-Queue: zuerst Nachzügler bekannter Personen, dann neue Gruppen.
+
+    Ohne den ersten Schritt zerfällt Annika in 40 Cluster à 8 Gesichter, und
+    jede Karte fragt dasselbe. Kleingruppen unter `min_new_size` sind oft
+    Fremde im Hintergrund — die gehören in die Einzelansicht, nicht hier.
+    """
+    from ingest.face_cluster import cluster_faces
+
+    batches = candidates(unlabeled, labeled, threshold=threshold)
+    taken = {str(f["face_id"]) for b in batches for f in b["faces"]}
+    rest = [it for it in unlabeled if str(it.get("id")) not in taken]
+    raw = cluster_faces(rest)
+    cards: list[dict[str, Any]] = []
+    for b in batches:
+        faces = b["faces"]
+        cover = faces[0]["face_id"] if faces else None
+        cards.append(
+            {
+                "kind": "known",
+                "size": b["count"],
+                "cover_face_id": cover,
+                "face_ids": [f["face_id"] for f in faces],
+                "person_id": b["person_id"],
+                "person_name": b["name"],
+                "suggestions": [
+                    {"id": b["person_id"], "name": b["name"], "score": b["best"]}
+                ],
+            }
+        )
+    new = [c for c in raw if len(c["members"]) >= min_new_size]
+    new.sort(
+        key=lambda c: -len(c["members"]) * (
+            sum((m.get("payload") or {}).get("frontality") or 0.5 for m in c["members"])
+            / max(1, len(c["members"]))
+        )
+    )
+    for cluster in new:
+        members = sorted(
+            cluster["members"],
+            key=lambda m: (m.get("payload") or {}).get("frontality") or 0,
+            reverse=True,
+        )
+        cover = members[0]
+        cards.append(
+            {
+                "kind": "new",
+                "size": len(members),
+                "cover_face_id": cover["id"],
+                "file_path": (cover.get("payload") or {}).get("file_path"),
+                "face_ids": [m["id"] for m in members],
+                "centroid": cluster["centroid"],
+            }
+        )
+    return cards

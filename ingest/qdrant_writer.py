@@ -62,6 +62,7 @@ class QdrantWriter:
             ("location_lc", PayloadSchemaType.KEYWORD),
             ("date", PayloadSchemaType.KEYWORD),
             ("taken_at", PayloadSchemaType.DATETIME),
+            ("event_name", PayloadSchemaType.KEYWORD),
         ):
             try:
                 self.client.create_payload_index(self.collection, field_name=field, field_schema=schema)
@@ -142,6 +143,9 @@ class QdrantWriter:
             "caption_locked": bool(getattr(record, "caption_locked", False)),
             "person_names": getattr(record, "person_names", None) or [],
             "annotations": getattr(record, "annotations", None) or [],
+            "event_name": getattr(record, "event_name", None),
+            "event_excluded": bool(getattr(record, "event_excluded", False)),
+            "file_warning": getattr(record, "file_warning", None),
             "ingested_at": record.ingested_at,
         }
         self.client.upsert(

@@ -56,6 +56,12 @@ class TestEventName:
     def test_plain_name_survives(self):
         assert event_name({"folder_name": "groemitz"}) == "groemitz"
 
+    def test_a_given_series_name_beats_the_dump_folder(self):
+        assert event_name({
+            "folder_name": "HandyPics",
+            "event_name": "Games Convention 2007",
+        }) == "Games Convention 2007"
+
 
 class TestCaptionDisplay:
     def test_full_header(self):
@@ -64,6 +70,15 @@ class TestCaptionDisplay:
             "folder_name": "2016_04_23 Junggesellenabschied", "location": "Berlin",
         })
         assert head == "23. August 2015 · Sommer · Junggesellenabschied · Berlin"
+
+    def test_named_series_beats_dump_folder_in_the_header(self):
+        head = caption_display({
+            "date": "2007-08-23", "date_confidence": 1.0,
+            "folder_name": "HandyPics",
+            "event_name": "Games Convention 2007",
+        })
+        assert "Games Convention 2007" in head
+        assert "HandyPics" not in head
 
     def test_location_is_not_repeated_when_it_equals_the_event(self):
         head = caption_display({
@@ -89,11 +104,11 @@ class TestGroundedDocument:
     def test_names_and_notes_come_before_the_shared_context(self):
         """Album-Kontext ist bei allen Fotos gleich und darf den Vektor nicht dominieren."""
         doc = grounded_document(self._payload(
-            person_names=["Michael Braun", "Jonas Meyer"],
+            person_names=["Ada Lovelace", "Alan Turing"],
             annotations=["Stripclub"],
         ))
         lines = doc.split("\n")
-        assert lines[0] == "Personen: Michael Braun, Jonas Meyer"
+        assert lines[0] == "Personen: Ada Lovelace, Alan Turing"
         assert lines[1] == "Stripclub"
         assert "Piratenkostümen" in lines[2]
         assert lines[-1].startswith("23. August 2015")
@@ -104,7 +119,7 @@ class TestGroundedDocument:
 
     def test_suggestions_only_when_nothing_is_confirmed(self):
         confirmed = grounded_document(
-            self._payload(person_names=["Michael Braun"], person_suggestions=["max"])
+            self._payload(person_names=["Ada Lovelace"], person_suggestions=["max"])
         )
         assert "Vermutlich" not in confirmed
         unconfirmed = grounded_document(self._payload(person_suggestions=["max"]))

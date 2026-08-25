@@ -40,6 +40,8 @@ class TestPreserveFields:
     def test_lock_fields_are_preserved(self):
         assert "caption_locked" in IngestPipeline.PRESERVE_FIELDS
         assert "caption_source" in IngestPipeline.PRESERVE_FIELDS
+        assert "event_name" in IngestPipeline.PRESERVE_FIELDS
+        assert "event_excluded" in IngestPipeline.PRESERVE_FIELDS
 
     def test_locked_caption_is_loaded(self):
         path = "/p/1.jpg"

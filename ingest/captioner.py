@@ -141,6 +141,8 @@ def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
 
 def format_context(context: dict[str, Any]) -> str:
     rows: list[str] = []
+    if context.get("event_name"):
+        rows.append(f"- Anlass (benannt): {context['event_name']}")
     if context.get("folder_name"):
         rows.append(f"- Ordner/Album: {context['folder_name']}")
     if context.get("date"):

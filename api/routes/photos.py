@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -15,7 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from api.qdrant_util import PHOTOS, client
-from api.thumbs import get_thumb
+from api.thumbs import jpeg_truncation_hint, make_thumb
 from ingest.reembed import apply_annotations, rebuild_text_vectors
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ def photo_detail(point_id: str) -> dict:
         "file_path": path,
         "file_name": path.rsplit("/", 1)[-1] if path else None,
         "folder_name": p.get("folder_name"),
+        "event_name": p.get("event_name"),
         "sequence_in_folder": p.get("sequence_in_folder"),
         "caption_display": p.get("caption_display"),
         "caption_de": p.get("caption_de"),
@@ -87,6 +89,7 @@ def photo_detail(point_id: str) -> dict:
         "camera": " ".join(x for x in (exif.get("Make"), exif.get("Model")) if x) or None,
         "exif": exif,
         "ingested_at": p.get("ingested_at"),
+        "file_warning": p.get("file_warning"),
     }
 
 
@@ -122,6 +125,84 @@ def set_caption(point_id: str, req: CaptionRequest) -> dict:
             "locked": bool(req.lock and text), "reembedded": stats.get("updated", 0)}
 
 
+#: Geschätzte Herkunft — der Mensch darf sie zur Aufnahmezeit machen.
+_ESTIMATED_DATE = {"filename", "folder", "folder_name", "folder_json", "file_time", "album"}
+
+
+@router.post("/{point_id}/accept-date")
+def accept_date(point_id: str) -> dict:
+    """Geschätztes Aufnahmedatum festschreiben — in den Index und, wo möglich, ins EXIF.
+
+    Echte Kameradaten (`date_source=exif`) werden nicht überschrieben. Die
+    Dateizeit bleibt erhalten.
+    """
+    q = client()
+    try:
+        points = q.retrieve(collection_name=PHOTOS, ids=[point_id], with_payload=True)
+    except Exception as e:
+        raise HTTPException(404, f"Foto nicht gefunden: {e}") from e
+    if not points:
+        raise HTTPException(404, "Foto nicht gefunden")
+    payload = points[0].payload or {}
+    source = payload.get("date_source") or ""
+    if source == "accepted":
+        return {"id": point_id, "already": True, "date": payload.get("date"),
+                "taken_at": payload.get("taken_at"), "written": False}
+    if source == "exif":
+        raise HTTPException(400, "Aufnahmedatum stammt schon aus den Bilddaten")
+    if source and source not in _ESTIMATED_DATE:
+        raise HTTPException(400, f"Herkunft {source} wird nicht übernommen")
+    when = _when_from_payload(payload)
+    if when is None:
+        raise HTTPException(400, "kein Datum zum Übernehmen")
+    path = payload.get("file_path") or ""
+    written, reason = False, ""
+    if path:
+        from ingest.exif_writer import write_capture_time
+
+        try:
+            out = write_capture_time(
+                path, when, source="accepted", dry_run=False, overwrite=False,
+            )
+            written = bool(out.get("written"))
+            reason = out.get("reason") or ""
+        except Exception as e:
+            logger.warning("EXIF-Datum nicht schreibbar (%s): %s", path, e)
+            reason = str(e)
+    stamp = when.strftime("%Y-%m-%dT%H:%M:%S")
+    q.set_payload(
+        collection_name=PHOTOS,
+        payload={
+            "date": when.strftime("%Y-%m-%d"),
+            "taken_at": stamp,
+            "date_source": "accepted",
+            "date_confidence": 1.0,
+        },
+        points=[point_id],
+        wait=True,
+    )
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    return {
+        "id": point_id,
+        "date": when.strftime("%Y-%m-%d"),
+        "taken_at": stamp,
+        "written": written,
+        "exif_reason": reason,
+        "reembedded": stats.get("updated", 0),
+    }
+
+
+def _when_from_payload(payload: dict) -> datetime | None:
+    raw = payload.get("taken_at") or payload.get("date") or ""
+    raw = str(raw).replace("Z", "")
+    for fmt, n in (("%Y-%m-%dT%H:%M:%S", 19), ("%Y-%m-%d", 10)):
+        try:
+            return datetime.strptime(raw[:n], fmt)
+        except ValueError:
+            continue
+    return None
+
+
 class BulkCaptionRequest(BaseModel):
     photo_ids: list[str]
     caption_de: str
@@ -149,26 +230,51 @@ def set_captions(req: BulkCaptionRequest) -> dict:
             "reembedded": stats.get("updated", 0)}
 
 
+def _stamp_file_warning(q, point_id: str, payload: dict, warning: str) -> None:
+    """Einmal setzen — die Datei ändert sich nicht von allein."""
+    if payload.get("file_warning") == warning:
+        return
+    try:
+        q.set_payload(
+            collection_name=PHOTOS,
+            payload={"file_warning": warning},
+            points=[point_id],
+            wait=True,
+        )
+        payload["file_warning"] = warning
+    except Exception:
+        logger.debug("file_warning for %s not stored", point_id)
+
+
 @router.get("/{point_id}/thumb")
 def photo_thumb(point_id: str, size: int = 320):
     """Verkleinertes JPEG des Fotos. Ohne das zeigt die Suche nur Text."""
     q = client()
     try:
-        points = q.retrieve(collection_name=PHOTOS, ids=[point_id], with_payload=["file_path"])
+        points = q.retrieve(
+            collection_name=PHOTOS, ids=[point_id], with_payload=["file_path", "file_warning"]
+        )
     except Exception as e:
         raise HTTPException(404, f"Foto nicht gefunden: {e}") from e
     if not points:
         raise HTTPException(404, "Foto nicht gefunden")
-    path = (points[0].payload or {}).get("file_path")
+    payload = points[0].payload or {}
+    path = payload.get("file_path")
     if not path:
         raise HTTPException(404, "Foto hat keinen Pfad")
     try:
-        data = get_thumb(path, size=size)
+        data, warn = make_thumb(path, size=size)
     except FileNotFoundError:
+        _stamp_file_warning(q, point_id, payload, "missing")
         raise HTTPException(404, f"Datei fehlt: {path}") from None
     except Exception as e:
         logger.warning("Thumb failed for %s: %s", path, e)
+        _stamp_file_warning(q, point_id, payload, "unreadable")
         raise HTTPException(500, f"Thumbnail fehlgeschlagen: {e}") from e
+    if not payload.get("file_warning"):
+        warn = warn or jpeg_truncation_hint(path)
+        if warn:
+            _stamp_file_warning(q, point_id, payload, warn)
     return Response(
         content=data,
         media_type="image/jpeg",

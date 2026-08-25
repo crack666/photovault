@@ -150,13 +150,14 @@ def write_capture_time(
     exif["Exif"].setdefault(_DT_DIGITIZED, stamp)
     exif.setdefault("0th", {})[_DT_IMAGE] = stamp
 
-    times = None
+    snap = None
     if preserve_mtime:
         try:
-            st = os.stat(file_path)
-            times = (st.st_atime, st.st_mtime)
+            from ingest.filetimes import snapshot
+
+            snap = snapshot(file_path)
             result["mtime"] = datetime.fromtimestamp(
-                st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                snap["mtime"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         except OSError as e:
             logger.warning("Aenderungszeit von %s nicht lesbar: %s", file_path, e)
 
@@ -180,14 +181,12 @@ def write_capture_time(
     except Exception as e:
         raise ExifWriteError(f"{file_path}: {e}") from e
 
-    if times is not None:
-        try:
-            os.utime(file_path, times)
-            result["mtime_restored"] = True
-        except OSError as e:
-            # Kein Grund, den Wert zu verwerfen -- er steht in der Notiz.
-            logger.warning("Aenderungszeit von %s nicht wiederherstellbar: %s", file_path, e)
-            result["mtime_restored"] = False
+    if snap is not None:
+        from ingest.filetimes import restore
+
+        restored = restore(file_path, snap)
+        result["mtime_restored"] = restored["mtime"]
+        result["birth_restored"] = restored["birth"]
 
     check = read_capture_time(file_path)
     if check != when:

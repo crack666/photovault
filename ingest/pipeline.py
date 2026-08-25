@@ -166,6 +166,9 @@ class PhotoRecord:
     person_names: list[str] = field(default_factory=list)
     person_suggestions: list[str] = field(default_factory=list)
     annotations: list[str] = field(default_factory=list)
+    event_name: Optional[str] = None
+    event_excluded: bool = False
+    file_warning: Optional[str] = None
     ingested_at: Optional[str] = None
 
 
@@ -288,17 +291,16 @@ class IngestPipeline:
                     photo_id = hashlib.sha256(fp.encode("utf-8")).hexdigest()
                     record = PhotoRecord(photo_id=photo_id, file_path=fp)
                     prior = preserved.get(photo_id)
-                    if prior:
-                        record.person_ids = list(prior.get("person_ids") or [])
-                        record.person_names = list(prior.get("person_names") or [])
-                        record.annotations = list(prior.get("annotations") or [])
+                    _apply_prior(record, prior)
                     with t.stage("file_times"):
                         _fill_file_times(record, Path(fp))
 
                     # Einmal oeffnen, alles daraus bedienen: EXIF, Gesichter,
                     # CLIP und Vorschaubild lasen bisher jeweils neu vom NAS.
                     with t.stage("decode"):
-                        raw_img, rgb = _load_image(fp)
+                        raw_img, rgb, warn = _load_image(fp)
+                    if warn:
+                        record.file_warning = warn
 
                     with t.stage("exif"):
                         exif_data = exif_ext.extract(fp, image=raw_img)
@@ -451,17 +453,16 @@ class IngestPipeline:
             photo_id = hashlib.sha256(fp.encode("utf-8")).hexdigest()
             record = PhotoRecord(photo_id=photo_id, file_path=fp)
             prior = preserved.get(photo_id)
-            if prior:
-                record.person_ids = list(prior.get("person_ids") or [])
-                record.person_names = list(prior.get("person_names") or [])
-                record.annotations = list(prior.get("annotations") or [])
+            _apply_prior(record, prior)
             _fill_file_times(record, Path(fp))
 
             with _Timed(clock, "  io:decode"):
                 from ingest.netfs import retry_io
 
                 # Ein SMB-Aussetzer soll den Datensatz nicht kosten.
-                raw_img, rgb = retry_io(lambda: _load_image(fp), what=fp)
+                raw_img, rgb, warn = retry_io(lambda: _load_image(fp), what=fp)
+            if warn:
+                record.file_warning = warn
             if rgb is None:
                 # Kein lesbares Bild -- aber Datum, Album und Pfad sind trotzdem
                 # etwas wert. Das Foto faellt sonst still aus dem Index.
@@ -641,6 +642,8 @@ class IngestPipeline:
         "annotations",
         "person_ids",
         "person_names",
+        "event_name",
+        "event_excluded",
     )
 
     def _flush_batch(self, pending, text_emb, writer, t) -> None:
@@ -910,17 +913,26 @@ def main() -> None:
 
 
 def _load_image(file_path: str):
-    """(Original, RGB-Fassung). Das Original traegt die EXIF-Daten, die beim
+    """(Original, RGB-Fassung, Warnung). Das Original traegt die EXIF-Daten, die beim
     Konvertieren verloren gehen; die RGB-Fassung brauchen die Modelle."""
     try:
-        from PIL import Image
+        from PIL import Image, ImageFile
 
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
         raw = Image.open(file_path)
-        raw.load()
-        return raw, (raw if raw.mode == "RGB" else raw.convert("RGB"))
+        warn = None
+        try:
+            raw.load()
+        except OSError as e:
+            logger.warning("truncated image during ingest: %s (%s)", file_path, e)
+            warn = "truncated"
+            if getattr(raw, "im", None) is None:
+                return None, None, "unreadable"
+        rgb = raw if raw.mode == "RGB" else raw.convert("RGB")
+        return raw, rgb, warn
     except Exception as e:
         logger.debug("Could not decode %s: %s", file_path, e)
-        return None, None
+        return None, None, "unreadable"
 
 
 def _make_thumb(file_path: str, image=None) -> None:
@@ -950,9 +962,21 @@ def _fill_file_times(record: PhotoRecord, path: Path) -> None:
     record.file_ctime = datetime.fromtimestamp(st.st_ctime, tz=timezone.utc).isoformat()
 
 
+def _apply_prior(record: PhotoRecord, prior: dict | None) -> None:
+    if not prior:
+        return
+    record.person_ids = list(prior.get("person_ids") or [])
+    record.person_names = list(prior.get("person_names") or [])
+    record.annotations = list(prior.get("annotations") or [])
+    if prior.get("event_name"):
+        record.event_name = prior["event_name"]
+    record.event_excluded = bool(prior.get("event_excluded"))
+
+
 def record_context(record: PhotoRecord) -> dict:
     return {
         "folder_name": record.folder_name,
+        "event_name": record.event_name,
         "date": record.date,
         "date_source": record.date_source,
         "file_ctime": record.file_ctime,

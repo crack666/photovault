@@ -22,7 +22,7 @@ function showTab(name) {
   if (name === "people") loadPeople();
   if (name === "search") loadPersonPicker();
   if (name === "unknown") { loadUnknown(true); loadCandidates(); }
-  if (name === "events") loadEvents();
+  if (name === "events") loadEventTab();
 }
 
 /* ---- Unbekannte Gesichter: gezielt aussortieren ----
@@ -239,7 +239,7 @@ $("uk-name").addEventListener("click", async () => {
 });
 
 /* ---- Ausdrucks-Builder ----
-   Der Baum hier ist derselbe, den das Backend nach Qdrant übersetzt. Die
+   Der Ausdrucksbaum hier ist derselbe, den das Backend nach Qdrant übersetzt. Die
    Klartextform holen wir uns von dort zurück, damit Anzeige und tatsächliche
    Abfrage nicht auseinanderlaufen können. */
 
@@ -447,6 +447,16 @@ function renderCard() {
   showCover(cluster, cluster.cover_face_id);
   renderThumbs(cluster);
 
+  const known = cluster.kind === "known" && cluster.person_name;
+  $("card-title").textContent = known
+    ? `Noch mehr ${cluster.person_name}?`
+    : "Wer ist das?";
+  $("name-form").classList.remove("hidden");
+  $("btn-confirm-known").classList.toggle("hidden", !known);
+  $("btn-confirm-known").textContent = known
+    ? `Ja, ${cluster.size} Gesichter ${cluster.person_name} zuordnen`
+    : "";
+
   $("suggestions").innerHTML = "";
   (cluster.suggestions || []).forEach((s) => {
     const chip = document.createElement("button");
@@ -458,6 +468,9 @@ function renderCard() {
     $("suggestions").appendChild(chip);
   });
   $("name-input").value = "";
+  $("name-input").placeholder = known
+    ? "Nein — anderer Name (z. B. Schwester)"
+    : "Name eingeben — neue Person oder bekanntes Gesicht";
   $("name-input").focus();
 }
 
@@ -505,6 +518,12 @@ function updateClusterCount(cluster) {
     (kept === 1 ? "1 Gesicht" : `${kept} ähnliche Gesichter — eine Zuordnung gilt für alle`)
     + (out ? ` · ${out} ausgeschlossen` : "");
 }
+
+$("btn-confirm-known").addEventListener("click", () => {
+  const cluster = state.clusters[state.index];
+  if (!cluster || cluster.kind !== "known") return;
+  assignExisting(cluster.person_id, keptFaces(cluster));
+});
 
 async function assignExisting(personId, faceIds) {
   await api(`/api/persons/${encodeURIComponent(personId)}/assign`, {
@@ -814,7 +833,7 @@ function fillGallery(timelineEl, streamEl, data, { selectable } = {}) {
         updatePhotoSel();
         return;
       }
-      openLightbox(Number(im.dataset.i));
+      showLightbox(lbPhotos, Number(im.dataset.i));
     });
   });
 
@@ -834,7 +853,9 @@ const DATE_SOURCE_LABEL = {
   exif: "aus den Bilddaten", filename: "aus dem Dateinamen",
   folder_name: "aus dem Albumnamen", folder: "aus dem Album",
   folder_json: "aus der Album-Datei", file_time: "geschätzt aus der Dateizeit",
+  accepted: "von dir übernommen", offset: "Uhr korrigiert",
 };
+const DATE_ESTIMATED = new Set(["filename", "folder", "folder_name", "folder_json", "file_time", "album"]);
 
 /* ---- Mehrere Fotos auf einmal beschriften ----
    Wissen, das kein Modell aus Pixeln holt: „das war im Stripclub“. Auf 50
@@ -913,6 +934,17 @@ function setLbInfoOpen(on) {
   $("lb-reveal").classList.toggle("hidden", on);
 }
 
+function asLbPhotos(photos) {
+  return (photos || []).map((p) => (typeof p === "string" ? { id: p } : p));
+}
+
+function showLightbox(photos, index) {
+  const list = asLbPhotos(photos);
+  if (!list.length) return;
+  lbPhotos = list;
+  openLightbox(index);
+}
+
 function openLightbox(i) {
   lbIndex = Math.max(0, Math.min(i, lbPhotos.length - 1));
   const ph = lbPhotos[lbIndex];
@@ -924,6 +956,107 @@ function openLightbox(i) {
   setLbInfoOpen(lbInfoOpen());
   $("lightbox").classList.remove("hidden");
   loadPhotoInfo(ph.id);
+}
+
+const STRIP = 8;
+
+function bindShotStrip(el, ids, { excludable = false, excluded = null, onToggle = null } = {}) {
+  const list = ids || [];
+  const out = excluded || new Set();
+  let offset = 0;
+  function paint() {
+    const total = list.length;
+    const slice = list.slice(offset, offset + STRIP);
+    const end = Math.min(offset + STRIP, total);
+    el.innerHTML = `
+      ${total > STRIP ? `<button type="button" class="strip-nav strip-prev" ${offset === 0 ? "disabled" : ""} aria-label="Zurück">‹</button>` : ""}
+      <div class="strip-track">
+        ${slice.map((id, i) => excludable
+          ? `<figure class="shot${out.has(id) ? " out" : ""}" data-i="${offset + i}">
+               <img loading="lazy" src="/api/photos/${encodeURIComponent(id)}/thumb?size=200" alt="" />
+               <button type="button" class="drop" title="Gehört nicht in diese Serie">✕</button>
+             </figure>`
+          : `<img loading="lazy" data-i="${offset + i}"
+              src="/api/photos/${encodeURIComponent(id)}/thumb?size=200" alt="" />`
+        ).join("")}
+      </div>
+      ${total > STRIP ? `<button type="button" class="strip-nav strip-next" ${end >= total ? "disabled" : ""} aria-label="Weiter">›</button>
+        <span class="strip-pos">${offset + 1}–${end} / ${total}</span>` : ""}`;
+    el.querySelectorAll(".strip-track img").forEach((im) => {
+      const i = Number((im.closest("[data-i]") || im).dataset.i);
+      im.addEventListener("click", () => showLightbox(list, i));
+    });
+    el.querySelectorAll(".shot .drop").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const fig = btn.closest(".shot");
+        const id = list[Number(fig.dataset.i)];
+        if (out.has(id)) out.delete(id);
+        else out.add(id);
+        fig.classList.toggle("out", out.has(id));
+        if (onToggle) onToggle(id, out.has(id), out);
+      });
+    });
+    const prev = el.querySelector(".strip-prev");
+    const next = el.querySelector(".strip-next");
+    if (prev) prev.addEventListener("click", () => {
+      offset = Math.max(0, offset - STRIP);
+      paint();
+    });
+    if (next) next.addEventListener("click", () => {
+      offset = Math.min(Math.max(0, total - STRIP), offset + STRIP);
+      paint();
+    });
+  }
+  paint();
+  return out;
+}
+
+function gpsPair(gps) {
+  if (!Array.isArray(gps) || gps.length < 2) return null;
+  const lat = Number(gps[0]), lon = Number(gps[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lon };
+}
+
+const FILE_WARN = {
+  truncated: "Datei fehlerhaft — JPEG unvollständig (Transfer abgebrochen?)",
+  unreadable: "Datei fehlerhaft — Bild nicht lesbar",
+  missing: "Datei fehlt auf der Platte",
+};
+
+function fillFileWarn(code) {
+  const el = $("lb-file-warn");
+  if (!el) return;
+  const text = FILE_WARN[code] || "";
+  el.textContent = text;
+  el.classList.toggle("hidden", !text);
+}
+
+function fillMap(gps) {
+  const box = $("lb-map");
+  if (!box) return;
+  const pair = gpsPair(gps);
+  const frame = $("lb-map-frame");
+  if (!pair) {
+    box.classList.add("hidden");
+    if (frame) frame.src = "about:blank";
+    return;
+  }
+  const { lat, lon } = pair;
+  // OSM-Embed hat kein zoom=; der Ausschnitt ist die Zoomstufe.
+  // ~800 m Breite ≈ Straße / Häuserblock, nicht der ganze Bezirk.
+  const spanM = 400;
+  const dLat = spanM / 111320;
+  const dLon = spanM / (111320 * Math.cos((lat * Math.PI) / 180) || 1);
+  const bbox = [lon - dLon, lat - dLat, lon + dLon, lat + dLat].join(",");
+  box.classList.remove("hidden");
+  if (frame) {
+    frame.src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lon}`;
+  }
+  const link = $("lb-map-link");
+  if (link) link.href = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
+  $("lb-map-coord").textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 }
 
 async function loadPhotoInfo(id) {
@@ -944,6 +1077,7 @@ async function loadPhotoInfo(id) {
   const rows = [
     ["Aufnahmedatum", dateLine],
     ["Album", d.folder_name],
+    ["Serie", d.event_name],
     ["Ereignis", d.caption_display],
     ["Personen", (d.person_names || []).join(", ")],
     ["Vermutlich", (d.person_suggestions || []).join(", ")],
@@ -951,6 +1085,10 @@ async function loadPhotoInfo(id) {
     ["Notizen", (d.annotations || []).join(", ")],
     ["Szene", (d.scene_tags || []).join(", ")],
     ["Ort", d.location],
+    ["GPS", (() => {
+      const g = gpsPair(d.gps);
+      return g ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)}` : null;
+    })()],
     ["Kamera", d.camera],
     ["Datei", d.file_name],
     ["Ordner", d.file_path ? d.file_path.replace(/\/[^/]+$/, "") : null],
@@ -967,6 +1105,15 @@ async function loadPhotoInfo(id) {
   $("lb-cap-state").textContent = d.caption_locked
     ? "von Hand — bleibt bei neuen Läufen erhalten"
     : (d.caption_de ? "vom Modell erzeugt" : "noch keine Beschreibung");
+  fillMap(d.gps);
+  fillFileWarn(d.file_warning);
+  const accept = $("lb-date-accept");
+  if (accept) {
+    const estimated = d.date && DATE_ESTIMATED.has(d.date_source);
+    accept.classList.toggle("hidden", !estimated);
+    $("lb-date-state").textContent = "";
+  }
+  $("lb-info").dataset.dateSource = d.date_source || "";
 }
 
 $("lb-toggle").addEventListener("click", () => setLbInfoOpen(false));
@@ -976,18 +1123,57 @@ $("lb-save-caption").addEventListener("click", async () => {
   const id = $("lb-info").dataset.photoId;
   if (!id) return;
   $("lb-cap-state").textContent = "speichert …";
-  const res = await api(`/api/photos/${encodeURIComponent(id)}/caption`, {
-    method: "POST",
-    body: JSON.stringify({ caption_de: $("lb-caption").value, lock: true }),
-  });
-  $("lb-cap-state").textContent = res.locked
-    ? "gespeichert — bleibt bei neuen Läufen erhalten"
-    : "gespeichert";
-  const ph = lbPhotos[lbIndex];
-  if (ph) ph.caption_de = res.caption_de;
+  try {
+    const res = await api(`/api/photos/${encodeURIComponent(id)}/caption`, {
+      method: "POST",
+      body: JSON.stringify({ caption_de: $("lb-caption").value, lock: true }),
+    });
+    const ph = lbPhotos[lbIndex];
+    if (ph) ph.caption_de = res.caption_de;
+    await loadPhotoInfo(id);
+    $("lb-cap-state").textContent = res.locked
+      ? "gespeichert — bleibt bei neuen Läufen erhalten"
+      : "gespeichert";
+  } catch (err) {
+    $("lb-cap-state").textContent = `Fehler: ${String(err.message || err).slice(0, 120)}`;
+  }
 });
 
-function closeLightbox() { $("lightbox").classList.add("hidden"); }
+$("lb-accept-date").addEventListener("click", async () => {
+  const id = $("lb-info").dataset.photoId;
+  if (!id) return;
+  $("lb-date-state").textContent = "schreibt …";
+  try {
+    const res = await api(`/api/photos/${encodeURIComponent(id)}/accept-date`, { method: "POST" });
+    await loadPhotoInfo(id);
+    $("lb-date-state").textContent = res.written
+      ? "übernommen — steht jetzt in den Bilddaten"
+      : "übernommen im Index" + (res.exif_reason ? ` (Datei: ${res.exif_reason})` : "");
+  } catch (err) {
+    $("lb-date-state").textContent = `Fehler: ${String(err.message || err).slice(0, 120)}`;
+  }
+});
+
+$("lb-keep-caption").addEventListener("click", async () => {
+  const id = $("lb-info").dataset.photoId;
+  if (!id || !$("lb-caption").value.trim()) return;
+  $("lb-cap-state").textContent = "sperrt …";
+  try {
+    await api(`/api/photos/${encodeURIComponent(id)}/caption`, {
+      method: "POST",
+      body: JSON.stringify({ caption_de: $("lb-caption").value, lock: true }),
+    });
+    await loadPhotoInfo(id);
+  } catch (err) {
+    $("lb-cap-state").textContent = `Fehler: ${String(err.message || err).slice(0, 120)}`;
+  }
+});
+
+function closeLightbox() {
+  $("lightbox").classList.add("hidden");
+  fillMap(null);
+  fillFileWarn(null);
+}
 function stepLightbox(d) { if (!$("lightbox").classList.contains("hidden")) openLightbox(lbIndex + d); }
 
 document.querySelector(".lb-close").addEventListener("click", closeLightbox);
@@ -1135,7 +1321,7 @@ $("search-form").addEventListener("submit", async (e) => {
     }),
   });
   // Die Fassung vom Server ist die verbindliche -- sie stammt aus demselben
-  // Baum, aus dem der Filter gebaut wurde.
+  // Ausdrucksbaum, aus dem der Filter gebaut wurde.
   $("qb-expr").textContent =
     `Fotos, die ${data.expression} — ${data.total} Treffer` +
     (data.conditions ? ` · ${data.conditions} Bedingung${data.conditions === 1 ? "" : "en"}` : "");
@@ -1172,10 +1358,7 @@ function renderResults(results, unknown = []) {
         ${r.caption_de ? `<p>${escapeHtml(r.caption_de)}</p>` : ""}
         ${notes ? `<div class="notes">${notes}</div>` : ""}
       </figcaption>`;
-    el.querySelector("img").addEventListener("click", () => {
-      lbPhotos = results;
-      openLightbox(i);
-    });
+    el.querySelector("img").addEventListener("click", () => showLightbox(results, i));
     box.appendChild(el);
   });
 }
@@ -1196,6 +1379,24 @@ loadQueue().catch((err) => {
    Zweiergrüppchen. */
 
 let evChannel = "camera";
+let evTab = "unnamed";
+
+function loadEventTab() {
+  ["unnamed", "named", "suggest", "albums"].forEach((id) => {
+    $(`ev-${id}`).classList.toggle("hidden", evTab !== id);
+  });
+  $("ev-sub").querySelectorAll(".chan").forEach((b) => {
+    b.classList.toggle("on", b.dataset.evtab === evTab);
+  });
+  if (evTab === "unnamed") loadEvents();
+  else if (evTab === "named") loadNamed();
+  else if (evTab === "suggest") loadSuggestions();
+  else loadAlbums();
+}
+
+$("ev-sub").querySelectorAll(".chan").forEach((b) => {
+  b.addEventListener("click", () => { evTab = b.dataset.evtab; loadEventTab(); });
+});
 
 function evWhen(ev) {
   if (ev.day_level || !ev.start) return "Uhrzeit unbekannt";
@@ -1257,14 +1458,12 @@ async function loadEvents() {
           <button type="submit">${ev.suggested_name ? "Bestätigen" : "Benennen"}</button>
         </form>
       </div>
-      <div class="shots">
-        ${ev.cover.map((id) => `<img loading="lazy" alt=""
-            src="/api/photos/${encodeURIComponent(id)}/thumb?size=200" />`).join("")}
-      </div>
+      <div class="shot-strip"></div>
     </div>`).join("");
 
   host.querySelectorAll(".serie").forEach((el) => {
     const ev = d.events[Number(el.dataset.i)];
+    bindShotStrip(el.querySelector(".shot-strip"), ev.photo_ids || ev.cover || []);
     el.querySelector(".serie-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = el.querySelector("input");
@@ -1276,14 +1475,447 @@ async function loadEvents() {
           method: "POST",
           body: JSON.stringify({
             name, channel: ev.channel, start: ev.start, end: ev.end,
-            photo_count: ev.size,
+            photo_count: ev.size, photo_ids: ev.photo_ids || [],
           }),
         });
-        el.remove();
         refreshEventNames();
+        evTab = "named";
+        nmChannel = ev.channel || "";
+        loadEventTab();
       } catch (err) {
         input.disabled = false;
         alert(`Konnte nicht gespeichert werden: ${err.message || err}`);
+      }
+    });
+  });
+}
+
+let nmChannel = "";
+
+async function loadNamed() {
+  const host = $("nm-list");
+  host.innerHTML = "<p class='muted'>Lade …</p>";
+  $("nm-chan").innerHTML = CHANNEL_FILTERS
+    .map((f) => `<button type="button" class="chan${f.key === nmChannel ? " on" : ""}"
+                   data-chan="${f.key}">${escapeHtml(f.label)}</button>`).join("");
+  $("nm-chan").querySelectorAll(".chan").forEach((b) =>
+    b.addEventListener("click", () => { nmChannel = b.dataset.chan; loadNamed(); }));
+  let d;
+  try {
+    d = await api(`/api/events/named?detail=1&limit=200&channel=${encodeURIComponent(nmChannel)}`);
+  } catch (err) {
+    host.innerHTML = `<p class='muted'>Benannte Serien nicht ladbar (${escapeHtml(String(err.message || err).slice(0, 140))})</p>`;
+    return;
+  }
+  $("nm-meta").textContent = `${d.total} benannte Serie${d.total === 1 ? "" : "n"}`;
+  if (!d.events.length) {
+    host.innerHTML = "<p class='muted'>Noch keine Serie benannt.</p>";
+    return;
+  }
+  host.innerHTML = d.events.map((ev, i) => `
+    <div class="serie" data-i="${i}">
+      <div class="serie-head">
+        <div>
+          <strong>${escapeHtml(ev.name)}</strong>
+          <span class="muted">${escapeHtml(evDate(ev.date))} · ${escapeHtml(evWhen(ev))} · ${ev.size} Fotos
+            · ${escapeHtml((ev.folders || []).join(" · ") || "ohne Ordner")}</span>
+          ${ev.person_names.length
+            ? `<span class="ev-people">${escapeHtml(ev.person_names.slice(0, 5).join(", "))}${ev.person_names.length > 5 ? ` +${ev.person_names.length - 5}` : ""}</span>`
+            : ""}
+        </div>
+        ${ev.needs_shelve
+          ? `<button type="button" class="mini nm-shelve">Fotos dorthin legen</button>`
+          : `<span class="muted">liegt schon im eigenen Ordner</span>`}
+      </div>
+      ${ev.needs_shelve && ev.dest
+        ? `<p class="muted hint nm-dest">Optional nach <code>${escapeHtml(ev.dest)}</code> — nur die Fotos ohne ✕, der Dump bleibt.</p>`
+        : `<p class="muted hint">✕ nimmt das Foto aus der Serie; nach dem Neuladen bleibt es draußen.</p>`}
+      <div class="shot-strip"></div>
+    </div>`).join("");
+  host.querySelectorAll(".serie").forEach((el) => {
+    const ev = d.events[Number(el.dataset.i)];
+    ev.excluded = new Set();
+    bindShotStrip(el.querySelector(".shot-strip"), ev.photo_ids || ev.cover || [], {
+      excludable: true,
+      excluded: ev.excluded,
+      onToggle: (id, isOut) => {
+        api("/api/events/members", {
+          method: "POST",
+          body: JSON.stringify({
+            photo_ids: [id],
+            name: isOut ? null : ev.name,
+          }),
+        }).catch((err) => alert(`Konnte Serie nicht anpassen: ${err.message || err}`));
+        const kept = (ev.photo_ids || []).filter((x) => !ev.excluded.has(x)).length;
+        const dest = el.querySelector(".nm-dest");
+        if (dest && ev.dest) {
+          dest.innerHTML = `Optional nach <code>${escapeHtml(ev.dest)}</code> — ${kept} Foto${kept === 1 ? "" : "s"} ohne ✕, der Dump bleibt.`;
+        }
+      },
+    });
+    const btn = el.querySelector(".nm-shelve");
+    if (btn) btn.addEventListener("click", () => shelveSeries(ev, btn));
+  });
+}
+
+async function shelveSeries(ev, btn) {
+  const kept = (ev.photo_ids || []).filter((id) => !(ev.excluded && ev.excluded.has(id)));
+  const n = kept.length;
+  if (!n) {
+    alert("Keine Fotos übrig — zuerst mit ✕ nichts mehr übrig gelassen.");
+    return;
+  }
+  const dest = ev.dest || "einen neuen Ordner";
+  if (!confirm(
+    `${n} Foto${n === 1 ? "" : "s"} nach\n${dest}\nlegen?\n\n` +
+    `Nur diese Dateien (Move), ohne die mit ✕. ${(ev.folders || []).join(", ") || "Der Dump"} bleibt sonst unangetastet.`
+  )) return;
+  btn.disabled = true;
+  btn.textContent = "verschiebt …";
+  try {
+    const res = await api("/api/events/shelve", {
+      method: "POST",
+      body: JSON.stringify({ name: ev.name, photo_ids: kept, dry_run: false }),
+    });
+    if (res.failed && res.failed.length) {
+      alert(`Abgelegt, aber ${res.failed.length} Fehler.`);
+    }
+    loadNamed();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Fotos dorthin legen";
+    alert(`Konnte nicht ablegen: ${err.message || err}`);
+  }
+}
+
+
+async function loadSuggestions() {
+  const host = $("sg-list");
+  host.innerHTML = "<p class='muted'>Lade …</p>";
+  let d;
+  try {
+    d = await api("/api/events/suggestions?limit=40");
+  } catch (err) {
+    host.innerHTML = `<p class='muted'>Vorschläge nicht ladbar (${escapeHtml(String(err.message || err).slice(0, 140))})</p>`;
+    return;
+  }
+  $("sg-meta").textContent = d.total
+    ? `${d.total} Vorschlag${d.total === 1 ? "" : "e"}`
+    : "Nichts Offenes.";
+  if (!d.suggestions.length) {
+    host.innerHTML = "<p class='muted'>Keine Vorschläge. Serien zuerst benennen hilft.</p>";
+    return;
+  }
+  host.innerHTML = d.suggestions.map((s, i) => renderSuggestion(s, i)).join("");
+  host.querySelectorAll(".serie").forEach((el) => {
+    const s = d.suggestions[Number(el.dataset.i)];
+    el.querySelectorAll(".shot-strip").forEach((strip) => {
+      const ids = strip.dataset.ids ? strip.dataset.ids.split(",") : [];
+      bindShotStrip(strip, ids.filter(Boolean));
+    });
+    const accept = el.querySelector(".sg-ok");
+    const reject = el.querySelector(".sg-no");
+    if (accept) accept.addEventListener("click", () => acceptSuggestion(s, el));
+    if (reject) reject.addEventListener("click", () => rejectSuggestion(s, el));
+    bindSuggestionDest(el, s);
+  });
+}
+
+function suggestionSources(s) {
+  const evs = s.kind === "unify_folders" ? [s.event] : [s.a, s.b];
+  const out = [];
+  for (const ev of evs) {
+    const paths = (ev && ev.album_paths) || [];
+    if (paths.length) {
+      for (const p of paths) if (p && !out.includes(p)) out.push(p);
+    } else {
+      for (const f of (ev && ev.folders) || []) if (f && !out.includes(f)) out.push(f);
+    }
+  }
+  return out;
+}
+
+function joinDest(parent, name) {
+  if (!parent) return "";
+  const n = (name || "").trim();
+  if (!n) return "";
+  const slash = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return parent.replace(/[\\/]+$/, "") + slash + n;
+}
+
+function pathsEqual(a, b) {
+  const n = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return n(a) === n(b) && n(a) !== "";
+}
+
+function paintFromTo(box, sources, destParent, name) {
+  if (!box) return;
+  const dest = joinDest(destParent, name);
+  if (!sources.length && !destParent) {
+    box.innerHTML = `<p class="muted hint">Zusammenlegen setzt nur den Namen. Ein Zielordner ist noch unklar — kein Ordner Fotos/Alben gefunden.</p>`;
+    return;
+  }
+  const rows = sources.map((src) => {
+    if (dest && pathsEqual(src, dest)) {
+      return `<li><code>${escapeHtml(src)}</code> <span class="muted">bleibt — liegt schon dort</span></li>`;
+    }
+    if (dest) {
+      return `<li><code>${escapeHtml(src)}</code><span class="sg-arrow">→</span><code class="sg-dest">${escapeHtml(dest)}</code></li>`;
+    }
+    if (destParent) {
+      return `<li><code>${escapeHtml(src)}</code><span class="sg-arrow">→</span><span class="muted">Namen eintragen für das Ziel</span></li>`;
+    }
+    return `<li><code>${escapeHtml(src)}</code><span class="sg-arrow">→</span><span class="muted">Ziel unbekannt (kein Ordner Fotos/Alben)</span></li>`;
+  }).join("");
+  box.innerHTML = `
+    <p class="muted hint">Zusammenlegen setzt nur den Namen. Die Dateien bleiben in ihren Ordnern, bis du unter Benannt „Fotos dorthin legen“ klickst.</p>
+    <ul class="sg-moves">${rows}</ul>`;
+}
+
+function bindSuggestionDest(el, s) {
+  const box = el.querySelector(".sg-fromto");
+  const input = el.querySelector("input");
+  if (!box || (s.kind !== "neighbor" && s.kind !== "unify_folders")) return;
+  const sources = suggestionSources(s);
+  const parent = s.dest_parent || "";
+  const refresh = () => paintFromTo(box, sources, parent, input ? input.value : s.suggested_name);
+  if (input) input.addEventListener("input", refresh);
+  refresh();
+}
+
+function renderSourceLane(ev) {
+  if (!ev) return "";
+  const label = (ev.folders || []).join(" · ") || "Ohne Album";
+  const paths = ev.album_paths && ev.album_paths.length ? ev.album_paths : [];
+  const pathHtml = paths.length
+    ? paths.map((p) => `<code class="sg-path">${escapeHtml(p)}</code>`).join("")
+    : `<span class="muted">${escapeHtml(label)}</span>`;
+  return `<div class="sg-lane">
+    <div class="sg-src">
+      <span class="sg-src-label">${escapeHtml(label)} · ${ev.size || 0} Fotos — Quelle</span>
+      ${pathHtml}
+    </div>
+    <div class="shot-strip" data-ids="${escapeHtml((ev.photo_ids || ev.cover || []).join(","))}"></div>
+  </div>`;
+}
+
+function renderSuggestion(s, i) {
+  if (s.kind === "neighbor") {
+    const gap = s.gap_minutes >= 90
+      ? `${(s.gap_minutes / 60).toFixed(1).replace(".", ",")} h dazwischen`
+      : `${s.gap_minutes} min dazwischen`;
+    const people = (s.shared_people || []).length
+      ? `gemeinsam: ${s.shared_people.slice(0, 4).join(", ")}`
+      : "";
+    return `<div class="serie" data-i="${i}">
+      <div class="serie-head">
+        <div>
+          <strong>Zwei Serien, ${escapeHtml(gap)}</strong>
+          ${people ? `<span class="ev-people">${escapeHtml(people)}</span>` : ""}
+        </div>
+        <form class="serie-form sg-form">
+          <input type="text" list="dl-events" value="${escapeHtml(s.suggested_name || "")}"
+                 placeholder="Name für beide" />
+          <button type="button" class="sg-ok">Zusammenlegen</button>
+          <button type="button" class="sg-no ghost">Nicht zusammen</button>
+        </form>
+      </div>
+      ${renderSourceLane(s.a)}
+      ${renderSourceLane(s.b)}
+      <div class="sg-fromto"></div>
+    </div>`;
+  }
+  if (s.kind === "unify_folders") {
+    return `<div class="serie" data-i="${i}">
+      <div class="serie-head">
+        <div>
+          <strong>Eine Serie, ${s.folders.length} Ordner</strong>
+          <span class="muted">${escapeHtml(s.folders.join(" · "))} · ${s.event.size} Fotos</span>
+        </div>
+        <form class="serie-form">
+          <input type="text" list="dl-events" value="${escapeHtml(s.suggested_name || "")}"
+                 placeholder="Zielname" />
+          <button type="button" class="sg-ok">Namen setzen</button>
+          <button type="button" class="sg-no ghost">Ignorieren</button>
+        </form>
+      </div>
+      ${renderSourceLane(s.event)}
+      <div class="sg-fromto"></div>
+    </div>`;
+  }
+  const a = s.a || {}, b = s.b || {};
+  return `<div class="serie" data-i="${i}">
+    <div class="serie-head">
+      <div>
+        <strong>Gleiche Uhrzeit, verschiedene Quellen</strong>
+        <span class="muted">${escapeHtml(a.channel || "")} · ${escapeHtml(a.folder_name || "")}
+          und ${escapeHtml(b.channel || "")} · ${escapeHtml(b.folder_name || "")}
+          · ${s.delta_seconds || 0} s</span>
+      </div>
+      <form class="serie-form">
+        <input type="text" list="dl-events" placeholder="Name (optional)" />
+        <button type="button" class="sg-ok">Ist dieselbe Gelegenheit</button>
+        <button type="button" class="sg-no ghost">Zufall</button>
+      </form>
+    </div>
+    <div class="shot-strip" data-ids="${escapeHtml([a.id, b.id].filter(Boolean).join(","))}"></div>
+  </div>`;
+}
+
+async function acceptSuggestion(s, el) {
+  const name = el.querySelector("input")?.value.trim();
+  const btn = el.querySelector(".sg-ok");
+  if (s.kind === "neighbor") {
+    if (!name) return;
+    btn.disabled = true;
+    try {
+      await api("/api/events/merge", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          channel: s.a.channel,
+          a_start: s.a.start, a_end: s.a.end,
+          b_start: s.b.start, b_end: s.b.end,
+          photo_ids: [...(s.a.photo_ids || []), ...(s.b.photo_ids || [])],
+        }),
+      });
+      el.remove();
+      refreshEventNames();
+    } catch (err) {
+      btn.disabled = false;
+      alert(err.message || err);
+    }
+    return;
+  }
+  if (s.kind === "unify_folders") {
+    if (!name) return;
+    btn.disabled = true;
+    try {
+      await api("/api/events/name", {
+        method: "POST",
+        body: JSON.stringify({
+          name, channel: s.event.channel, start: s.event.start, end: s.event.end,
+          photo_count: s.event.size, photo_ids: s.event.photo_ids || [],
+        }),
+      });
+      el.remove();
+      refreshEventNames();
+    } catch (err) {
+      btn.disabled = false;
+      alert(err.message || err);
+    }
+    return;
+  }
+  btn.disabled = true;
+  try {
+    if (name) {
+      await api("/api/events/merge", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          channel: s.a.channel || "camera",
+          a_start: s.a.taken_at, a_end: s.a.taken_at,
+          b_start: s.b.taken_at, b_end: s.b.taken_at,
+          photo_ids: [s.a.id, s.b.id].filter(Boolean),
+        }),
+      });
+    }
+    el.remove();
+  } catch (err) {
+    btn.disabled = false;
+    alert(err.message || err);
+  }
+}
+
+async function rejectSuggestion(s, el) {
+  const span = (ev, fallbackChan) => ({
+    channel: ev.channel || fallbackChan,
+    start: ev.start || ev.taken_at,
+    end: ev.end || ev.taken_at,
+  });
+  const a = s.kind === "unify_folders" ? s.event : s.a;
+  const b = s.kind === "unify_folders" ? s.event : s.b;
+  try {
+    await api("/api/events/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        a_channel: a.channel || "camera",
+        a_start: a.start || a.taken_at,
+        a_end: a.end || a.taken_at,
+        b_channel: b.channel || "camera",
+        b_start: b.start || b.taken_at,
+        b_end: b.end || b.taken_at,
+      }),
+    });
+    el.remove();
+  } catch (err) {
+    alert(err.message || err);
+  }
+}
+
+async function loadAlbums() {
+  const host = $("al-list");
+  host.innerHTML = "<p class='muted'>Lade …</p>";
+  let d;
+  try {
+    d = await api("/api/albums");
+  } catch (err) {
+    host.innerHTML = `<p class='muted'>Alben nicht ladbar (${escapeHtml(String(err.message || err).slice(0, 140))})</p>`;
+    return;
+  }
+  $("al-meta").textContent = `${d.total} Ordner`;
+  host.innerHTML = d.albums.map((a, i) => `
+    <div class="serie" data-i="${i}">
+      <div class="serie-head">
+        <div>
+          <strong>${escapeHtml(a.folder_name)}</strong>
+          <span class="muted">${a.photo_count} Foto${a.photo_count === 1 ? "" : "s"}
+            · ${escapeHtml(a.path)}</span>
+          ${a.event_names.length
+            ? `<span class="ev-people">${a.named_count} in Serien: ${escapeHtml(a.event_names.join(", "))}</span>`
+            : ""}
+          ${a.generic && a.event_names.length
+            ? `<span class="muted">Dump — Serien unter „Benannt“ in eigene Ordner legen, nicht den ganzen Ordner umbenennen.</span>`
+            : ""}
+        </div>
+        ${a.rename_whole ? `
+        <form class="serie-form al-form">
+          <input type="text" value="${escapeHtml(a.folder_name)}"
+                 placeholder="Games Convention 2007" />
+          <button type="submit">Umbenennen</button>
+        </form>` : ""}
+      </div>
+    </div>`).join("");
+  host.querySelectorAll(".serie").forEach((el) => {
+    const a = d.albums[Number(el.dataset.i)];
+    const form = el.querySelector(".al-form");
+    if (!form) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = el.querySelector("input");
+      const newName = input.value.trim();
+      if (!newName || newName === a.folder_name) return;
+      if (!confirm(`Ordner „${a.folder_name}“ in „${newName}“ umbenennen?\n\nNur verschieben, nicht kopieren. ${a.photo_count} Fotos im Index.`)) return;
+      input.disabled = true;
+      try {
+        const dry = await api("/api/albums/rename", {
+          method: "POST",
+          body: JSON.stringify({ path: a.path, new_name: newName, dry_run: true }),
+        });
+        const res = await api("/api/albums/rename", {
+          method: "POST",
+          body: JSON.stringify({ path: a.path, new_name: newName, dry_run: false }),
+        });
+        if (res.failed && res.failed.length) {
+          alert(`Umbenannt, aber ${res.failed.length} Index-Fehler.`);
+        }
+        el.querySelector("strong").textContent = newName;
+        el.querySelector(".muted").textContent =
+          `${dry.photos} Fotos · ${res.to || ""}`;
+        input.disabled = false;
+      } catch (err) {
+        input.disabled = false;
+        alert(`Konnte nicht umbenannt werden: ${err.message || err}`);
       }
     });
   });

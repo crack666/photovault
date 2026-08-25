@@ -105,7 +105,54 @@ def all_names(client) -> list[dict]:
         except Exception as e:
             logger.warning("Ereignisnamen nicht lesbar: %s", e)
             return out
-        out.extend(p.payload or {} for p in batch)
+        for p in batch:
+            payload = p.payload or {}
+            if payload.get("kind") == "reject":
+                continue
+            out.append(payload)
+        if offset is None:
+            return out
+
+
+def reject_merge(client, *, a: tuple, b: tuple) -> dict:
+    """Eine Zusammenlegung ablehnen, damit die Karte nicht wiederkommt."""
+    from qdrant_client.models import PointStruct
+
+    if not ensure(client):
+        raise RuntimeError("Ereignis-Collection nicht verfuegbar")
+    left, right = sorted((tuple(a), tuple(b)))
+    key = "reject|" + "|".join(str(x) for x in left + right)
+    payload = {
+        "kind": "reject",
+        "a_channel": left[0], "a_start": left[1], "a_end": left[2],
+        "b_channel": right[0], "b_start": right[1], "b_end": right[2],
+        "updated_at": time.time(),
+    }
+    client.upsert(collection_name=COLLECTION, wait=True,
+                  points=[PointStruct(id=_point_id(key), vector=_DUMMY, payload=payload)])
+    return payload
+
+
+def all_rejects(client) -> list[tuple]:
+    """Paare als ((channel, start, end), (channel, start, end))."""
+    if not ensure(client):
+        return []
+    out, offset = [], None
+    while True:
+        try:
+            batch, offset = client.scroll(collection_name=COLLECTION, limit=256,
+                                          offset=offset, with_payload=True, with_vectors=False)
+        except Exception as e:
+            logger.warning("Ablehnungen nicht lesbar: %s", e)
+            return out
+        for p in batch:
+            payload = p.payload or {}
+            if payload.get("kind") != "reject":
+                continue
+            out.append((
+                (payload.get("a_channel"), payload.get("a_start"), payload.get("a_end")),
+                (payload.get("b_channel"), payload.get("b_start"), payload.get("b_end")),
+            ))
         if offset is None:
             return out
 

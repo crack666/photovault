@@ -71,6 +71,7 @@ def payload_context(payload: dict) -> dict:
     file_path = payload.get("file_path") or ""
     return {
         "folder_name": payload.get("folder_name"),
+        "event_name": payload.get("event_name"),
         "date": payload.get("date"),
         "date_source": payload.get("date_source"),
         "file_ctime": payload.get("file_ctime"),

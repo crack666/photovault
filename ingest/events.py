@@ -21,6 +21,7 @@ was ein Wert am eigenen Bestand bewirkt.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Iterable, Sequence
@@ -29,6 +30,27 @@ logger = logging.getLogger(__name__)
 
 #: Lücke, ab der eine neue Gelegenheit beginnt.
 DEFAULT_GAP = timedelta(hours=3)
+
+#: Nachbarn, die so weit auseinanderliegen, dürfen als "dieselbe Gelegenheit?"
+#: vorgeschlagen werden — nicht still zusammengelegt. Enger als DEFAULT_GAP
+#: sind sie schon eine Serie; weiter als das ist ein anderer Tag.
+NEIGHBOR_MAX_GAP = timedelta(hours=12)
+
+#: Ordner, die keine Gelegenheit benennen. Dump-Alben ohne Personen sollen
+#: keine Nachbar-Vorschläge erzeugen — dort ist der Zufall zu groß.
+RE_GENERIC_ALBUM = re.compile(
+    r"^(fotos?|photos?|bilder|images?|pictures?|handyfotos?|handypics|dcim|"
+    r"camera|kamera|whatsapp( images)?|sent|screenshots?|download|neuer ordner|"
+    r"unsortiert|sonstiges|div(erse)?|misc)$",
+    re.IGNORECASE,
+)
+
+
+def is_generic_album(name: str | None) -> bool:
+    if not name or not str(name).strip():
+        return True
+    return bool(RE_GENERIC_ALBUM.match(str(name).strip()))
+
 
 #: Zeitstempel ohne Uhrzeit. Entsteht, wenn nur ein Tagesdatum bekannt ist --
 #: dann ist "Lücke in Stunden" nicht entscheidbar und der Tag ist die feinste

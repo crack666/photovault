@@ -29,7 +29,7 @@
       <div class="hero">
         <img id="cover" alt="Gesicht" />
       </div>
-      <h1>Wer ist das?</h1>
+      <h1 id="card-title">Wer ist das?</h1>
       <p id="cluster-size" class="muted"></p>
       <div id="thumbs" class="thumbs"></div>
       <div id="suggestions" class="chips"></div>
@@ -37,7 +37,8 @@
         <input id="name-input" list="dl-persons" autocomplete="off" type="text" placeholder="Name eingeben — neue Person oder bekanntes Gesicht" />
         <button type="submit" class="primary">Zuordnen</button>
       </form>
-      <div class="row">
+      <div class="card-actions">
+        <button type="button" id="btn-confirm-known" class="primary hidden">Ja, das ist diese Person</button>
         <button type="button" id="btn-skip" class="ghost">Überspringen</button>
       </div>
     </section>
@@ -143,6 +144,7 @@
     </div>
   </main>
 
+  <!-- Eine Detailansicht für alle Raster: Suche, Personen, Serien, Vorschläge. -->
   <div id="lightbox" class="lightbox hidden">
     <button type="button" class="lb-close" aria-label="Schließen">✕</button>
     <button type="button" class="lb-nav lb-prev" aria-label="Zurück">‹</button>
@@ -157,12 +159,26 @@
         <h3>Details</h3>
         <button type="button" id="lb-toggle" class="mini" title="Einklappen (i)">Einklappen</button>
       </header>
+      <p id="lb-file-warn" class="lb-file-warn hidden"></p>
       <dl id="lb-meta"></dl>
+      <div id="lb-date-accept" class="lb-date-accept hidden">
+        <p class="muted">Aufnahmedatum ist geschätzt — oft trotzdem passend.</p>
+        <button type="button" id="lb-accept-date" class="mini">Datum übernehmen</button>
+        <span id="lb-date-state" class="muted"></span>
+      </div>
+      <div id="lb-map" class="lb-map hidden">
+        <iframe id="lb-map-frame" title="Karte" loading="lazy" referrerpolicy="no-referrer"></iframe>
+        <p>
+          <a id="lb-map-link" href="#" target="_blank" rel="noopener">OpenStreetMap</a>
+          <span id="lb-map-coord" class="muted"></span>
+        </p>
+      </div>
       <div class="lb-capedit">
         <label for="lb-caption">Beschreibung</label>
         <textarea id="lb-caption" rows="4"></textarea>
         <div class="row">
           <button type="button" id="lb-save-caption" class="mini">Speichern</button>
+          <button type="button" id="lb-keep-caption" class="mini">Behalten</button>
           <span id="lb-cap-state" class="muted"></span>
         </div>
       </div>
@@ -172,14 +188,56 @@
   <!-- Serien benennen: derselbe Ablauf wie "Wer ist das?", nur auf der
        Zeitachse. Ein Name deckt 50 bis 150 Fotos auf einmal ab. -->
   <main id="view-events" class="view wide hidden">
-    <h1>Unbenannte Serien</h1>
-    <p class="muted" id="ev-meta">Lade …</p>
-    <p class="muted" id="ev-hint">
-      Zusammenhängende Aufnahmen derselben Gelegenheit. Erkennst du sie wieder,
-      gib ihr einen Namen — er gilt dann für alle Fotos der Serie.
-    </p>
-    <div class="chanbar" id="ev-chan"></div>
-    <div id="ev-list"></div>
+    <div class="chanbar" id="ev-sub">
+      <button type="button" class="chan on" data-evtab="unnamed">Noch offen</button>
+      <button type="button" class="chan" data-evtab="named">Benannt</button>
+      <button type="button" class="chan" data-evtab="suggest">Vorschläge</button>
+      <button type="button" class="chan" data-evtab="albums">Ganze Ordner</button>
+    </div>
+
+    <div id="ev-unnamed">
+      <h1>Noch unbenannt</h1>
+      <p class="muted" id="ev-meta">Lade …</p>
+      <p class="muted" id="ev-hint">
+        Schritt 1: der Serie einen Namen geben. Danach liegt sie unter „Benannt“
+        — verschieben ist optional.
+      </p>
+      <div class="chanbar" id="ev-chan"></div>
+      <div id="ev-list"></div>
+    </div>
+
+    <div id="ev-named" class="hidden">
+      <h1>Benannte Serien</h1>
+      <p class="muted" id="nm-meta">Lade …</p>
+      <p class="muted">
+        Schritt 2 (optional): nur diese Fotos in einen eigenen Ordner legen.
+        WhatsApp- und Handy-Dumps bleiben sonst unangetastet. Das Ziel steht an der Karte.
+        ✕ nimmt ein Foto aus der Serie — es bleibt wo es liegt und kommt hier nicht wieder.
+      </p>
+      <div class="chanbar" id="nm-chan"></div>
+      <div id="nm-list"></div>
+    </div>
+
+    <div id="ev-suggest" class="hidden">
+      <h1>Vielleicht dieselbe Gelegenheit</h1>
+      <p class="muted" id="sg-meta">Lade …</p>
+      <p class="muted">
+        Jedes Karussell zeigt, wo die Fotos jetzt liegen. Zusammenlegen vergibt
+        den Namen — die Dateien bleiben in ihren Ordnern. Das Ziel fürs spätere
+        Ablegen steht darunter (Von → Nach).
+      </p>
+      <div id="sg-list"></div>
+    </div>
+
+    <div id="ev-albums" class="hidden">
+      <h1>Ordner umbenennen</h1>
+      <p class="muted" id="al-meta">Lade …</p>
+      <p class="muted">
+        Den ganzen Ordner umbenennen — z. B. GC 07 → Games Convention 2007.
+        Eine Serie aus WhatsApp gehört unter „Benannt“, nicht hier.
+      </p>
+      <div id="al-list"></div>
+    </div>
   </main>
 
   <main id="view-search" class="view wide hidden">

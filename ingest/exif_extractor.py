@@ -48,12 +48,19 @@ class ExifExtractor:
                         result["date_confidence"] = 1.0
                 except ValueError:
                     pass
-            gps_info = exif.get_ifd(0x8825)
+            # GPS-IFD: 1/3 sind N/S und E/W, 2/4 die Grad-Tripel.
+            # Frueher standen Ref und Koordinaten vertauscht — dann blieb
+            # jedes Smartphone-Foto ohne Karte, obwohl die Datei GPS hat.
+            gps_info = None
+            try:
+                gps_info = exif.get_ifd(0x8825)
+            except Exception:
+                gps_info = None
             if gps_info:
-                lat = self._gps_to_decimal(gps_info.get(1), gps_info.get(2))
-                lon = self._gps_to_decimal(gps_info.get(3), gps_info.get(4))
+                lat = self._gps_to_decimal(gps_info.get(2), gps_info.get(1))
+                lon = self._gps_to_decimal(gps_info.get(4), gps_info.get(3))
                 if lat is not None and lon is not None:
-                    result["gps"] = [lat, lon]
+                    result["gps"] = [round(lat, 6), round(lon, 6)]
             raw = {}
             from PIL.ExifTags import TAGS
             for tag_id, value in exif.items():
@@ -69,12 +76,21 @@ class ExifExtractor:
     def _gps_to_decimal(value, ref) -> float | None:
         try:
             from fractions import Fraction
-            d, m, s = (Fraction(x) for x in value)
-            decimal = d + m / 60 + s / 3600
-            if ref and str(ref)[0] in ("S", "W"):
+
+            def _frac(part):
+                if isinstance(part, (tuple, list)) and len(part) == 2:
+                    return Fraction(part[0], part[1] or 1)
+                return Fraction(part)
+
+            d, m, s = (_frac(x) for x in value)
+            decimal = float(d + m / 60 + s / 3600)
+            if isinstance(ref, (bytes, bytearray)):
+                ref = ref.decode("ascii", "ignore")
+            heading = str(ref or "").strip("\x00 ").upper()[:1]
+            if heading in ("S", "W"):
                 decimal = -decimal
-            return float(decimal)
-        except (TypeError, ValueError):
+            return decimal
+        except (TypeError, ValueError, ZeroDivisionError):
             return None
 
 
@@ -87,6 +103,7 @@ DERIVED_CONFIDENCE = {
     "file_time": 0.3,
     "album": 0.6,
     "offset": 0.9,
+    "accepted": 1.0,
 }
 
 _MARKER = "photovault:src="

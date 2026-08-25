@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from api.known_faces import MIN_BATCH, candidates, centroids
+from api.known_faces import MIN_BATCH, MIN_NEW_SIZE, candidates, centroids, queue_cards
 
 
 def _vec(base, jitter=0.0, dim=16, seed=0):
@@ -79,6 +79,22 @@ class TestCandidates:
         got = candidates(unlabeled, _labeled("p1", "Sophie", 1))
         scores = [f["score"] for f in got[0]["faces"]]
         assert scores == sorted(scores, reverse=True)
+
+class TestQueueCards:
+    def test_known_person_batches_come_before_new_groups(self):
+        labeled = _labeled("p1", "Sophie", 1)
+        more = _unlabeled("u", 1, 8)
+        strangers = _unlabeled("n", 7, 12, jitter=0.02)
+        got = queue_cards(more + strangers, labeled, min_new_size=10)
+        assert got[0]["kind"] == "known"
+        assert got[0]["person_name"] == "Sophie" and got[0]["size"] == 8
+        assert any(c["kind"] == "new" and c["size"] >= 10 for c in got)
+
+    def test_tiny_stranger_groups_are_not_cards(self):
+        labeled = _labeled("p1", "Sophie", 1)
+        tiny = _unlabeled("t", 9, 6, jitter=0.02)
+        got = queue_cards(tiny, labeled, min_new_size=MIN_NEW_SIZE)
+        assert all(c.get("kind") != "new" for c in got)
 
     def test_the_threshold_decides(self):
         unlabeled = _unlabeled("u", 1, 5, jitter=0.5)

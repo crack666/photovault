@@ -32,6 +32,14 @@ def test_groups_by_year_and_album():
     assert out["years"][0]["events"][0]["photos"][0]["id"] == "a"
 
 
+def test_ablage_routes_are_registered():
+    spec = app.openapi()
+    assert "post" in (spec["paths"].get("/api/albums/rename") or {})
+    assert "get" in (spec["paths"].get("/api/events/suggestions") or {})
+    assert "post" in (spec["paths"].get("/api/events/merge") or {})
+    assert "post" in (spec["paths"].get("/api/events/shelve") or {})
+
+
 def test_gallery_route_is_registered():
     """POST /gallery darf nicht von DELETE /{person_id} als 405 verschluckt werden."""
     spec = app.openapi()
@@ -174,3 +182,18 @@ class TestSuggestedName:
     def test_the_first_folder_wins_when_several_merged(self):
         from api.routes.events import suggest_name
         assert suggest_name(["Abiball", "Abistreich"], "2008-06-27") == "Abiball 2008"
+
+
+class TestSuggestionDest:
+    def test_neighbor_shows_fotos_as_destination(self):
+        from api.routes.events import _with_dest
+        s = _with_dest({
+            "kind": "neighbor",
+            "suggested_name": "Abistreich 2008",
+            "a": {"album_paths": ["/mnt/photo/Fotos/Abistreich 2008"]},
+            "b": {"album_paths": ["/mnt/photo/Handys/WhatsApp Images"]},
+        })
+        dest = (s.get("dest") or "").replace("\\", "/")
+        parent = (s.get("dest_parent") or "").replace("\\", "/")
+        assert parent.endswith("/Fotos")
+        assert dest.endswith("/Fotos/Abistreich 2008")
