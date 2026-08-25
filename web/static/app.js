@@ -1,5 +1,5 @@
-import { $, escapeHtml } from "./core/dom.js?v=6";
-import { api, cropUrl } from "./core/api.js?v=6";
+import { $, escapeHtml } from "./core/dom.js?v=9";
+import { api, cropUrl } from "./core/api.js?v=9";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -23,7 +23,7 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=6");
+  const { initAtlas } = await import("./atlas/index.js?v=9");
   await initAtlas({ showLightbox });
 }
 

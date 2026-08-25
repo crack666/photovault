@@ -6,14 +6,16 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=6";
-import { api, thumbUrl } from "../core/api.js?v=6";
+import { $, escapeHtml, num } from "../core/dom.js?v=9";
+import { api, thumbUrl } from "../core/api.js?v=9";
+import { openModal } from "../core/modal.js?v=9";
+import { createPathPick } from "../core/pathpick.js?v=9";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, spaceCounts, tidiness,
   visibleMask,
-} from "./model.js?v=6";
-import { createScene } from "./scene.js?v=6";
+} from "./model.js?v=9";
+import { createScene } from "./scene.js?v=9";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -609,55 +611,146 @@ function suggestFolder() {
   return /(s|en|er)$/.test(name) ? name : `${name}s`;
 }
 
+/** Welche Bereiche gibt es schon? Sie sind die naheliegenden Ziele.
+
+    Wo die Fotos gerade *herkommen*, ist als Ziel unbrauchbar -- steht aber
+    trotzdem in der Liste, weil „innerhalb desselben Dumps umsortieren" ein
+    legitimer Wunsch ist. Es ist nur nie die Vorauswahl. */
+function targetChoices(name) {
+  // Wie viele der Ausgewählten liegen schon in diesem Bereich? „Ist Herkunft
+  // ja/nein" war unbrauchbar: in einem Screenshot-Kontinent liegt irgendein
+  // Foto in jedem Bereich, und dann stand an jedem Ziel dasselbe Etikett.
+  const from = new Map();
+  for (const i of selection) from.set(model.sp[i], (from.get(model.sp[i]) || 0) + 1);
+  const total = selection.size || 1;
+  const out = model.spaces.map((space, i) => ({
+    space,
+    path: `${model.root}/${space}/${name}`,
+    shown: !filters.spacesOff.has(i),
+    here: from.get(i) || 0,
+    // Als Herkunft gilt, wo die Mehrheit schon liegt -- dorthin zu verschieben
+    // ist meist keine Ordnung, sondern eine Verschiebung im Kreis.
+    source: (from.get(i) || 0) / total > 0.5,
+  }));
+  if (!model.spaces.includes("Sonstiges")) {
+    out.push({
+      space: "Sonstiges", path: `${model.root}/Sonstiges/${name}`,
+      shown: false, here: 0, source: false, isNew: true,
+    });
+  }
+  return out;
+}
+
 async function moveToFolder() {
-  const suggestion = suggestFolder();
-  // Zwei Ziele, ausdrücklich benannt. Beides ist ein Umzug auf der Platte --
-  // der Unterschied ist nur, ob PhotoVault den Ordner noch zu seinem
-  // Arbeitsbereich zählt.
-  const inside = `${model.root}/Fotos/${suggestion}`;
-  const outside = `${model.root}/Sonstiges/${suggestion}`;
-  const input = prompt(
-    `${num(selection.size)} Fotos verschieben (Move, kein Copy).\n\n` +
-    `Im Arbeitsbereich — bleibt auf der Karte, nur woanders einsortiert:\n` +
-    `  ${inside}\n\n` +
-    `Daneben — verschwindet beim nächsten atlas_build von der Karte:\n` +
-    `  ${outside}\n\n` +
-    `Pfad bearbeiten oder bestätigen. Ein Name ohne / landet im Bibliotheksordner.`,
-    outside,
-  );
-  if (!input || !input.trim()) return;
-  const target = splitDest(input);
-  if (!target.folder_name) return;
+  const ids = selectedIds();
+  const name = suggestFolder();
+  const choices = targetChoices(name);
+  // Vorauswahl in dieser Reihenfolge: ein Bereich, der schon ausgeblendet ist
+  // (dann ist die Wirkung sofort da), sonst „Sonstiges", sonst irgendein
+  // Bereich, aus dem die Auswahl *nicht* stammt.
+  const preferred = choices.find((c) => !c.shown && !c.source)
+    || choices.find((c) => c.space === "Sonstiges")
+    || choices.find((c) => !c.source)
+    || choices[0];
+  let target = preferred.path;
+
+  const dlg = openModal({
+    title: `${num(ids.length)} Fotos verschieben`,
+    lead: "Die Dateien werden <b>bewegt, nicht kopiert</b>. Der Ordnername kommt "
+        + "aus den Bildbeschreibungen der Auswahl.",
+    body: `
+      <div class="mv-choices">
+        ${choices.map((c) => `
+          <button type="button" class="mv-choice${c.path === target ? " on" : ""}" data-path="${c.path}">
+            <b>${c.space}${c.isNew ? " <em>(neu)</em>" : ""}</b>
+            <span>${c.path}</span>
+            <i>${[
+              c.here ? `${num(c.here)} der Auswahl liegen schon hier` : "",
+              c.shown ? "sichtbar" : "ausgeblendet",
+            ].filter(Boolean).join(" · ")}</i>
+          </button>`).join("")}
+      </div>
+      <div class="mv-path" id="mv-path"></div>
+      <label class="mv-hide" id="mv-hide-row">
+        <input type="checkbox" id="mv-hide"> Zielbereich danach ausblenden
+        <span>ein Klick in der Leiste nimmt ihn wieder herein</span>
+      </label>
+      <p class="mv-plan" id="mv-plan"></p>`,
+    buttons: [
+      { id: "cancel", label: "Abbrechen" },
+      { id: "go", label: "Verschieben", kind: "danger" },
+    ],
+  });
+
+  /** Bereich des gerade gewählten Ziels, oder -1 wenn er noch nicht existiert. */
+  const targetSpace = () => {
+    if (!target.startsWith(model.root)) return -1;
+    const seg = target.slice(model.root.length).replace(/^\/+/, "").split("/")[0];
+    return model.spaces.indexOf(seg);
+  };
+
+  const syncHideRow = () => {
+    const i = targetSpace();
+    const row = $("mv-hide-row");
+    // Einen Bereich ausblenden, der schon aus ist, ist keine Wahl.
+    const useful = i < 0 || !filters.spacesOff.has(i);
+    row.classList.toggle("hidden", !useful);
+    if (!useful) $("mv-hide").checked = false;
+  };
+
+  const pick = createPathPick($("mv-path"), target, (v) => {
+    target = v;
+    dlg.root.querySelectorAll(".mv-choice").forEach((b) =>
+      b.classList.toggle("on", b.dataset.path === v));
+    $("mv-plan").textContent = "";
+    syncHideRow();
+    plan();
+  });
+  dlg.root.querySelector(".mv-choices").onclick = (e) => {
+    const b = e.target.closest("[data-path]");
+    if (b) pick.set(b.dataset.path);
+  };
+  syncHideRow();
+
+  // Trockenlauf, sobald der Dialog steht und bei jeder Pfadänderung: die Zahl
+  // im Dialog ist dann die echte, nicht die erhoffte. Als
+  // Funktionsdeklaration, damit die Pfadwahl oben sie schon kennt.
+  async function plan() {
+    const mine = target;
+    try {
+      const p = await api("/api/photos/relocate", {
+        method: "POST",
+        body: JSON.stringify({ photo_ids: ids, ...splitDest(mine), confirm: false }),
+      });
+      if (mine !== target) return;   // inzwischen woanders hin gewählt
+      const skipped = p.skipped?.length || 0;
+      $("mv-plan").textContent =
+        `${num(p.photos)} Dateien wandern nach ${p.dest}`
+        + (skipped ? ` · ${num(skipped)} bleiben liegen (schon dort oder Datei fehlt)` : "");
+    } catch (e) {
+      if (mine === target) $("mv-plan").textContent = `Geht nicht: ${e.message}`;
+    }
+  }
+  plan();
+
+  // Referenz vor dem Warten festhalten: `close()` raeumt den Dialoginhalt aus
+  // dem Dokument, das Element selbst behaelt seinen Zustand aber.
+  const hideBox = $("mv-hide");
+  const answer = await dlg.wait();
+  if (answer !== "go") return;
+  const hideAfter = !!hideBox?.checked;
+  const hideSpace = targetSpace();
+  const chosen = splitDest(target);
+  if (!chosen.folder_name) return;
 
   const msg = $("atlas-msg");
-  const ids = selectedIds();
-  msg.textContent = "plant …";
-  let plan;
-  try {
-    plan = await api("/api/photos/relocate", {
-      method: "POST",
-      body: JSON.stringify({ photo_ids: ids, ...target, confirm: false }),
-    });
-  } catch (e) {
-    msg.textContent = `Geht nicht: ${e.message}`;
-    return;
-  }
-
-  const skipped = plan.skipped?.length || 0;
-  const ok = confirm(
-    `${num(plan.photos)} Dateien verschieben nach:\n${plan.dest}\n\n` +
-    (skipped ? `${num(skipped)} bleiben liegen (schon dort, oder Datei fehlt).\n\n` : "") +
-    `Die Dateien werden bewegt, nicht kopiert. Fortfahren?`,
-  );
-  if (!ok) { msg.textContent = "abgebrochen"; return; }
-
   msg.textContent = "verschiebt …";
   try {
     const res = await api("/api/photos/relocate", {
       method: "POST",
       body: JSON.stringify({
         photo_ids: ids,
-        ...target,
+        ...chosen,
         confirm: true,
         reembed: $("atlas-reembed").checked,
       }),
@@ -668,8 +761,15 @@ async function moveToFolder() {
     const bereich = (res.dest || "").startsWith(model.root)
       ? res.dest.slice(model.root.length).replace(/^\/+/, "").split("/")[0]
       : "";
+    // Wollte der Mensch den Zielbereich loswerden, wird er jetzt ausgeblendet
+    // -- der Schalter in der Leiste nimmt ihn mit einem Klick wieder herein.
+    if (hideAfter && hideSpace >= 0) {
+      filters.spacesOff.add(hideSpace);
+      const chip = document.querySelector(`#atlas-spaces [data-space="${hideSpace}"]`);
+      if (chip) chip.classList.remove("on");
+    }
     const stays = model.spaces.some(
-      (name, i) => name === bereich && !filters.spacesOff.has(i),
+      (space, i) => space === bereich && !filters.spacesOff.has(i),
     );
     if (!stays) {
       for (const id of ids) hidden.add(id);
@@ -682,35 +782,69 @@ async function moveToFolder() {
       + (res.failed?.length ? ` ${num(res.failed.length)} fehlgeschlagen.` : "")
       + (stays
         ? ` Bereich „${bereich}" bleibt sichtbar — beim nächsten atlas_build stehen sie dort.`
-        : ` Von der Karte genommen. Nach dem nächsten atlas_build liegen sie im Bereich „${bereich}".`);
+        : ` Bereich „${bereich}" ausgeblendet — der Schalter in der Leiste holt ihn zurück.`);
   } catch (e) {
     msg.textContent = `Verschieben fehlgeschlagen: ${e.message}`;
   }
 }
 
+/** Einen Text erfragen -- im eigenen Dialog, nicht per Systemabfrage.
+
+    `prompt()` sieht auf dem Handy aus wie eine Warnung der Website und ist in
+    manchen eingebetteten Browsern ganz gesperrt. */
+async function askText({ title, lead, placeholder, ok, rows = 2 }) {
+  const dlg = openModal({
+    title, lead,
+    body: `<textarea class="pv-text" id="pv-text" rows="${rows}"
+            placeholder="${placeholder}" spellcheck="false"></textarea>`,
+    buttons: [
+      { id: "cancel", label: "Abbrechen" },
+      { id: "ok", label: ok, kind: "primary" },
+    ],
+  });
+  const field = $("pv-text");
+  field.focus();
+  field.onkeydown = (e) => {
+    // Eingabetaste bestätigt, Umschalt+Eingabe macht einen Absatz.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      dlg.root.querySelector('[data-modal="ok"]').click();
+    }
+  };
+  const answer = await dlg.wait();
+  const text = (answer === "ok" ? field.value : "").trim();
+  return text || null;
+}
+
 async function addNote() {
-  const text = prompt(
-    `Notiz für ${num(selection.size)} Fotos:\n` +
-    `(wird als Schlagwort gespeichert und ist danach exakt filterbar)`,
-  );
-  if (!text || !text.trim()) return;
+  const text = await askText({
+    title: `Notiz für ${num(selection.size)} Fotos`,
+    lead: "Wird als Schlagwort gespeichert und ist danach exakt filterbar.",
+    placeholder: "z. B. Stripclub, Omas Garten",
+    ok: "Anhängen",
+  });
+  if (!text) return;
   await run(`/api/photos/annotate`, {
     photo_ids: selectedIds(),
-    annotations: [text.trim()],
+    annotations: [text],
     mode: "add",
     reembed: $("atlas-reembed").checked,
   }, (r) => `${num(r.changed)} Fotos notiert${r.reembedded ? `, ${num(r.reembedded)} neu eingebettet` : ""}.`);
 }
 
 async function setCaption() {
-  const text = prompt(
-    `Beschreibung für ${num(selection.size)} Fotos:\n` +
-    `(überschreibt vorhandene und wird gegen neue Vision-Läufe gesperrt)`,
-  );
-  if (!text || !text.trim()) return;
+  const text = await askText({
+    title: `Beschreibung für ${num(selection.size)} Fotos`,
+    lead: "Überschreibt vorhandene Beschreibungen und wird gegen neue "
+        + "Vision-Läufe <b>gesperrt</b>.",
+    placeholder: "Ein Satz, der für alle ausgewählten Fotos gilt",
+    ok: "Setzen",
+    rows: 3,
+  });
+  if (!text) return;
   await run(`/api/photos/caption/bulk`, {
     photo_ids: selectedIds(),
-    caption_de: text.trim(),
+    caption_de: text,
     lock: true,
   }, (r) => `${num(r.updated)} Fotos beschriftet.`);
 }

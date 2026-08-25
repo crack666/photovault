@@ -1,0 +1,214 @@
+/* Dialog und Pfadwahl.
+
+   Eigene Datei, weil beides in `core/` liegt und nicht zum Atlas gehört --
+   Notizen und Beschreibungen fragt am Ende jede Ansicht so ab.
+
+   Durchgehend fingergerecht: die Oberfläche wird über Tailscale auch vom
+   Handy aus bedient, und dort ist ein 24-Pixel-Knopf unbenutzbar. */
+
+.pv-modal-host {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #06080cd0;
+  backdrop-filter: blur(3px);
+  overflow-y: auto;
+}
+
+.pv-modal {
+  width: min(540px, 100%);
+  max-height: min(86vh, 760px);
+  display: flex;
+  flex-direction: column;
+  background: #1a1f28;
+  border: 1px solid #313a4a;
+  border-radius: 16px;
+  box-shadow: 0 24px 70px #000b;
+  color: var(--text);
+}
+.pv-modal.busy { opacity: .7; pointer-events: none; }
+
+.pv-modal header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 0;
+}
+.pv-modal h2 { margin: 0; font-size: 1.1rem; line-height: 1.3; }
+.pv-modal-x {
+  flex: none;
+  width: 34px; height: 34px;
+  padding: 0;
+  border-radius: 9px;
+  background: #232a36;
+  color: var(--muted);
+  border: 1px solid #313a4a;
+  font-size: .9rem;
+}
+.pv-modal-x:hover { background: #2f3847; color: var(--text); }
+
+.pv-modal-lead {
+  margin: 8px 16px 0;
+  font-size: .84rem;
+  line-height: 1.45;
+  color: #adb7c6;
+}
+.pv-modal-lead b { color: var(--text); }
+
+.pv-modal-body { padding: 14px 16px; overflow-y: auto; }
+
+.pv-modal footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #262e3b;
+}
+.pv-modal footer button {
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 10px;
+  background: #262e3b;
+  color: #ccd5e2;
+  border: 1px solid #3a4353;
+  font-size: .88rem;
+}
+.pv-modal footer button:hover { background: #313a4a; color: var(--text); }
+.pv-modal footer button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #0b1020;
+  font-weight: 600;
+}
+.pv-modal footer button.primary:hover { background: #a3c5ff; }
+.pv-modal footer button.danger {
+  background: #5c2f2c;
+  border-color: #7d4340;
+  color: #ffd9d5;
+  font-weight: 600;
+}
+.pv-modal footer button.danger:hover { background: #6f3835; }
+.pv-modal footer button:disabled { opacity: .5; }
+
+.pv-text {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #12161e;
+  color: var(--text);
+  border: 1px solid #313a4a;
+  font: inherit;
+  font-size: .92rem;
+  resize: vertical;
+}
+.pv-text:focus { outline: 0; border-color: var(--accent); }
+
+/* ---- Zielauswahl ------------------------------------------------------- */
+
+.mv-choices { display: flex; flex-direction: column; gap: 7px; }
+.mv-choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: #12161e;
+  border: 1px solid #313a4a;
+  color: #b8c2d1;
+}
+.mv-choice:hover { background: #1c222c; border-color: #46536a; }
+.mv-choice.on { background: #1d2735; border-color: var(--accent); }
+.mv-choice b { display: block; font-size: .92rem; color: var(--text); }
+.mv-choice b em { font-style: normal; font-weight: 400; color: var(--accent); font-size: .78rem; }
+.mv-choice span {
+  display: block;
+  margin: 2px 0 3px;
+  font: 12px/1.4 ui-monospace, monospace;
+  color: #8e99a9;
+  overflow-wrap: anywhere;
+}
+.mv-choice i { font-style: normal; font-size: .76rem; color: var(--muted); }
+.mv-choice.on i { color: #9db8e8; }
+
+.mv-path { margin-top: 14px; }
+
+.mv-hide {
+  display: block;
+  margin-top: 12px;
+  font-size: .84rem;
+  color: #b8c2d1;
+  cursor: pointer;
+}
+.mv-hide input { margin-right: 6px; vertical-align: middle; }
+.mv-hide span { display: block; margin: 2px 0 0 22px; font-size: .74rem; color: var(--muted); }
+.mv-hide.hidden { display: none; }
+.mv-plan {
+  margin: 12px 0 0;
+  min-height: 1.2em;
+  font-size: .82rem;
+  color: var(--accent);
+}
+
+/* ---- Brotkrumen ------------------------------------------------------- */
+
+.pp-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 11px;
+  background: #12161e;
+  border: 1px solid #313a4a;
+}
+.pp-root, .pp-sep { color: #5d6773; font: 13px/1 ui-monospace, monospace; }
+.pp-crumb {
+  min-height: 32px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: #232a36;
+  color: #cdd5e1;
+  border: 1px solid transparent;
+  font: 13px/1.2 ui-monospace, monospace;
+}
+.pp-crumb:hover { background: #2f3847; border-color: #46536a; color: var(--text); }
+/* Der letzte Krumen ist der Ordnername -- die Stelle, die man fast immer meint. */
+.pp-crumb.last { background: #26344a; color: #dbe6f6; font-weight: 600; }
+.pp-add { background: transparent; border: 1px dashed #3a4353; color: var(--muted); }
+.pp-add:hover { border-style: solid; }
+
+.pp-edit { display: flex; gap: 6px; }
+.pp-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: #12161e;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  font: 13px/1.3 ui-monospace, monospace;
+}
+.pp-input:focus { outline: 0; }
+.pp-ok {
+  flex: none;
+  min-width: 44px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #0b1020;
+  border: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+.pp-hint { margin: 6px 0 0; font-size: .76rem; color: var(--muted); }
+
+@media (max-width: 560px) {
+  .pv-modal-host { padding: 8px; align-items: flex-end; }
+  .pv-modal { max-height: 92vh; border-radius: 16px 16px 10px 10px; }
+  .pv-modal footer { position: sticky; bottom: 0; background: #1a1f28; }
+  .pv-modal footer button { flex: 1; }
+}
