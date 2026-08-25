@@ -14,7 +14,8 @@ Sicherheiten: Trockenlauf ist der Standard; vorhandene Aufnahmezeiten werden
 nie angetastet; jeder geschriebene Wert traegt eine Herkunftsnotiz und ist
 ueber `ingest.exif_writer.revert` umkehrbar.
 
-    python -m tools.exif_repair --dry-run
+    python -m tools.exif_repair                 # Trockenlauf (schreibt nichts)
+    python -m tools.exif_repair --preview       # nur zaehlen, nach Herkunft
     python -m tools.exif_repair --apply --limit 200
 """
 from __future__ import annotations
@@ -60,6 +61,40 @@ def candidate(payload: dict) -> tuple[str, datetime] | None:
     if payload.get("date_source") == "exif":
         return None
     return path, when
+
+
+def preview(client, collection: str = "photos", limit: int | None = None) -> Counter:
+    """Index-Sicht: wer kaeme in Frage, ohne die Dateien anzufassen."""
+    by_src: Counter = Counter()
+    by_folder: Counter = Counter()
+    seen = 0
+    offset = None
+    while True:
+        batch, offset = client.scroll(
+            collection_name=collection, limit=BATCH, offset=offset,
+            with_payload=["file_path", "taken_at", "date_source", "folder_name"],
+            with_vectors=False,
+        )
+        for point in batch:
+            seen += 1
+            payload = point.payload or {}
+            if candidate(payload) is None:
+                continue
+            by_src[payload.get("date_source") or "abgeleitet"] += 1
+            by_folder[payload.get("folder_name") or "?"] += 1
+        if offset is None or (limit and seen >= limit):
+            break
+    print(f"{seen} Fotos im Index, {sum(by_src.values())} ohne Kameradatum "
+          f"(date_source != exif, Uhrzeit bekannt, JPEG/TIFF).")
+    print("Herkunft der Ableitung:")
+    for k, n in by_src.most_common():
+        print(f"  {n:6d}  {k}")
+    print("Ordner (die ersten 20):")
+    for k, n in by_folder.most_common(20):
+        print(f"  {n:6d}  {k}")
+    print("Kamera-EXIF bleibt unangetastet. Trockenlauf: "
+          "python -m tools.exif_repair")
+    return by_src
 
 
 def _process(item, apply: bool) -> str:
@@ -136,6 +171,8 @@ def main() -> None:
     parser.add_argument("--collection", default=os.environ.get("PHOTOVAULT_COLLECTION", "photos"))
     parser.add_argument("--apply", action="store_true",
                         help="Tatsaechlich schreiben. Ohne das nur berichten.")
+    parser.add_argument("--preview", action="store_true",
+                        help="Nur zaehlen (Index), Dateien nicht oeffnen")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
@@ -143,7 +180,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     from qdrant_client import QdrantClient
 
-    run(QdrantClient(url=args.qdrant_url), collection=args.collection,
+    q = QdrantClient(url=args.qdrant_url)
+    if args.preview:
+        preview(q, collection=args.collection, limit=args.limit)
+        return
+    run(q, collection=args.collection,
         apply=args.apply, workers=args.workers, limit=args.limit)
 
 

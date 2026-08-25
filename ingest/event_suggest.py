@@ -57,6 +57,10 @@ def neighbor_score(a: dict, b: dict) -> float | None:
     dump_only = not folders_a and not folders_b and not shared
     if dump_only:
         return None
+    # Schon derselbe Anlass-Ordner: Feierabend und nächster Vormittag
+    # sind eine Serie, nicht etwas zum Verschieben.
+    if already_one_album(a, b):
+        return None
 
     score = 1.0
     if shared:
@@ -69,6 +73,103 @@ def neighbor_score(a: dict, b: dict) -> float | None:
     hours = gap.total_seconds() / 3600
     score += max(0.0, (12.0 - hours) / 12.0)
     return round(score, 3)
+
+
+def already_one_album(a: dict, b: dict) -> bool:
+    """Beide liegen nur in demselben nicht-generischen Ordner — fertig organisiert."""
+    folders: list[str] = []
+    for ev in (a, b):
+        for f in ev.get("folders") or []:
+            if f and f not in folders:
+                folders.append(f)
+    if len(folders) != 1 or is_generic_album(folders[0]):
+        return False
+    paths: list[str] = []
+    for ev in (a, b):
+        for p in ev.get("album_paths") or []:
+            if p and p not in paths:
+                paths.append(p)
+    return len(paths) <= 1
+
+
+def coalesce_same_album(events: list[dict], max_gap: timedelta | None = None) -> list[dict]:
+    """Lücke bis 12 h im selben Anlass-Ordner: eine Serie, kein Vorschlag."""
+    max_gap = max_gap or NEIGHBOR_MAX_GAP
+    ordered = sorted(
+        events,
+        key=lambda e: ((e.get("channel") or CAMERA), _dt(e.get("start")) or datetime.min),
+    )
+    out: list[dict] = []
+    for ev in ordered:
+        if out and _can_coalesce(out[-1], ev, max_gap):
+            out[-1] = _merge_summaries(out[-1], ev)
+        else:
+            out.append(dict(ev))
+    return out
+
+
+def _can_coalesce(a: dict, b: dict, max_gap: timedelta) -> bool:
+    if (a.get("channel") or CAMERA) != (b.get("channel") or CAMERA):
+        return False
+    if a.get("day_level") or b.get("day_level"):
+        return False
+    if a.get("name") and b.get("name") and a["name"] != b["name"]:
+        return False
+    if not already_one_album(a, b):
+        return False
+    end_a, start_b = _dt(a.get("end")), _dt(b.get("start"))
+    if end_a is None or start_b is None:
+        return False
+    gap = start_b - end_a
+    if gap < timedelta(0):
+        return True
+    return gap <= max_gap
+
+
+def _merge_summaries(a: dict, b: dict) -> dict:
+    merged = dict(a)
+    ids = list(dict.fromkeys((a.get("photo_ids") or []) + (b.get("photo_ids") or [])))
+    merged["photo_ids"] = ids
+    merged["cover"] = ids[:8]
+    merged["size"] = len(ids)
+    folders: list[str] = []
+    for f in (a.get("folders") or []) + (b.get("folders") or []):
+        if f and f not in folders:
+            folders.append(f)
+    merged["folders"] = folders
+    paths: list[str] = []
+    for p in (a.get("album_paths") or []) + (b.get("album_paths") or []):
+        if p and p not in paths:
+            paths.append(p)
+    merged["album_paths"] = paths
+    starts = [x for x in (a.get("start"), b.get("start")) if x]
+    ends = [x for x in (a.get("end"), b.get("end")) if x]
+    merged["start"] = min(starts) if starts else a.get("start")
+    merged["end"] = max(ends) if ends else a.get("end")
+    sa, sb = _dt(merged["start"]), _dt(merged["end"])
+    if sa and sb and not merged.get("day_level"):
+        merged["span_minutes"] = round((sb - sa).total_seconds() / 60)
+    src_map: dict[str, dict] = {}
+    for src in (a.get("sources") or []) + (b.get("sources") or []):
+        key = src.get("path") or src.get("folder") or ""
+        rec = src_map.setdefault(key, {
+            "path": src.get("path") or "",
+            "folder": src.get("folder") or "",
+            "photo_ids": [],
+        })
+        for pid in src.get("photo_ids") or []:
+            if pid not in rec["photo_ids"]:
+                rec["photo_ids"].append(pid)
+    merged["sources"] = [
+        {**v, "size": len(v["photo_ids"])} for v in src_map.values()
+    ]
+    people: list[str] = []
+    for n in (a.get("person_names") or []) + (b.get("person_names") or []):
+        if n and n not in people:
+            people.append(n)
+    merged["person_names"] = people
+    merged["needs_shelve"] = False
+    return merged
 
 
 def neighbor_suggestions(events: list[dict], rejected: Iterable[tuple] = ()) -> list[dict]:

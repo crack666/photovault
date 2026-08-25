@@ -2,6 +2,8 @@
 from datetime import timedelta
 
 from ingest.event_suggest import (
+    already_one_album,
+    coalesce_same_album,
     neighbor_score,
     neighbor_suggestions,
     timestamp_suggestions,
@@ -36,11 +38,22 @@ class TestGenericAlbum:
 
 
 class TestNeighborScore:
-    def test_a_five_hour_lunch_break_is_a_candidate(self):
-        a = _ev(end="2011-10-23T12:00:00", folders=["GC 07"], person_names=["Annika"])
-        b = _ev(start="2011-10-23T17:00:00", folders=["GC 07"], person_names=["Annika"])
+    def test_a_five_hour_lunch_break_in_the_same_album_is_already_done(self):
+        """Weihnachtsfeier abends und morgens: derselbe Ordner, nichts zu legen."""
+        a = _ev(end="2011-10-23T12:00:00", folders=["GC 07"], person_names=["Annika"],
+                album_paths=["/mnt/photo/Fotos/GC 07"])
+        b = _ev(start="2011-10-23T17:00:00", folders=["GC 07"], person_names=["Annika"],
+                album_paths=["/mnt/photo/Fotos/GC 07"])
+        assert already_one_album(a, b) is True
+        assert neighbor_score(a, b) is None
+
+    def test_two_named_albums_hours_apart_are_still_a_candidate(self):
+        a = _ev(end="2008-06-27T12:00:00", folders=["Abistreich"],
+                album_paths=["/mnt/photo/Fotos/Abi 08/Abistreich"])
+        b = _ev(start="2008-06-27T18:00:00", folders=["Abiball"],
+                album_paths=["/mnt/photo/Fotos/Abi 08/Abiball"])
+        assert already_one_album(a, b) is False
         assert neighbor_score(a, b) is not None
-        assert neighbor_score(a, b) > 2
 
     def test_under_three_hours_is_already_one_event(self):
         a = _ev(end="2011-10-23T12:00:00")
@@ -72,9 +85,11 @@ class TestNeighborScore:
 class TestNeighborList:
     def test_orders_by_score_and_skips_rejects(self):
         morning = _ev(start="2011-10-23T09:00:00", end="2011-10-23T10:00:00",
-                      folders=["GC 07"], person_names=["Annika"])
+                      folders=["Abistreich"], album_paths=["/Fotos/Abistreich"],
+                      person_names=["Annika"])
         afternoon = _ev(start="2011-10-23T16:00:00", end="2011-10-23T18:00:00",
-                        folders=["GC 07"], person_names=["Annika"])
+                        folders=["Abiball"], album_paths=["/Fotos/Abiball"],
+                        person_names=["Annika"])
         out = neighbor_suggestions([morning, afternoon])
         assert len(out) == 1
         assert out[0]["kind"] == "neighbor"
@@ -84,6 +99,27 @@ class TestNeighborList:
                        ("camera", afternoon["start"], afternoon["end"]))],
         )
         assert blocked == []
+
+
+class TestCoalesceSameAlbum:
+    def test_evening_and_morning_in_one_named_folder_become_one_event(self):
+        evening = _ev(
+            start="2009-12-18T19:00:00", end="2009-12-19T01:00:00",
+            folders=["Weihnachtsfeier 2009"], size=51,
+            photo_ids=["e1", "e2"],
+            album_paths=["/mnt/photo/Fotos/Weihnachtsfeier 2009"],
+        )
+        morning = _ev(
+            start="2009-12-19T11:00:00", end="2009-12-19T12:00:00",
+            folders=["Weihnachtsfeier 2009"], size=14,
+            photo_ids=["m1"],
+            album_paths=["/mnt/photo/Fotos/Weihnachtsfeier 2009"],
+        )
+        got = coalesce_same_album([evening, morning])
+        assert len(got) == 1
+        assert got[0]["size"] == 3
+        assert set(got[0]["photo_ids"]) == {"e1", "e2", "m1"}
+        assert neighbor_suggestions(got) == []
 
 
 class TestUnifyFolders:

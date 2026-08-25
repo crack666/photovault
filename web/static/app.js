@@ -863,7 +863,7 @@ const DATE_SOURCE_LABEL = {
   exif: "aus den Bilddaten", filename: "aus dem Dateinamen",
   folder_name: "aus dem Albumnamen", folder: "aus dem Album",
   folder_json: "aus der Album-Datei", file_time: "geschätzt aus der Dateizeit",
-  accepted: "von dir übernommen", offset: "Uhr korrigiert",
+  accepted: "von dir gesetzt", offset: "Uhr korrigiert",
 };
 const DATE_ESTIMATED = new Set(["filename", "folder", "folder_name", "folder_json", "file_time", "album"]);
 
@@ -1119,8 +1119,13 @@ async function loadPhotoInfo(id) {
   fillFileWarn(d.file_warning);
   const accept = $("lb-date-accept");
   if (accept) {
+    accept.classList.remove("hidden");
     const estimated = d.date && DATE_ESTIMATED.has(d.date_source);
-    accept.classList.toggle("hidden", !estimated);
+    $("lb-accept-date").classList.toggle("hidden", !estimated);
+    $("lb-date-hint").textContent = estimated
+      ? "Aufnahmedatum ist geschätzt — oft trotzdem passend, oder hier korrigieren."
+      : "Wenn Ordner oder Nachbarn ein anderes Datum nahelegen — hier setzen.";
+    $("lb-date-input").value = d.date || "";
     $("lb-date-state").textContent = "";
   }
   $("lb-info").dataset.dateSource = d.date_source || "";
@@ -1159,6 +1164,25 @@ $("lb-accept-date").addEventListener("click", async () => {
     $("lb-date-state").textContent = res.written
       ? "übernommen — steht jetzt in den Bilddaten"
       : "übernommen im Index" + (res.exif_reason ? ` (Datei: ${res.exif_reason})` : "");
+  } catch (err) {
+    $("lb-date-state").textContent = `Fehler: ${String(err.message || err).slice(0, 120)}`;
+  }
+});
+
+$("lb-set-date").addEventListener("click", async () => {
+  const id = $("lb-info").dataset.photoId;
+  const day = $("lb-date-input").value;
+  if (!id || !day) return;
+  $("lb-date-state").textContent = "schreibt …";
+  try {
+    const res = await api(`/api/photos/${encodeURIComponent(id)}/date`, {
+      method: "POST",
+      body: JSON.stringify({ date: day }),
+    });
+    await loadPhotoInfo(id);
+    $("lb-date-state").textContent = res.written
+      ? "gesetzt — steht in Index und Datei"
+      : "gesetzt im Index" + (res.exif_reason ? ` (Datei: ${res.exif_reason})` : "");
   } catch (err) {
     $("lb-date-state").textContent = `Fehler: ${String(err.message || err).slice(0, 120)}`;
   }
@@ -1533,10 +1557,18 @@ async function loadNamed() {
             ? `<span class="ev-people">${escapeHtml(ev.person_names.slice(0, 5).join(", "))}${ev.person_names.length > 5 ? ` +${ev.person_names.length - 5}` : ""}</span>`
             : ""}
         </div>
-        ${ev.needs_shelve
-          ? `<button type="button" class="mini nm-shelve">Fotos dorthin legen</button>`
-          : `<span class="muted">liegt schon im eigenen Ordner</span>`}
+        <div class="nm-actions">
+          ${ev.needs_shelve
+            ? `<button type="button" class="mini nm-shelve">Fotos dorthin legen</button>`
+            : `<span class="muted">liegt schon im eigenen Ordner</span>`}
+          <button type="button" class="mini ghost nm-forget">Namen löschen</button>
+        </div>
       </div>
+      <form class="serie-form nm-rename">
+        <input type="text" list="dl-events" value="${escapeHtml(ev.name)}"
+               aria-label="Serienname" />
+        <button type="submit">Umbenennen</button>
+      </form>
       ${ev.needs_shelve && ev.dest
         ? `<p class="muted hint nm-dest">Optional nach <code>${escapeHtml(ev.dest)}</code> — nur die Fotos ohne ✕, der Dump bleibt.</p>`
         : `<p class="muted hint">✕ nimmt das Foto aus der Serie; nach dem Neuladen bleibt es draußen.</p>`}
@@ -1565,7 +1597,48 @@ async function loadNamed() {
     });
     const btn = el.querySelector(".nm-shelve");
     if (btn) btn.addEventListener("click", () => shelveSeries(ev, btn));
+    el.querySelector(".nm-forget").addEventListener("click", () => forgetSeries(ev, el));
+    el.querySelector(".nm-rename").addEventListener("submit", (e) => {
+      e.preventDefault();
+      renameSeries(ev, el);
+    });
   });
+}
+
+async function forgetSeries(ev, el) {
+  if (!confirm(`Namen „${ev.name}“ löschen? Die Dateien bleiben wo sie sind.`)) return;
+  try {
+    await api("/api/events/forget", {
+      method: "POST",
+      body: JSON.stringify({
+        name: ev.name, channel: ev.channel, start: ev.start, end: ev.end,
+        photo_ids: ev.photo_ids || [],
+      }),
+    });
+    el.remove();
+    refreshEventNames();
+  } catch (err) {
+    alert(`Konnte Namen nicht löschen: ${err.message || err}`);
+  }
+}
+
+async function renameSeries(ev, el) {
+  const name = el.querySelector(".nm-rename input")?.value.trim();
+  if (!name || name === ev.name) return;
+  try {
+    await api("/api/events/name", {
+      method: "POST",
+      body: JSON.stringify({
+        name, channel: ev.channel, start: ev.start, end: ev.end,
+        photo_count: ev.size, photo_ids: ev.photo_ids || [],
+      }),
+    });
+    ev.name = name;
+    el.querySelector(".serie-head strong").textContent = name;
+    refreshEventNames();
+  } catch (err) {
+    alert(`Konnte nicht umbenennen: ${err.message || err}`);
+  }
 }
 
 async function shelveSeries(ev, btn) {
@@ -1646,6 +1719,12 @@ function suggestionSources(s) {
             size: src.size || (src.photo_ids || []).length,
             photo_ids: src.photo_ids || [],
           });
+        } else if (path) {
+          const existing = out.find((x) => x.path === path);
+          for (const id of src.photo_ids || []) {
+            if (id && existing.photo_ids.indexOf(id) < 0) existing.photo_ids.push(id);
+          }
+          existing.size = existing.photo_ids.length;
         }
       }
       continue;

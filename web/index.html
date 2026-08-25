@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
-  <link rel="stylesheet" href="/static/styles.css?v=4" />
+  <link rel="stylesheet" href="/static/styles.css?v=6" />
 </head>
 <body>
   <header class="top">
@@ -161,9 +161,11 @@
       </header>
       <p id="lb-file-warn" class="lb-file-warn hidden"></p>
       <dl id="lb-meta"></dl>
-      <div id="lb-date-accept" class="lb-date-accept hidden">
-        <p class="muted">Aufnahmedatum ist geschätzt — oft trotzdem passend.</p>
-        <button type="button" id="lb-accept-date" class="mini">Datum übernehmen</button>
+      <div id="lb-date-accept" class="lb-date-accept">
+        <p class="muted" id="lb-date-hint">Datum korrigieren, wenn Ordner oder Nachbarn etwas anderes sagen.</p>
+        <input type="date" id="lb-date-input" />
+        <button type="button" id="lb-set-date" class="mini">Datum setzen</button>
+        <button type="button" id="lb-accept-date" class="mini hidden">Schätzung übernehmen</button>
         <span id="lb-date-state" class="muted"></span>
       </div>
       <div id="lb-map" class="lb-map hidden">
@@ -266,7 +268,7 @@
     <div id="search-results" class="results"></div>
   </main>
 
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=6"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

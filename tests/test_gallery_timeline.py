@@ -38,6 +38,8 @@ def test_ablage_routes_are_registered():
     assert "get" in (spec["paths"].get("/api/events/suggestions") or {})
     assert "post" in (spec["paths"].get("/api/events/merge") or {})
     assert "post" in (spec["paths"].get("/api/events/shelve") or {})
+    assert "post" in (spec["paths"].get("/api/photos/{point_id}/date") or {})
+    assert "post" in (spec["paths"].get("/api/events/forget") or {})
 
 
 def test_gallery_route_is_registered():

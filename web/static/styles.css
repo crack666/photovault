@@ -262,6 +262,12 @@ nav { display: flex; gap: 8px; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
 }
 .lb-date-accept p { margin: 0; flex: 1 1 12rem; }
+.lb-date-accept input[type="date"] {
+  background: #12151c; color: var(--text); border: 1px solid #3a4254;
+  border-radius: 8px; padding: 5px 8px;
+}
+.nm-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.nm-rename { margin: 0 0 8px; }
 .serie .hint { margin: 0 0 8px; font-size: 12px; }
 .serie .hint code {
   font-size: 11px; background: #12151c; padding: 1px 5px; border-radius: 4px;

@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from api import event_stamp, events_store
 from api.qdrant_util import client
 from ingest.event_suggest import (
+    coalesce_same_album,
     neighbor_suggestions,
     timestamp_suggestions,
     unify_folder_suggestions,
@@ -302,7 +303,9 @@ def unnamed(limit: int = 300, min_size: int = MIN_SIZE, channel: str = CAMERA) -
 
     # Keine Zeitraum-Namen: sonst rutschen per ✕ entfernte Fotos wieder
     # in die benannte Serie, nur weil sie in derselben Stunde liegen.
-    summaries = [_summarise(e, open_rows, []) for e in events if e.size >= min_size]
+    summaries = [_summarise(e, open_rows, []) for e in events if e.size >= 2]
+    summaries = coalesce_same_album(summaries)
+    summaries = [s for s in summaries if s["size"] >= min_size]
     summaries.sort(key=lambda s: -s["size"])
     return {
         "total_events": len(groups) + len(events),
@@ -441,6 +444,7 @@ def suggestions(channel: str = CAMERA, limit: int = 40) -> dict:
         ev = _event_from_ids(pids, rows, ch)
         if ev.size >= 2:
             summaries.append(_summarise(ev, rows, [], forced_name=name))
+    summaries = coalesce_same_album(summaries)
     neighbors = neighbor_suggestions(summaries, rejected=rejected)
     unify = unify_folder_suggestions(summaries)
     photo_rows = [

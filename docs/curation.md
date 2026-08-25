@@ -138,6 +138,9 @@ Was wir ableiten, kann ins Original zurück. Dann profitieren künftige Läufe
 
 `ingest/exif_writer.py` schreibt `DateTimeOriginal` über `piexif` — nur der
 EXIF-Block wird getauscht, die Bilddaten bleiben byteweise identisch.
+`python -m tools.exif_repair --preview` zählt, welche Dateien ohne Kamera-EXIF
+in Frage kommen (WhatsApp & Co.); `--apply` schreibt. Details und die Probe
+davor: [dates.md](dates.md).
 
 Vier Sicherungen, jede gegen einen konkreten Schaden:
 

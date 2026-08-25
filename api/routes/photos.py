@@ -192,6 +192,81 @@ def accept_date(point_id: str) -> dict:
     }
 
 
+class SetDateRequest(BaseModel):
+    date: str
+    time: str | None = None
+
+
+@router.post("/{point_id}/date")
+def set_date(point_id: str, req: SetDateRequest) -> dict:
+    """Aufnahmedatum von Hand setzen — auch wenn der Index „EXIF“ sagt.
+
+    Kopierzeit ohne DateTimeOriginal sieht aus wie Bilddaten. Der Mensch
+    sieht Ordner und Nachbarn und korrigiert. Überschreibt den Index und,
+    wo möglich, die Datei (Notiz `accepted`, Dateizeit bleibt).
+    """
+    day = (req.date or "").strip()
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError as e:
+        raise HTTPException(400, "Datum muss YYYY-MM-DD sein") from e
+    clock = (req.time or "").strip()
+    if clock:
+        try:
+            datetime.strptime(clock[:8], "%H:%M:%S" if clock.count(":") == 2 else "%H:%M")
+        except ValueError as e:
+            raise HTTPException(400, "Uhrzeit unlesbar") from e
+        if clock.count(":") == 1:
+            clock = clock + ":00"
+        when = datetime.strptime(f"{day}T{clock[:8]}", "%Y-%m-%dT%H:%M:%S")
+    else:
+        when = datetime.strptime(day, "%Y-%m-%d")
+
+    q = client()
+    try:
+        points = q.retrieve(collection_name=PHOTOS, ids=[point_id], with_payload=True)
+    except Exception as e:
+        raise HTTPException(404, f"Foto nicht gefunden: {e}") from e
+    if not points:
+        raise HTTPException(404, "Foto nicht gefunden")
+    payload = points[0].payload or {}
+    path = payload.get("file_path") or ""
+    written, reason = False, ""
+    if path:
+        from ingest.exif_writer import write_capture_time
+
+        try:
+            out = write_capture_time(
+                path, when, source="accepted", dry_run=False, overwrite=True,
+            )
+            written = bool(out.get("written"))
+            reason = out.get("reason") or ""
+        except Exception as e:
+            logger.warning("EXIF-Datum nicht schreibbar (%s): %s", path, e)
+            reason = str(e)
+    stamp = when.strftime("%Y-%m-%dT%H:%M:%S")
+    q.set_payload(
+        collection_name=PHOTOS,
+        payload={
+            "date": day,
+            "taken_at": stamp,
+            "date_source": "accepted",
+            "date_confidence": 1.0,
+        },
+        points=[point_id],
+        wait=True,
+    )
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    return {
+        "id": point_id,
+        "date": day,
+        "taken_at": stamp,
+        "written": written,
+        "exif_reason": reason,
+        "reembedded": stats.get("updated", 0),
+    }
+
+
 def _when_from_payload(payload: dict) -> datetime | None:
     raw = payload.get("taken_at") or payload.get("date") or ""
     raw = str(raw).replace("Z", "")

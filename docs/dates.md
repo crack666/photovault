@@ -46,9 +46,11 @@ falsch. Die Probe unterscheidet die Tags, die Anzeige (noch) nicht.
 ## Das Werkzeug
 
 ```bash
-python -m tools.backfill_taken_at --preview    # lesen, vergleichen, nichts schreiben
-python -m tools.backfill_taken_at --dry-run    # dieselben Änderungen zählen, nicht schreiben
-python -m tools.backfill_taken_at              # taken_at und date im Index setzen
+python -m tools.probe_dates --file /pfad/zum.jpg          # eine Datei: 306 vs Original
+python -m tools.probe_dates --night 2009-01-20            # alle Index-Fotos dieses Tags
+python -m tools.backfill_taken_at --preview               # Bestand, nichts schreiben
+python -m tools.backfill_taken_at --dry-run
+python -m tools.backfill_taken_at                         # taken_at und date im Index
 ```
 
 `--preview` öffnet jede indizierte Datei einmal (kein CLIP, keine Gesichter).
@@ -132,22 +134,16 @@ Kein Schritt braucht das Sprachmodell für Pixel. Das LLM strukturiert den
 Vergleich und hält die Stichprobe ehrlich: was *nicht* passt, gehört in die
 rote Liste, nicht unter den Teppich.
 
-Minimaler Python-Kern für Schritt 2 (eine Datei):
+Schritt 2 ist ein Befehl, kein Snippet:
 
-```python
-from PIL import Image
-from ingest.exif_extractor import exif_capture_stamp
-
-img = Image.open(path)
-exif = img.getexif()
-print("gewählt", exif_capture_stamp(exif))
-print("306    ", exif.get(306))
-print("36867  ", (exif.get_ifd(0x8769) or {}).get(36867))
+```bash
+python -m tools.probe_dates --file "$DATEI"
+python -m tools.probe_dates --night 2009-01-20 --sample 8
 ```
 
-`exif_capture_stamp` muss denselben Wert liefern, den `--preview` unter
-„original" zeigt. Tut es das nicht, stimmt die Probe nicht mit dem Schreiben
-überein.
+`gewählt` muss mit `exif_capture_stamp` und mit `--preview` unter „original"
+übereinstimmen. Tut es das nicht, stimmt die Probe nicht mit dem Schreiben
+überein. Tests: `tests/test_probe_dates.py`.
 
 ## Was danach passiert
 
@@ -160,12 +156,61 @@ Dateien ohne Original bleiben auf 306. Zwei Fotos eines Anlasses ohne
 DateTimeOriginal ändern sich nicht; ihre Nachbarn mit Original rutschen auf
 den Festtag. Das ist richtig, kein Verlust.
 
-WhatsApp und andere Dateien ohne EXIF rührt der Lauf nicht an.
+WhatsApp und andere Dateien ohne EXIF rührt *dieser* Lauf nicht an. Die
+gehören in den nächsten Schritt: die Ableitung **in die Datei schreiben**,
+sonst ist sie nach dem nächsten Kopieren weg.
+
+## Was fehlt, hineinschreiben
+
+WhatsApp, „Sent“, Screenshots: kein Original, oft kein EXIF. PhotoVault hat
+den Tag aus dem Dateinamen (`IMG-20181021-WA0081`) und die Uhr oft aus der
+Dateizeit. Das ist Empfangszeit, nicht Auslöser — aber es ist die beste
+Uhr, die die Datei je haben wird, und **Kopieren ändert mtime**. Steht der
+Wert nur im Index, ist er nach einem Umzug auf die nächste Platte verloren
+oder muss neu geschätzt werden, mit schlechterer Grundlage.
+
+Deshalb schreibt `tools/exif_repair.py` den schon ermittelten `taken_at`
+als `DateTimeOriginal` in JPEGs, **die noch keine Aufnahmezeit haben**.
+
+Sicherheiten, jede gegen einen konkreten Schaden:
+
+- Standard ist Trockenlauf. `--apply` ist absichtlich extra.
+- `date_source=exif` wird nie angefasst. Eine Kamera bleibt eine Kamera.
+- Mitternacht im Index heißt „Uhr unbekannt“ — nichts schreiben, keine
+  erfundene Präzision.
+- Herkunftsnotiz `photovault:src=filename` (oder `file_time` / `folder`).
+  Der nächste Ingest liest das und gibt nicht Vertrauen 1,0 wie bei einer
+  Messung.
+- Dateizeit und Birth-Time werden nach dem Schreiben wiederhergestellt.
+  Sonst zerstört genau dieser Lauf die Quelle, aus der die Uhr kam.
+- Gegenprobe: nach dem Insert muss `read_capture_time` denselben Wert lesen.
+- PNG und andere Formate ohne verlustfreien EXIF-Tausch bleiben draußen.
+
+```bash
+python -m tools.exif_repair --preview     # wer käme in Frage (Index)
+python -m tools.exif_repair               # Trockenlauf, Dateien öffnen
+python -m tools.exif_repair --apply --limit 200
+```
+
+Reihenfolge: erst `--preview` auf Tag 306 vs. Original (`backfill_taken_at`),
+Index korrigieren, **dann** fehlende EXIF einfrieren. Umgekehrt würde eine
+Importnacht als „Messung“ in WhatsApp-fremde Kameradateien nicht landen
+(`date_source=exif` ist tabu) — aber die Probe gehört trotzdem zuerst,
+damit der Index die Uhr kennt, die in die Datei soll.
+
+Das ist Empfangszeit, eingefroren. Nicht die Party. Trotzdem: Explorer,
+andere Programme und der nächste Scan sehen dasselbe Datum, und ein Move
+auf dem NAS ändert es nicht mehr.
 
 ## Tests, die das festhalten
 
 `tests/test_exif_extractor.py`: Original schlägt 306, auch wenn 306 eine
 Importnacht ist. 306 gilt nur, wenn Original fehlt.
+
+`tests/test_probe_dates.py`: die Probe-Datei liest dieselben Tags.
+
+`tests/test_exif_repair.py`: Kamera-EXIF ist kein Kandidat; WhatsApp mit
+Dateiname und Uhrzeit ist einer; Mitternacht nicht.
 
 Wer das Verfahren auf einem fremden Bestand wiederholt, braucht keinen neuen
 Unit-Test — der ist lokal und kennt keine Alben. Die Probe ist `--preview`
@@ -178,3 +223,5 @@ plus die Checkliste oben.
 - `--preview` beweist das an *diesem* Archiv, bevor jemand schreibt.
 - Vertrauen kommt aus Stichproben, die Original gegen Ordner und Dateiname
   halten — nicht aus der Zahl „238 Korrekturen".
+- Was kein EXIF hat, bekommt eines — mit Notiz, ohne Kameradaten zu
+  überschreiben. Kopieren darf die Uhr danach nicht mehr löschen.
