@@ -147,3 +147,19 @@ class TestSummariseMembership:
         assert "HandyPics" not in out["folders"]
         assert out["name"] == NASEN
         assert out["needs_shelve"] is False
+
+
+class TestSources:
+    def test_summarise_splits_sources_by_album(self):
+        rows = {
+            "a": _row(folder="AlbumA", path="/mnt/photo/Fotos/AlbumA/a.jpg",
+                      taken="2008-06-27T10:00:00"),
+            "b": _row(folder="AlbumB", path="/mnt/photo/Fotos/AlbumB/b.jpg",
+                      taken="2008-06-27T10:05:00"),
+        }
+        ev = _event_from_ids(["a", "b"], rows, "camera")
+        out = _summarise(ev, rows, [], forced_name="Fest 2008")
+        by_folder = {s["folder"]: s for s in out["sources"]}
+        assert by_folder["AlbumA"]["photo_ids"] == ["a"]
+        assert by_folder["AlbumB"]["size"] == 1
+        assert by_folder["AlbumB"]["path"].replace("\\", "/").endswith("/AlbumB")

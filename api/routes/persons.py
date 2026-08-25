@@ -113,15 +113,36 @@ def list_persons() -> list[dict]:
 _cluster_cache: dict[str, object] = {"signature": None, "clusters": None}
 
 
-def _face_stats(q) -> dict:
+def _count_faces(q, filt=None) -> int:
     try:
-        total = q.count(FACES, exact=True).count
-        unlabeled = q.count(FACES, count_filter=_unlabeled_filter(), exact=True).count
+        if filt is None:
+            return q.count(FACES, exact=True).count
+        return q.count(FACES, count_filter=filt, exact=True).count
     except Exception:
-        return {"faces_total": 0, "faces_labeled": 0, "faces_unlabeled": 0}
+        return 0
+
+
+def _face_stats(q) -> dict:
+    """Zahlen trennen: mit Namen, übersprungen, ignoriert, noch offen.
+
+    `faces_labeled` war vorher total minus unbenannt — da lagen Übersprungene
+    und Ignorierte in „benannt", obwohl sie keinen Menschen-Namen haben.
+    """
+    total = _count_faces(q)
+    unlabeled = _count_faces(q, _unlabeled_filter())
+    skipped = _count_faces(q, Filter(
+        must=[FieldCondition(key="person_id", match=MatchValue(value=SKIP_ID))],
+    ))
+    ignored = _count_faces(q, Filter(
+        must=[FieldCondition(key="person_id", match=MatchValue(value=IGNORED_ID))],
+    ))
+    named = max(0, total - unlabeled - skipped - ignored)
     return {
         "faces_total": total,
-        "faces_labeled": total - unlabeled,
+        "faces_named": named,
+        "faces_labeled": named,
+        "faces_skipped": skipped,
+        "faces_ignored": ignored,
         "faces_unlabeled": unlabeled,
     }
 
@@ -190,6 +211,9 @@ def unlabeled_clusters(limit: int = 40, max_faces: int = 30000,
             )
             rec["kind"] = rec.get("kind") or "new"
         out.append(rec)
+    queued = sum(int(c.get("size") or 0) for c in cards)
+    stats = {**stats, "faces_in_queue": queued,
+             "faces_small": max(0, (stats.get("faces_unlabeled") or 0) - queued)}
     return {
         "clusters": out,
         "remaining": max(0, len(cards) - limit),

@@ -53,13 +53,13 @@ async function loadUnknown(reset) {
 
   if (groups) {
     const d = await api("/api/persons/unlabeled?limit=80");
-    const kleine = (d.groups_total || 0) - (d.groups_usable || 0);
     $("uk-meta").textContent =
       `${d.groups_usable ?? d.clusters.length} Gruppen ab ${d.min_size ?? 3} Gesichtern` +
       (d.remaining ? ` · ${d.clusters.length} gezeigt, +${d.remaining} weitere` : "") +
-      (kleine > 0 ? ` · ${kleine} Einzelne und Paare ausgeblendet` : "") +
-      (d.stats ? ` · ${d.stats.faces_labeled} von ${d.stats.faces_total} Gesichtern benannt` : "");
-    $("uk-hint").textContent = "Eine Karte ist eine vermutete Person. Rein klicken für alle Fotos, dann benennen.";
+      faceStatsLine(d.stats);
+    $("uk-hint").textContent = (d.stats && d.stats.faces_small)
+      ? "Gruppen unter 10 stehen unter „einzeln“. Übersprungene bleiben draußen, bis du sie unter Personen zurückholst."
+      : "Eine Karte ist eine vermutete Person. Rein klicken für alle Fotos, dann benennen.";
     const box = $("uk-clusters");
     box.innerHTML = "";
     if (!d.clusters.length) {
@@ -84,7 +84,7 @@ async function loadUnknown(reset) {
   if (reset) { ukOffset = 0; ukSel.clear(); $("uk-faces").innerHTML = ""; }
   const d = await api(`/api/persons/unknown?limit=200&offset=${ukOffset}&sort=${sort}`);
   $("uk-meta").textContent =
-    `${d.total} unbenannt · ${d.stats.faces_labeled} von ${d.stats.faces_total} Gesichtern benannt`;
+    `${d.total} unbenannt` + faceStatsLine(d.stats);
   $("uk-hint").textContent = d.has_landmarks
     ? "Bewertet nach Frontalität, Größe und Erkennungssicherheit. Zum Benennen lieber „Personen-Gruppen“."
     : "Hinweis: Für diese Gesichter fehlt noch die Frontalitäts-Messung.";
@@ -425,11 +425,21 @@ async function loadQueue() {
   renderCard();
 }
 
-function progressLine() {
-  const s = state.stats;
+function faceStatsLine(s) {
   if (!s) return "";
-  const pct = s.faces_total ? Math.round((s.faces_labeled / s.faces_total) * 100) : 0;
-  return ` · ${s.faces_labeled} von ${s.faces_total} Gesichtern benannt (${pct} %)`;
+  const named = s.faces_named ?? s.faces_labeled ?? 0;
+  const parts = [`${named} von ${s.faces_total} mit Namen`];
+  if (s.faces_skipped) parts.push(`${s.faces_skipped} übersprungen`);
+  if (s.faces_ignored) parts.push(`${s.faces_ignored} ignoriert`);
+  if (s.faces_small) parts.push(`${s.faces_small} in Gruppen unter 10`);
+  else if (s.faces_unlabeled && !(s.faces_in_queue > 0)) {
+    parts.push(`${s.faces_unlabeled} unbenannt`);
+  }
+  return ` · ${parts.join(" · ")}`;
+}
+
+function progressLine() {
+  return faceStatsLine(state.stats);
 }
 
 function renderCard() {
@@ -1625,14 +1635,52 @@ function suggestionSources(s) {
   const evs = s.kind === "unify_folders" ? [s.event] : [s.a, s.b];
   const out = [];
   for (const ev of evs) {
-    const paths = (ev && ev.album_paths) || [];
+    if (!ev) continue;
+    if (ev.sources && ev.sources.length) {
+      for (const src of ev.sources) {
+        const path = src.path || src.folder || "";
+        if (path && !out.some((x) => x.path === path)) {
+          out.push({
+            path,
+            folder: src.folder || path,
+            size: src.size || (src.photo_ids || []).length,
+            photo_ids: src.photo_ids || [],
+          });
+        }
+      }
+      continue;
+    }
+    const paths = ev.album_paths || [];
     if (paths.length) {
-      for (const p of paths) if (p && !out.includes(p)) out.push(p);
+      for (const p of paths) {
+        if (p && !out.some((x) => x.path === p)) {
+          out.push({ path: p, folder: p.split(/[/\\]/).pop() || p, size: 0, photo_ids: [] });
+        }
+      }
     } else {
-      for (const f of (ev && ev.folders) || []) if (f && !out.includes(f)) out.push(f);
+      for (const f of ev.folders || []) {
+        if (f && !out.some((x) => x.path === f)) {
+          out.push({ path: f, folder: f, size: 0, photo_ids: [] });
+        }
+      }
     }
   }
   return out;
+}
+
+function selectedMergeIds(s, dropped) {
+  const sources = suggestionSources(s);
+  const hasIds = sources.some((src) => (src.photo_ids || []).length);
+  if (hasIds) {
+    const ids = [];
+    for (const src of sources) {
+      if (dropped && dropped.has(src.path)) continue;
+      for (const id of src.photo_ids || []) if (id && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }
+  if (s.kind === "unify_folders") return s.event.photo_ids || [];
+  return [...(s.a && s.a.photo_ids || []), ...(s.b && s.b.photo_ids || [])];
 }
 
 function joinDest(parent, name) {
@@ -1648,27 +1696,37 @@ function pathsEqual(a, b) {
   return n(a) === n(b) && n(a) !== "";
 }
 
-function paintFromTo(box, sources, destParent, name) {
+function paintFromTo(box, sources, destParent, name, dropped) {
   if (!box) return;
   const dest = joinDest(destParent, name);
+  const skip = dropped || new Set();
   if (!sources.length && !destParent) {
     box.innerHTML = `<p class="muted hint">Zusammenlegen setzt nur den Namen. Ein Zielordner ist noch unklar — kein Ordner Fotos/Alben gefunden.</p>`;
     return;
   }
-  const rows = sources.map((src) => {
-    if (dest && pathsEqual(src, dest)) {
-      return `<li><code>${escapeHtml(src)}</code> <span class="muted">bleibt — liegt schon dort</span></li>`;
-    }
-    if (dest) {
-      return `<li><code>${escapeHtml(src)}</code><span class="sg-arrow">→</span><code class="sg-dest">${escapeHtml(dest)}</code></li>`;
-    }
-    if (destParent) {
-      return `<li><code>${escapeHtml(src)}</code><span class="sg-arrow">→</span><span class="muted">Namen eintragen für das Ziel</span></li>`;
-    }
-    return `<li><code>${escapeHtml(src)}</code><span class="sg-arrow">→</span><span class="muted">Ziel unbekannt (kein Ordner Fotos/Alben)</span></li>`;
+  const rows = sources.map((src, i) => {
+    const path = src.path || src;
+    const folder = src.folder || path;
+    const n = src.size || 0;
+    const on = !skip.has(path);
+    const stays = dest && pathsEqual(path, dest);
+    let tail = "";
+    if (!on) tail = `<span class="muted">bleibt in diesem Ordner</span>`;
+    else if (stays) tail = `<span class="muted">bleibt — liegt schon dort</span>`;
+    else if (dest) tail = `<span class="sg-arrow">→</span><code class="sg-dest">${escapeHtml(dest)}</code>`;
+    else if (destParent) tail = `<span class="sg-arrow">→</span><span class="muted">Namen eintragen für das Ziel</span>`;
+    else tail = `<span class="sg-arrow">→</span><span class="muted">Ziel unbekannt</span>`;
+    return `<li class="sg-move${on ? "" : " off"}">
+      <label>
+        <input type="checkbox" data-i="${i}" ${on ? "checked" : ""} />
+        <code class="sg-path">${escapeHtml(path)}</code>
+        <span class="muted">${n ? ` · ${n} Fotos` : ""} · ${escapeHtml(folder)}</span>
+        ${tail}
+      </label>
+    </li>`;
   }).join("");
   box.innerHTML = `
-    <p class="muted hint">Zusammenlegen setzt nur den Namen. Die Dateien bleiben in ihren Ordnern, bis du unter Benannt „Fotos dorthin legen“ klickst.</p>
+    <p class="muted hint">Haken weg: dieser Ordner bekommt den Namen nicht und wandert später nicht mit. Zusammenlegen setzt sonst nur den Namen — Dateien bleiben, bis du unter Benannt „Fotos dorthin legen“ klickst.</p>
     <ul class="sg-moves">${rows}</ul>`;
 }
 
@@ -1676,10 +1734,25 @@ function bindSuggestionDest(el, s) {
   const box = el.querySelector(".sg-fromto");
   const input = el.querySelector("input");
   if (!box || (s.kind !== "neighbor" && s.kind !== "unify_folders")) return;
-  const sources = suggestionSources(s);
+  el._sgSources = suggestionSources(s);
+  el._sgDropped = el._sgDropped || new Set();
   const parent = s.dest_parent || "";
-  const refresh = () => paintFromTo(box, sources, parent, input ? input.value : s.suggested_name);
+  const refresh = () => paintFromTo(
+    box, el._sgSources, parent, input ? input.value : s.suggested_name, el._sgDropped,
+  );
   if (input) input.addEventListener("input", refresh);
+  if (!box.dataset.bound) {
+    box.dataset.bound = "1";
+    box.addEventListener("change", (e) => {
+      const cb = e.target.closest("input[type=checkbox]");
+      if (!cb || !box.contains(cb)) return;
+      const src = el._sgSources[Number(cb.dataset.i)];
+      if (!src) return;
+      if (cb.checked) el._sgDropped.delete(src.path);
+      else el._sgDropped.add(src.path);
+      refresh();
+    });
+  }
   refresh();
 }
 
@@ -1767,6 +1840,11 @@ async function acceptSuggestion(s, el) {
   const btn = el.querySelector(".sg-ok");
   if (s.kind === "neighbor") {
     if (!name) return;
+    const ids = selectedMergeIds(s, el._sgDropped);
+    if (!ids.length) {
+      alert("Keine Ordner übrig — mindestens einen Haken setzen.");
+      return;
+    }
     btn.disabled = true;
     try {
       await api("/api/events/merge", {
@@ -1776,7 +1854,7 @@ async function acceptSuggestion(s, el) {
           channel: s.a.channel,
           a_start: s.a.start, a_end: s.a.end,
           b_start: s.b.start, b_end: s.b.end,
-          photo_ids: [...(s.a.photo_ids || []), ...(s.b.photo_ids || [])],
+          photo_ids: ids,
         }),
       });
       el.remove();
@@ -1789,13 +1867,18 @@ async function acceptSuggestion(s, el) {
   }
   if (s.kind === "unify_folders") {
     if (!name) return;
+    const ids = selectedMergeIds(s, el._sgDropped);
+    if (!ids.length) {
+      alert("Keine Ordner übrig — mindestens einen Haken setzen.");
+      return;
+    }
     btn.disabled = true;
     try {
       await api("/api/events/name", {
         method: "POST",
         body: JSON.stringify({
           name, channel: s.event.channel, start: s.event.start, end: s.event.end,
-          photo_count: s.event.size, photo_ids: s.event.photo_ids || [],
+          photo_count: ids.length, photo_ids: ids,
         }),
       });
       el.remove();

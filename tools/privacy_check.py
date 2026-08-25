@@ -167,20 +167,41 @@ def scan(paths: list[str], terms: list[str]) -> list[tuple[str, int, str, str]]:
     return hits
 
 
+def hook_script(arg: str) -> str:
+    """Git-Hook, der python3 findet — `python` gibt es unter Linux oft nicht."""
+    return (
+        "#!/bin/sh\n"
+        "# Von tools/privacy_check.py eingerichtet.\n"
+        'cd "$(git rev-parse --show-toplevel)" || exit 1\n'
+        'if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then\n'
+        '  PY="$VIRTUAL_ENV/bin/python"\n'
+        "elif [ -x .venv/bin/python ]; then\n"
+        "  PY=.venv/bin/python\n"
+        'elif [ -x "$HOME/.venvs/photovault/bin/python" ]; then\n'
+        '  PY="$HOME/.venvs/photovault/bin/python"\n'
+        "elif command -v python3 >/dev/null 2>&1; then\n"
+        "  PY=python3\n"
+        "elif command -v python >/dev/null 2>&1; then\n"
+        "  PY=python\n"
+        "else\n"
+        '  echo "Privacy-Check: kein Python gefunden (python3 oder python)."\n'
+        '  echo "Abgebrochen. Mit --no-verify erzwingbar, wenn es ein Fehlalarm ist."\n'
+        "  exit 1\n"
+        "fi\n"
+        f'"$PY" -m tools.privacy_check {arg} || {{\n'
+        '  echo "Abgebrochen. Mit --no-verify erzwingbar, wenn es ein Fehlalarm ist."\n'
+        "  exit 1\n"
+        "}\n"
+    )
+
+
 def install_hook() -> int:
     root = (_git("rev-parse", "--git-dir") or [".git"])[0]
     for name, arg in HOOKS.items():
         hook = os.path.join(root, "hooks", name)
         os.makedirs(os.path.dirname(hook), exist_ok=True)
         with open(hook, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(
-                "#!/bin/sh\n"
-                "# Von tools/privacy_check.py eingerichtet.\n"
-                f"python -m tools.privacy_check {arg} || {{\n"
-                '  echo "Abgebrochen. Mit --no-verify erzwingbar, wenn es ein Fehlalarm ist."\n'
-                "  exit 1\n"
-                "}\n"
-            )
+            fh.write(hook_script(arg))
         try:
             os.chmod(hook, 0o755)
         except OSError:

@@ -225,9 +225,12 @@ def suggest_name(folders: list[str], date: str) -> str:
 
 
 def _summarise(event, rows, names, forced_name: str | None = None) -> dict:
-    photos = [rows[pid] for pid in event.photo_ids if pid in rows]
     folders, people, album_paths, file_paths = [], [], [], []
-    for p in photos:
+    sources_map: dict[str, dict] = {}
+    for pid in event.photo_ids:
+        p = rows.get(pid)
+        if not p:
+            continue
         f = p.get("folder_name")
         if f and f not in folders:
             folders.append(f)
@@ -235,11 +238,16 @@ def _summarise(event, rows, names, forced_name: str | None = None) -> dict:
             if n not in people:
                 people.append(n)
         fp = p.get("file_path")
+        ap = str(album_dir(Path(fp))) if fp else (f or "")
         if fp:
             file_paths.append(fp)
-            ap = str(album_dir(Path(fp)))
-            if ap not in album_paths:
+            if ap and ap not in album_paths:
                 album_paths.append(ap)
+        rec = sources_map.get(ap)
+        if rec is None:
+            rec = {"path": ap, "folder": f or "", "photo_ids": []}
+            sources_map[ap] = rec
+        rec["photo_ids"].append(pid)
     start = event.start.isoformat() if event.start else None
     end = event.end.isoformat() if event.end else None
     name = (forced_name or "").strip() or events_store.match(start, end, event.channel, names)
@@ -261,6 +269,11 @@ def _summarise(event, rows, names, forced_name: str | None = None) -> dict:
         "size": event.size,
         "folders": folders,
         "album_paths": album_paths,
+        "sources": [
+            {"path": v["path"], "folder": v["folder"],
+             "size": len(v["photo_ids"]), "photo_ids": v["photo_ids"]}
+            for v in sources_map.values()
+        ],
         "person_names": people,
         "name": name,
         "suggested_name": suggest_name(folders, event.start.strftime("%Y-%m-%d")

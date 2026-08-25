@@ -532,8 +532,13 @@ nav { display: flex; gap: 8px; }
 .sg-moves { list-style: none; margin: 8px 0 0; padding: 0; }
 .sg-moves li {
   font-size: 12px; margin: 4px 0;
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 0;
 }
+.sg-moves label {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px;
+  cursor: pointer;
+}
+.sg-moves input[type="checkbox"] { margin: 0; flex: none; }
+.sg-move.off code { opacity: .45; text-decoration: line-through; }
 .sg-arrow { color: var(--muted); padding: 0 8px; }
 .shot-strip {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
