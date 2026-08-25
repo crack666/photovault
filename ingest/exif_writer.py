@@ -1,23 +1,25 @@
-"""Aufnahmezeit ins EXIF zurückschreiben.
+"""Aufnahmezeit und Captions ins EXIF zurückschreiben.
 
-Zwei Anlässe:
+Drei Anlässe:
 
-1. **Fehlt.** WhatsApp und die meisten Weiterleitungen strippen EXIF. Das
+1. **Datum fehlt.** WhatsApp und die meisten Weiterleitungen strippen EXIF. Das
    Datum steckt dann nur im Dateinamen (`IMG-20181021-WA0081.jpg`), und jeder
    Betrachter zeigt die Datei als undatiert. Wer es einmal hineinschreibt,
    repariert das Archiv selbst -- nicht nur den Index.
-2. **Ist falsch.** Alte Kameras verlieren beim Batteriewechsel ihre Uhr. Im
-   Bestand tauchen dieselben Geräte über mehrere Alben hinweg mit versetztem
-   Datum auf.
+2. **Datum ist falsch.** Alte Kameras verlieren beim Batteriewechsel ihre Uhr.
+3. **Caption.** Der Satz lebt sonst nur im Index. Ohne ihn in der Datei ist er
+   nach einem Umzug auf die nächste Platte weg, und Explorer/Lightroom zeigen
+   weiter nichts. Der Text liegt in `ImageDescription` und `XPComment`
+   (Windows); `UserComment` bleibt die Herkunftsnotiz, nicht der Satz.
 
 Warum jeder geschriebene Wert eine Herkunftsnotiz bekommt:
 
 Schreiben wir ein aus dem Dateinamen abgeleitetes Datum als
 `DateTimeOriginal`, liest der nächste Lauf es als EXIF und vergibt Vertrauen
-1.0 -- unsere Schätzung wäre damit zur Messung befördert, und niemand könnte
-das später noch unterscheiden. Die Notiz in `UserComment` hält fest, woher der
-Wert kam und was vorher dort stand, sodass sich jede Änderung zurückverfolgen
-und rückgängig machen lässt.
+1.0 -- unsere Schätzung wäre damit zur Messung befördert. Dieselbe Falle
+droht bei Captions: ein LLM-Satz ohne Marker sähe aus wie eine
+Kamerabeschreibung. Die Notiz in `UserComment` hält fest, woher Datum und
+Satz kamen.
 
 Geschrieben wird ohne Neukodierung: `piexif` tauscht nur den EXIF-Block aus,
 die Bilddaten bleiben Byte für Byte dieselben.
@@ -36,10 +38,14 @@ _DT_ORIGINAL = 36867
 _DT_DIGITIZED = 36868
 _DT_IMAGE = 306
 _USER_COMMENT = 37510
+_IMAGE_DESCRIPTION = 270
+_XP_COMMENT = 0x9C9C  # 40092, Windows-Kommentar (UTF-16LE)
 
 MARKER = "photovault"
-#: photovault:src=filename;prev=2009:01:16 01:46:18;mtime=2013-07-13T15:07:22
+#: photovault:src=filename;prev=2009:01:16 01:46:18;mtime=2013-07-13T15:07:22;cap=llm
 _RE_NOTE = re.compile(r"photovault:src=([a-z_]+)(?:;prev=([^;]*?))?(?:;mtime=([^;]*))?(?:;|$)")
+_RE_FIELD = re.compile(r"([a-z_]+)=([^;]*)")
+_NOTE_ORDER = ("src", "prev", "mtime", "cap")
 
 #: Nur diese Formate koennen wir verlustfrei zurueckschreiben.
 WRITABLE_SUFFIXES = {".jpg", ".jpeg", ".tif", ".tiff"}
@@ -47,6 +53,41 @@ WRITABLE_SUFFIXES = {".jpg", ".jpeg", ".tif", ".tiff"}
 
 class ExifWriteError(RuntimeError):
     pass
+
+
+_RE_BAD_TAG = re.compile(r"(\d+) in (\w+) IFD")
+
+
+def _safe_dump(exif: dict) -> bytes:
+    """piexif.dump, kaputte Kameratags nacheinander entfernen.
+
+    Manche Kameras schreiben SceneType (41729) als int statt als Byte. Ein
+    einzelner solcher Wert darf das Zurueckschreiben nicht verhindern.
+    """
+    import piexif
+
+    data = {}
+    for key, value in exif.items():
+        data[key] = dict(value) if isinstance(value, dict) else value
+    data.pop("thumbnail", None)
+    data["1st"] = {}
+    last: Exception | None = None
+    for _ in range(12):
+        try:
+            return piexif.dump(data)
+        except ValueError as e:
+            last = e
+            match = _RE_BAD_TAG.search(str(e))
+            if not match:
+                raise
+            tag, ifd = int(match.group(1)), match.group(2)
+            bucket = data.get(ifd)
+            if isinstance(bucket, dict) and tag in bucket:
+                del bucket[tag]
+                continue
+            raise
+    assert last is not None
+    raise last
 
 
 def _fmt(dt: datetime) -> str:
@@ -64,6 +105,64 @@ def _parse(raw) -> datetime | None:
         return None
 
 
+def _decode_comment(raw) -> str:
+    if not raw:
+        return ""
+    if isinstance(raw, bytes):
+        if raw[:8] in (b"ASCII\x00\x00\x00", b"UNICODE\x00", b"JIS\x00\x00\x00\x00"):
+            raw = raw[8:]
+        text = raw.decode("utf-8", "ignore")
+    else:
+        text = str(raw)
+    return text.strip("\x00 ")
+
+
+def note_fields(raw) -> dict[str, str]:
+    """Schlüssel aus `photovault:k=v;k=v`. Ohne Marker: leeres Dict."""
+    text = _decode_comment(raw)
+    if f"{MARKER}:" not in text:
+        return {}
+    body = text.split(f"{MARKER}:", 1)[1]
+    return {m.group(1): m.group(2) for m in _RE_FIELD.finditer(body)}
+
+
+def note_text(fields: dict[str, str]) -> str:
+    parts = []
+    seen = set()
+    for key in _NOTE_ORDER:
+        value = (fields.get(key) or "").strip()
+        if not value:
+            continue
+        parts.append(f"{key}={value}")
+        seen.add(key)
+    for key, value in fields.items():
+        if key in seen or not (value or "").strip():
+            continue
+        parts.append(f"{key}={value.strip()}")
+    return f"{MARKER}:" + ";".join(parts) if parts else ""
+
+
+def _merge_user_comment(raw, updates: dict[str, str]) -> bytes:
+    """Photovault-Felder setzen, fremden UserComment-Text behalten."""
+    text = _decode_comment(raw)
+    prefix = ""
+    fields: dict[str, str] = {}
+    if f"{MARKER}:" in text:
+        prefix, rest = text.split(f"{MARKER}:", 1)
+        fields = note_fields(f"{MARKER}:{rest}")
+        prefix = prefix.strip()
+    elif text:
+        prefix = text
+    for key, value in updates.items():
+        if value:
+            fields[key] = value
+        elif key in fields:
+            del fields[key]
+    note = note_text(fields)
+    combined = " ".join(p for p in (prefix, note) if p)
+    return combined.encode("utf-8")
+
+
 def read_note(file_path: str) -> tuple[str, str, str] | None:
     """Herkunftsnotiz lesen: `(quelle, vorheriger_wert, urspruengliche_mtime)`."""
     import piexif
@@ -75,9 +174,12 @@ def read_note(file_path: str) -> tuple[str, str, str] | None:
     raw = exif.get("Exif", {}).get(_USER_COMMENT)
     if not raw:
         return None
-    text = raw.decode("utf-8", "ignore") if isinstance(raw, bytes) else str(raw)
-    m = _RE_NOTE.search(text)
-    return (m.group(1), m.group(2) or "", m.group(3) or "") if m else None
+    fields = note_fields(raw)
+    if not fields.get("src"):
+        text = _decode_comment(raw)
+        m = _RE_NOTE.search(text)
+        return (m.group(1), m.group(2) or "", m.group(3) or "") if m else None
+    return (fields.get("src") or "", fields.get("prev") or "", fields.get("mtime") or "")
 
 
 def read_capture_time(file_path: str) -> datetime | None:
@@ -161,23 +263,19 @@ def write_capture_time(
         except OSError as e:
             logger.warning("Aenderungszeit von %s nicht lesbar: %s", file_path, e)
 
-    note = f"{MARKER}:src={source}"
+    updates = {"src": source}
     if result["previous"]:
-        note += f";prev={result['previous']}"
+        updates["prev"] = result["previous"]
     if result.get("mtime"):
-        note += f";mtime={result['mtime']}"
-    exif["Exif"][_USER_COMMENT] = note.encode("utf-8")
-    # Thumbnails im EXIF sind oft beschaedigt und lassen piexif scheitern;
-    # gebraucht werden sie nicht.
-    exif.pop("thumbnail", None)
-    exif["1st"] = {}
-
+        updates["mtime"] = result["mtime"]
+    existing_note = exif.get("Exif", {}).get(_USER_COMMENT)
+    exif.setdefault("Exif", {})[_USER_COMMENT] = _merge_user_comment(existing_note, updates)
     if dry_run:
         result["reason"] = "Trockenlauf"
         return result
 
     try:
-        piexif.insert(piexif.dump(exif), file_path)
+        piexif.insert(_safe_dump(exif), file_path)
     except Exception as e:
         raise ExifWriteError(f"{file_path}: {e}") from e
 
@@ -192,6 +290,153 @@ def write_capture_time(
     if check != when:
         raise ExifWriteError(
             f"{file_path}: geschrieben, aber Gegenprobe ergibt {check!r} statt {when!r}"
+        )
+    result["written"] = True
+    result["reason"] = "geschrieben"
+    return result
+
+
+def _as_bytes(raw) -> bytes:
+    if raw is None:
+        return b""
+    if isinstance(raw, bytes):
+        return raw
+    if isinstance(raw, (tuple, list)):
+        if raw and isinstance(raw[0], int) and max(raw) > 255:
+            return b"".join(int(x).to_bytes(2, "little") for x in raw)
+        return bytes(raw)
+    return str(raw).encode("utf-8")
+
+
+def _decode_description(raw) -> str:
+    if not raw:
+        return ""
+    data = _as_bytes(raw)
+    for enc in ("utf-8", "utf-16le", "latin-1"):
+        try:
+            text = data.decode(enc)
+            if enc != "utf-16le" and "\x00" in text[1:]:
+                continue
+            return text.strip("\x00 ")
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", "ignore").strip("\x00 ")
+
+
+def _decode_xp(raw) -> str:
+    if not raw:
+        return ""
+    return _as_bytes(raw).decode("utf-16le", "ignore").strip("\x00 ")
+
+
+def read_caption(file_path: str) -> str | None:
+    """Bildbeschreibung aus ImageDescription, sonst Windows-XPComment."""
+    import piexif
+
+    try:
+        exif = piexif.load(file_path)
+    except Exception:
+        return None
+    zeroth = exif.get("0th") or {}
+    for tag, decoder in (
+        (_IMAGE_DESCRIPTION, _decode_description),
+        (_XP_COMMENT, _decode_xp),
+    ):
+        text = decoder(zeroth.get(tag))
+        if text:
+            return text
+    return None
+
+
+def write_caption(
+    file_path: str,
+    caption: str,
+    source: str = "llm",
+    dry_run: bool = True,
+    overwrite: bool = False,
+    preserve_mtime: bool = True,
+) -> dict:
+    """Caption in ImageDescription + XPComment schreiben.
+
+    Eine fremde Beschreibung (Kamera, Lightroom) bleibt, solange `overwrite`
+    nicht gesetzt ist. Haben *wir* den Satz geschrieben (`photovault:cap=`),
+    darf ein erneuter Lauf ihn ersetzen — sonst würde ein besserer Prompt
+    die Datei nie mehr erreichen.
+
+    `UserComment` bekommt nur die Herkunft (`cap=llm`), nicht den Satz.
+    Eine vorhandene Datumsnotiz (`src=filename`) bleibt stehen.
+    """
+    from pathlib import Path
+
+    import piexif
+
+    caption = (caption or "").strip()
+    result = {"path": file_path, "written": False, "reason": "", "previous": None}
+    if not caption:
+        result["reason"] = "Caption ist leer"
+        return result
+    if Path(file_path).suffix.lower() not in WRITABLE_SUFFIXES:
+        result["reason"] = "Format nicht verlustfrei beschreibbar"
+        return result
+
+    try:
+        exif = piexif.load(file_path)
+    except Exception as e:
+        result["reason"] = f"EXIF nicht lesbar: {e}"
+        return result
+
+    zeroth = exif.setdefault("0th", {})
+    existing = _decode_description(zeroth.get(_IMAGE_DESCRIPTION)) or _decode_xp(zeroth.get(_XP_COMMENT))
+    result["previous"] = existing or None
+
+    fields = note_fields(exif.get("Exif", {}).get(_USER_COMMENT))
+    ours = bool(fields.get("cap"))
+    if existing and not ours and not overwrite:
+        result["reason"] = "hat bereits eine Bildbeschreibung"
+        return result
+    if existing == caption and fields.get("cap") == source:
+        result["reason"] = "Wert ist schon korrekt"
+        return result
+
+    snap = None
+    if preserve_mtime:
+        try:
+            from ingest.filetimes import snapshot
+
+            snap = snapshot(file_path)
+            result["mtime"] = datetime.fromtimestamp(
+                snap["mtime"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        except OSError as e:
+            logger.warning("Aenderungszeit von %s nicht lesbar: %s", file_path, e)
+
+    zeroth[_IMAGE_DESCRIPTION] = caption.encode("utf-8")
+    zeroth[_XP_COMMENT] = caption.encode("utf-16le")
+    existing_note = exif.get("Exif", {}).get(_USER_COMMENT)
+    cap_fields = {"cap": source}
+    if result.get("mtime") and "mtime" not in note_fields(existing_note):
+        cap_fields["mtime"] = result["mtime"]
+    exif.setdefault("Exif", {})[_USER_COMMENT] = _merge_user_comment(existing_note, cap_fields)
+
+    if dry_run:
+        result["reason"] = "Trockenlauf"
+        return result
+
+    try:
+        piexif.insert(_safe_dump(exif), file_path)
+    except Exception as e:
+        raise ExifWriteError(f"{file_path}: {e}") from e
+
+    if snap is not None:
+        from ingest.filetimes import restore
+
+        restored = restore(file_path, snap)
+        result["mtime_restored"] = restored["mtime"]
+        result["birth_restored"] = restored["birth"]
+
+    check = read_caption(file_path)
+    if check != caption:
+        raise ExifWriteError(
+            f"{file_path}: geschrieben, aber Gegenprobe ergibt {check!r} statt {caption!r}"
         )
     result["written"] = True
     result["reason"] = "geschrieben"

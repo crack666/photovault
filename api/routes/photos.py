@@ -417,3 +417,94 @@ def reembed(req: ReembedRequest) -> dict:
     except Exception as e:
         logger.exception("Reembed failed")
         raise HTTPException(500, f"Re-Embed fehlgeschlagen: {e}") from e
+
+
+#: Mehr als das nimmt der Schwerpunkt nicht auf, ohne zu Brei zu werden --
+#: und mehr Beispiele machen den Vorschlag nicht besser, nur langsamer.
+MAX_POSITIVES = 64
+MAX_SIMILAR = 2000
+
+
+class SimilarRequest(BaseModel):
+    """„Mehr davon" -- die Auswahl wird zur Abfrage."""
+
+    photo_ids: list[str] = Field(..., description="Beispiele, denen die Treffer ähneln sollen")
+    negative_ids: list[str] = Field(default_factory=list, description="Gegenbeispiele")
+    #: `clip` = wie es aussieht, `text` = worum es geht (Album, Datum, Personen,
+    #: Caption). Der Textvektor ist nur so gut wie die Captions, die schon da sind.
+    using: Literal["clip", "text"] = "clip"
+    #: `average` mittelt die Beispiele -- vorhersagbar, solange die Auswahl
+    #: zusammengehört. `best` misst gegen jedes einzeln und trägt weiter,
+    #: streut aber auch mehr.
+    strategy: Literal["average", "best"] = "average"
+    limit: int = 200
+    score_threshold: Optional[float] = None
+
+
+def _sample(ids: list[str], cap: int) -> list[str]:
+    """Gleichmäßig ausdünnen statt vorn abschneiden -- sonst beschreibt eine
+    Auswahl von 1 200 Fotos nur ihre ersten 64."""
+    if len(ids) <= cap:
+        return ids
+    step = len(ids) / cap
+    return [ids[int(i * step)] for i in range(cap)]
+
+
+@router.post("/similar")
+def similar(req: SimilarRequest) -> dict:
+    """Ähnliche Fotos zu einer Auswahl.
+
+    Das ist die Abfragesprache eines Vektorraums, und ohne sie ist eine Karte
+    nur ein Poster: man sieht etwas, kann ihm aber nicht folgen.
+
+    Gefragt wird über die Punkt-IDs, nicht über Vektoren -- Qdrant holt sie
+    selbst. Damit kommt weder Ollama noch die GPU ins Spiel, und die Abfrage
+    stört einen laufenden Caption-Lauf nicht.
+    """
+    if not req.photo_ids:
+        raise HTTPException(400, "photo_ids ist leer")
+    limit = max(1, min(req.limit, MAX_SIMILAR))
+    positive = _sample(req.photo_ids, MAX_POSITIVES)
+    negative = _sample(req.negative_ids, MAX_POSITIVES)
+
+    from qdrant_client import models
+
+    if len(positive) == 1 and not negative:
+        # Ein einzelnes Beispiel: die einfache Nachbarschaftsabfrage genügt.
+        query: object = positive[0]
+    else:
+        query = models.RecommendQuery(
+            recommend=models.RecommendInput(
+                positive=list(positive),
+                negative=list(negative),
+                strategy=(
+                    models.RecommendStrategy.BEST_SCORE
+                    if req.strategy == "best"
+                    else models.RecommendStrategy.AVERAGE_VECTOR
+                ),
+            )
+        )
+
+    q = client()
+    try:
+        found = q.query_points(
+            collection_name=PHOTOS,
+            query=query,
+            using=req.using,
+            # Die Beispiele selbst kommen zurueck und wuerden Plaetze belegen.
+            limit=limit + len(positive),
+            with_payload=False,
+            with_vectors=False,
+            score_threshold=req.score_threshold,
+        ).points
+    except Exception as e:
+        logger.exception("Similar failed")
+        raise HTTPException(500, f"Ähnlichkeitssuche fehlgeschlagen: {e}") from e
+
+    seen = set(req.photo_ids)
+    results = [
+        {"id": str(p.id), "score": round(float(p.score), 4)}
+        for p in found
+        if str(p.id) not in seen
+    ][:limit]
+    return {"using": req.using, "strategy": req.strategy, "from": len(positive), "results": results}

@@ -171,6 +171,10 @@ oder muss neu geschätzt werden, mit schlechterer Grundlage.
 
 Deshalb schreibt `tools/exif_repair.py` den schon ermittelten `taken_at`
 als `DateTimeOriginal` in JPEGs, **die noch keine Aufnahmezeit haben**.
+Captions ebenso: `ingest.caption_pass` schreibt den Satz nach
+`ImageDescription` (und `XPComment` für den Explorer). `UserComment` bleibt
+die Herkunftsnotiz (`photovault:cap=llm`), damit ein LLM-Satz nicht als
+Kameratext gelesen wird. Eine fremde Beschreibung wird nicht überschrieben.
 
 Sicherheiten, jede gegen einen konkreten Schaden:
 

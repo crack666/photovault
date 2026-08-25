@@ -108,6 +108,13 @@ def test_filter_always_excludes_locked_captions():
         assert "caption_locked" in keys
 
 
+def test_exif_only_keeps_locked_captions_in_the_file():
+    """Der Satz von Hand gehört in die Datei, das Modell darf ihn nicht ersetzen."""
+    flt = build_filter(missing_only=False, has_caption=True)
+    keys = [getattr(c, "key", None) for c in (flt.must_not or [])]
+    assert "caption_locked" not in keys
+
+
 def test_missing_only_excludes_existing_llm_captions():
     keys = [c.key for c in build_filter(missing_only=True).must_not]
     assert "caption_source" in keys
@@ -181,6 +188,7 @@ def wired(monkeypatch):
 
     monkeypatch.setattr(caption_pass, "Captioner", make_captioner)
     monkeypatch.setattr(caption_pass, "TextEmbedder", FakeEmbedder)
+    monkeypatch.setattr(caption_pass, "_write_file_captions", lambda *a, **k: None)
     monkeypatch.setattr("ingest.reembed.PointVectors", None, raising=False)
     return made
 
@@ -206,6 +214,24 @@ def test_run_captions_writes_payload_and_reembeds(wired, monkeypatch):
         assert call["wait"] is True, "sonst liest das Re-Embedding die alte Caption"
     # Erst schreiben, dann einbetten.
     assert set(seen_reembed["ids"]) == {0, 1, 2}
+
+
+def test_run_writes_exif_after_the_index(wired, monkeypatch):
+    """Index zuerst — eine fehlschlagende Datei darf den Satz in Qdrant nicht kosten."""
+    client = FakeClient([_Point(0, _payload(file_path="/p/0.jpg"))])
+    monkeypatch.setattr(caption_pass, "rebuild_text_vectors",
+                        lambda *a, **kw: {"updated": 1})
+    seen = []
+
+    def fake_exif(photos, stats):
+        seen.append([p.caption_de for p in photos])
+        stats["exif_written"] = stats.get("exif_written", 0) + len(photos)
+
+    monkeypatch.setattr(caption_pass, "_write_file_captions", fake_exif)
+    stats = caption_pass.run(client, workers=1, io_workers=1, track=False)
+    assert seen and seen[0][0].startswith("Beschreibung zu ")
+    assert stats["exif_written"] == 1
+    assert client.set_payload_calls, "Index kommt vor der Datei"
 
 
 def test_llm_tags_are_merged_not_replaced(wired, monkeypatch):
@@ -264,8 +290,9 @@ def test_dry_run_touches_nothing(wired):
 
 def test_empty_selection_is_not_an_error(wired):
     stats = caption_pass.run(FakeClient([]), track=False)
-    assert stats == {"selected": 0, "captioned": 0, "unreadable": 0,
-                     "failed": 0, "reembedded": 0}
+    assert stats["selected"] == 0
+    assert stats["captioned"] == 0
+    assert stats["exif_written"] == 0
 
 
 def test_caption_display_is_written_for_the_gallery(wired, monkeypatch):
@@ -351,6 +378,17 @@ def test_prompt_forbids_dodging_a_known_name():
     assert "MUSS mindestens einer davon in caption_de vorkommen" in prompt
     assert "mehr Gesichter erkannt als Namen bekannt" in prompt
     assert "Tobias Krueger" in prompt
+
+
+def test_prompt_asks_for_searchable_objects_not_clip_buckets():
+    """Freitext 'Bier' soll ein Bierglas treffen, nicht nur das CLIP-Tag getraenke."""
+    from ingest.captioner import build_caption_prompt
+
+    prompt = build_caption_prompt({}).lower()
+    assert "bierglas" in prompt
+    assert "konkrete" in prompt
+    assert "getraenke" in prompt
+    assert "bier/wein" in prompt or "bier/wein/cola" in prompt
 
 
 def test_merge_tags_is_capped():

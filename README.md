@@ -34,6 +34,7 @@ beantworten. Und Google Fotos kann es, will dafür aber alles haben.
 | **Suche** | Kriterien zusammenklicken statt Suchsyntax lernen — „Niki **und** Jonas, 2015, Griechenland". |
 | **Beschreibungen** | Optional deutsche Bildunterschriften per lokalem Sprachmodell, mit Album und Namen als Kontext. |
 | **Reparatur** | Kopierzeit von Aufnahmezeit trennen, falsche Kamera-Uhren finden, abgeleitete Zeiten ins EXIF zurückschreiben — das Archiv wird besser, nicht nur der Index. |
+| **Atlas** | Das ganze Archiv als eine Karte: Ähnliches liegt beieinander, Kontinente tragen Namen aus den Bildbeschreibungen. Ein Lasso um einen Haufen markiert tausend Fotos auf einmal. |
 
 ## Voraussetzungen
 
@@ -174,10 +175,15 @@ aufbaut:
 3. **Beschreibungen erzeugen** — zuletzt, denn mit benannten Personen im
    Kontext werden sie deutlich besser: „Annika Wolf und eine weitere Person auf
    einer Feier im April 2008" statt „zwei Personen".
+4. **Karte rechnen** — Tab *Atlas*. Erst jetzt sinnvoll: die Kontinente werden
+   aus den Beschreibungen benannt, und ohne sie heißen sie nach den groben
+   Szenen-Tags.
 
 ```bash
 docker compose exec api python -m ingest.caption_pass --dry-run
 ```
+
+Der Satz landet im Index **und** in der Datei (`ImageDescription` / Windows-Kommentar), mit Herkunftsnotiz — sonst ist er nach dem nächsten Kopieren weg. `--no-exif` schreibt nur den Index; `--exif-only` holt vorhandene Index-Sätze nach.
 
 ## So arbeitet es
 
@@ -312,6 +318,133 @@ UI: `http://127.0.0.1:8000/` → Tab **Wer ist das?**
 4. Eine Zuordnung gilt für den ganzen Cluster; `person_ids` am Foto, nie still
 5. Überspringen markiert `_skipped`
 
+### Atlas — die Karte des Archivs
+
+UI: Tab **Atlas**. Alle Fotos auf einer Fläche, Nähe heißt „sieht sich
+ähnlich": die CLIP-Vektoren werden per UMAP auf zwei Dimensionen gebracht.
+Für 17 370 Fotos dauert das 23 Sekunden.
+
+```bash
+pip install 'photovault[atlas]'   # umap-learn + scikit-learn, nur hierfür
+python -m tools.atlas_build
+```
+
+Das Ergebnis ist eine statische Datei unter `web/static/atlas/atlas.json`
+(1,3 MB). Sie wird über den vorhandenen StaticFiles-Mount ausgeliefert — die
+Karte neu zu rechnen braucht **keinen API-Neustart**.
+
+**Die Ordneransicht wäre an diesem Archiv sinnlos.** 76 % der Fotos liegen in
+drei von 68 Ordnern (`WhatsApp Images` 9 617, `HandyPics` 2 844, `Sent`
+1 732). Eine Kartenansicht auch: `location` steht bei 24 von 17 429 Fotos.
+Was trägt, ist die Ordnung, die aus den Vektoren selbst folgt.
+
+Zwei Linsen auf denselben Punkten, mit weichem Übergang dazwischen:
+
+| Linse | waagerecht | senkrecht |
+|---|---|---|
+| **Bedeutung** | UMAP | UMAP |
+| **Zeit × Bedeutung** | Jahre, dichte-normalisiert | dieselbe Bedeutungsachse |
+
+Die Zeitachse ist bewusst nicht linear. 67 % der Fotos stammen aus den letzten
+vier Jahren — linear bekämen zwanzig Jahre Familiengeschichte ein Drittel der
+Breite und die WhatsApp-Jahre zwei Drittel. Jedes Jahr bekommt deshalb Platz
+nach `Anzahl^0.4`.
+
+**Beschriftung aus Captions, nicht aus Tags.** An denselben Clustern gemessen:
+
+| Captions im Cluster | aus Captions | aus `scene_tags` |
+|---|---|---|
+| 97 % | `abistreich, juni, schülern` | `gruppenfoto, party, gruppe` |
+| 33 % | `brandenburger, fernsehturm, berlin` | `dokument, urlaub, party` |
+| 3 % | `apple, store, ipad, pencil` | `kinder, geburtstag, urlaub` |
+
+Die Tags sind nicht nur grob, sie liegen stellenweise daneben. Gewählt wird
+per gewichteter PMI: häufig *in diesem* Kontinent und zugleich selten
+anderswo. Prompt-Floskeln fallen doppelt heraus — über eine Wortliste und
+über eine Obergrenze für die Dokumentfrequenz (`aufgenommen` steht in 24 %
+aller Captions). Ein Kontinent ohne Captions bekommt keinen erfundenen Namen,
+sondern seine Tags und einen sichtbaren Vorbehalt.
+
+**Was die Karte nicht weiß: wer zu sehen ist.** CLIP kodiert, wie ein Bild
+*aussieht* — nicht, wer darauf ist. Ein Ganzkörper-Spiegelselfie landet neben
+anderen Ganzkörper-Spiegelselfies, gleich wer davorsteht: die zwölf nächsten
+Nachbarn eines solchen Fotos stammten im Test aus 2016 bis 2025 und zeigten
+vier verschiedene Menschen. Identität steckt im 512d-Gesichtsvektor, und der
+geht bewusst **nicht** ins Layout ein — sonst zerfielen die inhaltlichen
+Kontinente (Strand, Dokumente, Skiurlaub) in Personenhaufen. Wer wissen will,
+wo eine Person liegt, wählt sie in der Leiste: ihre Fotos leuchten auf, der
+Rest tritt zurück. Beim Überfahren nennt die Karte ohnehin, wer bestätigt ist.
+
+Der Vektorraum ist umschaltbar: `--space text` legt die Karte über die
+grounded Textvektoren statt über CLIP, und „Mehr davon" nimmt `using=text`.
+Der Textvektor enthält Album, Datum, Personen und Caption — er antwortet auf
+„geht worum", nicht auf „sieht aus wie". Achtung: laut den Messungen in
+[docs/performance.md](docs/performance.md) liegen Fotos desselben Albums dort
+bei Cosinus 0,95–0,997; die Karte zeigt dann eher Alben als Themen.
+
+**Farbe trägt die Frage.** Umschaltbar auf Kontinent, Herkunft, Jahr — oder
+**Zustand**: wie weit ein Foto schon eingeordnet ist (Person, Beschreibung,
+EXIF-Datum, benannte Serie). Warm heißt „hier liegt noch Arbeit".
+
+**Nahduplikate werden gestapelt, nicht gelöscht.** Bei Cosinus ≥ 0.95 fallen
+4 406 Fotos in 1 750 Stapel — BURST-Serien, Feuerwerk-Salven, und 2 060
+Fotos, die es doppelt gibt, weil das eigene Bild per WhatsApp zurückkam. Der
+Schalter *Stapel falten* zeigt 14 714 statt 17 370. Obenauf liegt das Bild mit
+dem meisten Kontext: bestätigte Person vor Beschreibung vor eigener Aufnahme.
+
+**Zwei Ebenen: Fotos oder Gelegenheiten.** 17 370 Einzelbilder sind nicht
+stöberbar. Der Umschalter *Serien* zeigt stattdessen eine Kachel je Ereignis —
+dieselben Serien wie im Tab *Serien*, über alle Kanäle: 5 239 insgesamt, ab
+drei Fotos noch 1 755 über 12 839 Bilder. Größe ∝ √Fotozahl, sonst verdeckt
+„Silvester 2012" mit 163 Bildern alles andere.
+
+Jede Serie trägt zusätzlich, **wie weit ihre Fotos im Bedeutungsraum
+auseinanderliegen**. Das trennt echte Gelegenheiten von Zeitfenster-Artefakten:
+
+| Serie | Streuung |
+|---|---|
+| `Abiball` (98 Fotos) | 0,021 |
+| `Silvester 2012/13` (163) | 0,141 |
+| `Abistreich` (139) | 0,172 — knapp unter der Grenze |
+| `WhatsApp Images`, ein Tag im Oktober 2022 (16) | 0,270 |
+| `Sent`, ein Tag im November 2022 (24) | 0,325 |
+
+Über 0,18 bekommt die Kachel einen orangen Rahmen und den Satz „hält
+inhaltlich nicht zusammen — eher ein Tag als eine Gelegenheit". Bei `whatsapp`
+ist die Empfangszeit nicht die Aufnahmezeit, und über einen wachen Tag entsteht
+nie eine Drei-Stunden-Lücke (siehe [docs/curation.md](docs/curation.md)) — die
+Streuung macht genau das sichtbar.
+
+**„Mehr davon" — die Auswahl wird zur Abfrage.** Das ist die Abfragesprache
+eines Vektorraums, und ohne sie ist eine Karte nur ein Poster: man sieht etwas,
+kann ihm aber nicht folgen. Strg+Klick auf ein Foto oder der Knopf in der
+Auswahl holt die Nachbarn über `POST /api/photos/similar`, die Kamera fährt
+hin, und von dort geht es weiter. `← zurück` nimmt den Schritt zurück, damit
+man sich traut.
+
+Gefragt wird über die **Punkt-IDs**, nicht über Vektoren — Qdrant holt sie
+selbst. Damit kommt weder Ollama noch die GPU ins Spiel: 200 Treffer in 29 ms,
+und ein laufender Caption-Lauf merkt nichts davon. Mehrere Beispiele werden zum
+Schwerpunkt gemittelt, ein einzelnes ist eine normale Nachbarschaftsabfrage.
+Über 64 Beispiele wird gleichmäßig ausgedünnt, nicht vorn abgeschnitten.
+
+**Der Einstieg schlägt Arbeit vor.** Eine Karte, die beim Öffnen nichts sagt,
+ist ein Poster. Stattdessen: „3 182 Fotos noch unberührt" plus die fünf
+Kontinente mit den meisten offenen Fotos — Klick fliegt hin *und* markiert sie.
+Darunter der Weg zur nächsten Arbeit, wenn sie woanders liegt: „3 172 Fotos
+zeigen Gesichter ohne Namen".
+
+Sortiert wird nach **Anzahl**, nicht nach Anteil. Ein Anteilsschwellwert lieferte
+nach dem Caption-Lauf keinen einzigen Vorschlag mehr — die Karte nannte eine Zahl
+und ließ einen stehen.
+
+**Auf der Karte wird gearbeitet.** Ein Lasso (oder Shift+Ziehen) markiert
+alles im Umkreis; Alt zieht ab. Die Auswahl bekommt eine Notiz
+(`/api/photos/annotate`, danach exakt filterbar) oder eine Beschreibung
+(`/api/photos/caption/bulk`), oder läuft als Diaschau. Das Neuberechnen der
+Textvektoren ist abschaltbar — es belegt sonst die GPU, die gerade
+Beschreibungen erzeugt.
+
 ## Ohne Docker entwickeln
 
 Wer am Code arbeitet, will die Pipeline direkt starten. Qdrant und Ollama
@@ -369,6 +502,7 @@ rekonstruierbar ist, wird deshalb vorher gelesen und zurückgeschrieben:
 ```bash
 python -m tools.quality_report --prefix /mnt/photo   # Datum, Gesichter, Tags, Vollständigkeit
 python -m tools.acceptance --prefix /mnt/photo       # Szenarien aus docs/spec.md + Latenz
+python -m tools.atlas_build                          # Karte fuer den Tab "Atlas"
 ```
 
 ### API-Endpunkte
@@ -399,6 +533,7 @@ python -m tools.acceptance --prefix /mnt/photo       # Szenarien aus docs/spec.m
 | GET | `/api/photos/{id}/thumb` | Vorschaubild, `size` = 160/320/640/1280 |
 | POST | `/api/photos/annotate` | Eigene Notizen an markierte Fotos (`add`/`remove`/`replace`) |
 | POST | `/api/photos/reembed` | Text-Vektoren neu bauen (IDs oder ganzes Album) |
+| POST | `/api/photos/similar` | „Mehr davon" — Nachbarn zu einer Auswahl, `using=clip\|text` |
 | GET | `/api/jobs` | Alle Jobs mit Fortschritt |
 | GET | `/api/jobs/{id}` | Ein Job |
 | POST | `/api/ingest/start` | Ingest starten (Stub) |
@@ -412,6 +547,21 @@ aktuellem Ordner; die Seite pollt alle 2 s. Der Tracker schreibt nach
 `ingest_jobs` in Qdrant und ist über das Feld `kind` generisch — Caption-Nachläufe
 oder Re-Embeds können dieselbe Anzeige benutzen. Ein Lauf, dessen Prozess stirbt,
 erscheint nach 2 Minuten ohne Aktualisierung als `stale` statt ewig als `running`.
+
+### Wenn eine Änderung nicht ankommt
+
+Die UI besteht aus ES-Modulen, und ein `import "./core/dom.js"` trägt keinen
+Cache-Parameter. Der Browser liefert dann beliebig lange die alte Fassung aus,
+während `index.html` schon die neue erwartet — eine geänderte Ansicht kommt
+nicht an, obwohl die Datei auf der Platte richtig ist. Zwei Vorkehrungen
+dagegen:
+
+* `/static` antwortet mit `Cache-Control: no-cache` (`api.main.FreshStatic`).
+  Das heißt „vorher nachfragen", nicht „nicht speichern": unveränderte Dateien
+  werden mit 304 und null Byte beantwortet, auch die 2,8 MB der Karte.
+* Jeder Modul-Import trägt zusätzlich `?v=N` — eine Zahl für alle Module
+  gemeinsam, die gemeinsam erhöht wird. Header allein haben in der Praxis nicht
+  gereicht.
 
 ### Vorschaubilder
 

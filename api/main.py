@@ -62,6 +62,26 @@ def ui_jobs():
     return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
 
+class FreshStatic(StaticFiles):
+    """Statische Dateien, die nicht veralten koennen.
+
+    Die UI besteht aus ES-Modulen, und ein `import "./core/dom.js"` traegt
+    keinen `?v=`-Parameter -- der Browser liefert dann beliebig lange die alte
+    Fassung aus, waehrend index.html schon die neue erwartet. Genau das ist
+    passiert: eine geaenderte Ansicht kam nicht an, obwohl die Datei auf der
+    Platte richtig war.
+
+    `no-cache` heisst nicht "nicht speichern", sondern "vorher nachfragen".
+    StaticFiles beantwortet die Nachfrage mit 304, solange sich nichts
+    geaendert hat -- es kostet also einen lokalen Rundlauf, keine Uebertragung.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if (WEB_DIR / "static").is_dir():
-    app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
+    app.mount("/static", FreshStatic(directory=str(WEB_DIR / "static")), name="static")
 

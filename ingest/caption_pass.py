@@ -91,23 +91,32 @@ def build_filter(
     person: Optional[str] = None,
     album: Optional[str] = None,
     path_contains: Optional[str] = None,
+    has_caption: bool = False,
 ):
-    """Qdrant-Filter fuer die Auswahl. `caption_locked` bleibt immer aussen vor."""
-    from qdrant_client.models import FieldCondition, Filter, MatchText, MatchValue
+    """Qdrant-Filter fuer die Auswahl. `caption_locked` bleibt beim LLM-Lauf aussen vor.
+
+    `has_caption` ist der EXIF-Abgleich: Satz steht schon im Index, soll in
+    die Datei. Von-Hand-Sätze (`caption_locked`) gehören dort *hinein*.
+    """
+    from qdrant_client.models import (
+        FieldCondition, Filter, IsEmptyCondition, MatchText, MatchValue, PayloadField,
+    )
 
     must: list = []
-    must_not: list = [
-        FieldCondition(key="caption_locked", match=MatchValue(value=True)),
-    ]
+    must_not: list = []
+    if not has_caption:
+        must_not.append(FieldCondition(key="caption_locked", match=MatchValue(value=True)))
     if missing_only:
         must_not.append(FieldCondition(key="caption_source", match=MatchValue(value="llm")))
+    if has_caption:
+        must_not.append(IsEmptyCondition(is_empty=PayloadField(key="caption_de")))
     if person:
         must.append(FieldCondition(key="person_names", match=MatchValue(value=person)))
     if album:
         must.append(FieldCondition(key="folder_name", match=MatchText(text=album)))
     if path_contains:
         must.append(FieldCondition(key="file_path", match=MatchText(text=path_contains)))
-    return Filter(must=must or None, must_not=must_not)
+    return Filter(must=must or None, must_not=must_not or None)
 
 
 def select_photos(
@@ -178,10 +187,22 @@ def run(
     limit: Optional[int] = None,
     dry_run: bool = False,
     track: bool = True,
+    write_exif: bool = True,
+    exif_only: bool = False,
     **filter_args,
 ) -> dict[str, int]:
-    """Captions fuer die ausgewaehlten Fotos erzeugen und Textvektoren erneuern."""
-    stats = {"selected": 0, "captioned": 0, "unreadable": 0, "failed": 0, "reembedded": 0}
+    """Captions fuer die ausgewaehlten Fotos erzeugen und Textvektoren erneuern.
+
+    Der Satz geht in den Index *und* ins EXIF (ImageDescription), sonst lebt
+    er nur in Qdrant. `--exif-only` schreibt vorhandene Index-Sätze nach,
+    ohne das Modell.
+    """
+    stats = {
+        "selected": 0, "captioned": 0, "unreadable": 0, "failed": 0, "reembedded": 0,
+        "exif_written": 0, "exif_skipped": 0, "exif_failed": 0,
+    }
+    if exif_only:
+        filter_args = {**filter_args, "missing_only": False, "has_caption": True}
     photos = select_photos(client, collection, limit=limit, **filter_args)
     stats["selected"] = len(photos)
     if not photos:
@@ -193,6 +214,14 @@ def run(
             logger.info("  %s", photo.file_path)
         if len(photos) > 20:
             logger.info("  ... und %d weitere", len(photos) - 20)
+        return stats
+
+    if exif_only:
+        _write_file_captions(photos, stats)
+        logger.info(
+            "EXIF: %d geschrieben, %d übersprungen, %d fehlgeschlagen",
+            stats["exif_written"], stats["exif_skipped"], stats["exif_failed"],
+        )
         return stats
 
     job = _start_job(client, len(photos), collection) if track else None
@@ -226,6 +255,8 @@ def run(
         if done:
             _write_captions(client, collection, done)
             stats["captioned"] += len(done)
+            if write_exif:
+                _write_file_captions(done, stats)
             # Erst schreiben, dann einbetten -- das Dokument soll die neue
             # Caption enthalten.
             result = rebuild_text_vectors(
@@ -250,9 +281,11 @@ def run(
                    errors=stats["failed"] + stats["unreadable"])
     elapsed = time.time() - started
     logger.info(
-        "Fertig: %d Captions in %s (%.2f s/Foto), %d unlesbar, %d fehlgeschlagen",
+        "Fertig: %d Captions in %s (%.2f s/Foto), %d unlesbar, %d fehlgeschlagen, "
+        "EXIF %d geschrieben / %d übersprungen / %d fehlgeschlagen",
         stats["captioned"], _fmt(elapsed),
         elapsed / max(1, stats["captioned"]), stats["unreadable"], stats["failed"],
+        stats["exif_written"], stats["exif_skipped"], stats["exif_failed"],
     )
     return stats
 
@@ -300,6 +333,36 @@ def _write_captions(client, collection: str, photos: list[Photo]) -> None:
             logger.warning("Payload update failed for %s: %s", photo.file_path, e)
 
 
+def _write_file_captions(photos: list[Photo], stats: dict) -> None:
+    """Satz in die Datei — best effort, der Index ist schon geschrieben."""
+    from ingest.exif_writer import write_caption
+    from ingest.netfs import retry_io
+
+    for photo in photos:
+        text = (photo.caption_de or (photo.payload or {}).get("caption_de") or "").strip()
+        if not text:
+            stats["exif_skipped"] = stats.get("exif_skipped", 0) + 1
+            continue
+        source = (photo.payload or {}).get("caption_source") or "llm"
+        try:
+            out = retry_io(
+                lambda p=photo, t=text, s=source: write_caption(
+                    p.file_path, t, source=s, dry_run=False, overwrite=False,
+                ),
+                what=photo.file_path,
+            )
+        except Exception as e:
+            stats["exif_failed"] = stats.get("exif_failed", 0) + 1
+            logger.warning("EXIF-Caption fehlgeschlagen: %s (%s)", photo.file_path, e)
+            continue
+        if out.get("written"):
+            stats["exif_written"] = stats.get("exif_written", 0) + 1
+        else:
+            stats["exif_skipped"] = stats.get("exif_skipped", 0) + 1
+            if out.get("reason"):
+                logger.debug("EXIF-Caption %s: %s", photo.file_path, out["reason"])
+
+
 def _start_job(client, total: int, collection: str):
     try:
         from ingest.jobs import JobTracker
@@ -343,6 +406,10 @@ def main() -> None:
                         help="0 (Standard) = Kontext des geladenen Modells nutzen, kein Reload")
     parser.add_argument("--dry-run", action="store_true", help="Nur zeigen, was betroffen waere")
     parser.add_argument("--no-track", action="store_true", help="Kein Job-Eintrag in Qdrant")
+    parser.add_argument("--no-exif", action="store_true",
+                        help="Satz nur in den Index, nicht in die Datei")
+    parser.add_argument("--exif-only", action="store_true",
+                        help="Vorhandene Index-Captions ins EXIF schreiben, ohne das Modell")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -363,6 +430,8 @@ def main() -> None:
         limit=args.limit,
         dry_run=args.dry_run,
         track=not args.no_track,
+        write_exif=not args.no_exif,
+        exif_only=args.exif_only,
         missing_only=not args.all,
         person=args.person,
         album=args.album,

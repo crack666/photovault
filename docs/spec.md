@@ -33,7 +33,7 @@ NAS → EXIF/Folder/Filezeiten/Sequenz → Face → Face-Match → CLIP → Norm
 | Face | insightface buffalo_l | 512d, BGR-ndarray |
 | Face-Match | Qdrant `face` cosine ≥ 0.4 | `person_suggestions` (kein Auto-`person_ids`) |
 | Scene | CLIP ViT-L/14 | 768d + zero-shot tags |
-| Caption | Qwen 3.8-27B Vision (`qwen3.8:27b-ctx128k`) | DE JSON; `think: false`, `num_ctx` 8192 |
+| Caption | Qwen 3.8-27B Vision (`qwen3.8:27b-ctx8k`) | DE JSON; `think: false`, Kontext 8192 |
 | Text Embed | qwen3-embedding:4b-ctx2k | **2560d** über Ordner+Datum+Sequenz+Personen+Caption |
 
 ### Caption-Kontext (Anfüttern)

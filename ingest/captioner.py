@@ -127,11 +127,13 @@ def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
         "",
         "Weitere Regeln:",
         "- Datum/Ordner in den Satz einbauen, wenn vorhanden (z.B. Griechenland 2015).",
-        "- Nur beschreiben, was wirklich im Bild ist. Die CLIP-Tags sind schwach und "
-        "oft falsch — ignoriere sie, wenn sie dem Bild widersprechen.",
+        "- Nur beschreiben, was wirklich im Bild ist. CLIP-Tags sind schwach und oft falsch.",
+        "- Suchbare Dinge beim Namen: Bierglas, Weinflasche, Torte, Hund, Gitarre. "
+        "Ein erkennbares Getraenk heisst bier/wein/cola/sekt in Satz und Tags, "
+        "nicht nur getraenke.",
         f"- Antworte NUR mit JSON: {JSON_SCHEMA}",
-        "- caption_de: 1-2 Saetze Deutsch. scene_tags: klein, deutsch, max 8, "
-        "nur was du im Bild siehst.",
+        "- caption_de: 1-2 Saetze Deutsch, mit Anlass und den konkreten Dingen.",
+        "- scene_tags: klein, deutsch, max 8, konkrete Substantive (bier, garten). Nichts erfinden.",
     ]
     block = format_context(context or {})
     if block:

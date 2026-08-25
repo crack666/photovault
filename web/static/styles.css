@@ -328,6 +328,60 @@ nav { display: flex; gap: 8px; }
 .search-bar .field { display: grid; gap: 7px; }
 .search-bar .field > label { font-size: .82rem; color: var(--muted); }
 .search-bar .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+
+.search-hero { margin-bottom: 18px; }
+.search-hero h1 { margin: 0 0 6px; }
+.search-hero .lead { margin: 0; max-width: 42rem; }
+.search-examples {
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px;
+}
+.search-ex {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  background: var(--card); border: 1px solid #3a4254; border-radius: 12px;
+  padding: 8px 12px; text-align: left; max-width: 16rem;
+}
+.search-ex:hover { border-color: var(--accent); }
+.search-ex strong { font-size: .88rem; font-weight: 600; }
+.search-ex span { font-size: .72rem; color: var(--muted); }
+.search-desk { display: grid; gap: 14px; margin-bottom: 18px; }
+.search-card {
+  background: var(--card); border: 1px solid #2a3140; border-radius: 16px;
+  padding: 14px 16px 16px;
+}
+.search-card h2 {
+  margin: 0 0 8px; font-size: .72rem; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.search-card > .hint { margin: 0 0 10px; }
+.search-card .lead { margin: 0 0 10px; font-size: 1.05rem; color: var(--muted); }
+.search-card .qb-add { margin-top: 10px; }
+.search-people { display: flex; flex-wrap: wrap; gap: 8px; }
+.search-person {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: #12151c; border: 1px solid #3a4254; border-radius: 999px;
+  padding: 3px 12px 3px 3px; cursor: pointer; color: var(--text);
+}
+.search-person img {
+  width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: #000;
+}
+.search-person.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, #12151c);
+}
+.search-what #q-text {
+  width: 100%; box-sizing: border-box;
+  background: #12151c; color: var(--text);
+  border: 1px solid #3a4254; border-radius: 12px;
+  padding: 14px 16px; font: inherit; font-size: 1.05rem;
+}
+.search-what #q-text::placeholder { color: #6b7384; }
+.search-what #q-text:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.search-what .hint { margin: 8px 0 0; }
+#search-meta { margin: 0 0 12px; }
+
 .hint { font-size: .74rem; margin: 0; line-height: 1.4; }
 .opt { display: flex; gap: 16px; flex-wrap: wrap; font-size: .8rem; color: var(--muted); }
 .opt label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }

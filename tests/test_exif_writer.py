@@ -13,7 +13,8 @@ import pytest
 piexif = pytest.importorskip("piexif")
 
 from ingest.exif_writer import (  # noqa: E402
-    ExifWriteError, read_capture_time, read_note, revert, write_capture_time,
+    ExifWriteError, read_caption, read_capture_time, read_note, revert,
+    write_caption, write_capture_time,
 )
 
 
@@ -166,3 +167,98 @@ class TestMtimeSurvives:
         source, prev, mtime = read_note(p)
         assert source == "filename"
         assert mtime.startswith("2014-05-13")
+
+
+CAPTION = "Zwei Personen sitzen im Garten. Auf dem Tisch steht eine Flasche."
+
+
+class TestCaptionInTheFile:
+    def test_writes_description_and_windows_comment(self, tmp_path):
+        p = _jpeg(tmp_path / "party.jpg")
+        out = write_caption(p, CAPTION, source="llm", dry_run=False)
+        assert out["written"] is True
+        assert read_caption(p) == CAPTION
+        from ingest.exif_writer import _decode_xp
+        import piexif
+        assert _decode_xp(piexif.load(p)["0th"][0x9C9C]) == CAPTION
+
+    def test_marks_the_sentence_as_ours(self, tmp_path):
+        p = _jpeg(tmp_path / "party.jpg")
+        write_caption(p, CAPTION, source="llm", dry_run=False)
+        from ingest.exif_writer import note_fields
+        import piexif
+        fields = note_fields(piexif.load(p)["Exif"][37510])
+        assert fields["cap"] == "llm"
+        assert "src" not in fields
+
+    def test_does_not_overwrite_a_foreign_description(self, tmp_path):
+        p = _jpeg(tmp_path / "cam.jpg")
+        import piexif
+        exif = piexif.load(p)
+        exif.setdefault("0th", {})[270] = "Studioaufnahme".encode("utf-8")
+        piexif.insert(piexif.dump(exif), p)
+        out = write_caption(p, CAPTION, source="llm", dry_run=False)
+        assert out["written"] is False
+        assert read_caption(p) == "Studioaufnahme"
+
+    def test_replaces_a_sentence_we_wrote(self, tmp_path):
+        p = _jpeg(tmp_path / "party.jpg")
+        write_caption(p, "Alte Fassung.", source="llm", dry_run=False)
+        out = write_caption(p, CAPTION, source="llm", dry_run=False)
+        assert out["written"] is True
+        assert read_caption(p) == CAPTION
+
+    def test_keeps_a_date_note(self, tmp_path):
+        p = _jpeg(tmp_path / "wa.jpg")
+        write_capture_time(p, WHEN, source="filename", dry_run=False)
+        write_caption(p, CAPTION, source="llm", dry_run=False)
+        assert read_note(p)[0] == "filename"
+        assert read_capture_time(p) == WHEN
+        assert read_caption(p) == CAPTION
+
+    def test_date_write_keeps_the_caption_marker(self, tmp_path):
+        p = _jpeg(tmp_path / "wa.jpg")
+        write_caption(p, CAPTION, source="llm", dry_run=False)
+        write_capture_time(p, WHEN, source="filename", dry_run=False)
+        from ingest.exif_writer import note_fields
+        import piexif
+        fields = note_fields(piexif.load(p)["Exif"][37510])
+        assert fields["src"] == "filename"
+        assert fields["cap"] == "llm"
+        assert read_caption(p) == CAPTION
+
+    def test_mtime_survives(self, tmp_path):
+        import os
+        p = _jpeg(tmp_path / "wa.jpg")
+        os.utime(p, (1_400_000_000, 1_400_000_000))
+        before = os.path.getmtime(p)
+        write_caption(p, CAPTION, source="llm", dry_run=False)
+        assert abs(os.path.getmtime(p) - before) < 1
+
+    def test_pixels_are_untouched(self, tmp_path):
+        from PIL import Image
+        p = _jpeg(tmp_path / "wa.jpg")
+        before = Image.open(p).tobytes()
+        write_caption(p, CAPTION, source="llm", dry_run=False)
+        assert Image.open(p).tobytes() == before
+
+    def test_dry_run_changes_nothing(self, tmp_path):
+        p = _jpeg(tmp_path / "wa.jpg")
+        before = open(p, "rb").read()
+        out = write_caption(p, CAPTION, source="llm", dry_run=True)
+        assert out["written"] is False
+        assert open(p, "rb").read() == before
+
+    def test_a_broken_camera_tag_does_not_block_the_write(self, tmp_path):
+        """SceneType muss 1 Byte sein; manche Kameras schreiben ein int."""
+        p = _jpeg(tmp_path / "cam.jpg")
+        import piexif
+        from ingest.exif_writer import _safe_dump
+        exif = piexif.load(p)
+        exif.setdefault("Exif", {})[41729] = 1
+        with pytest.raises(ValueError):
+            piexif.dump(exif)
+        piexif.insert(_safe_dump(exif), p)
+        out = write_caption(p, CAPTION, source="llm", dry_run=False)
+        assert out["written"] is True
+        assert read_caption(p) == CAPTION

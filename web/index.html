@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
-  <link rel="stylesheet" href="/static/styles.css?v=7" />
+  <link rel="stylesheet" href="/static/styles.css?v=9" />
+  <link rel="stylesheet" href="/static/atlas/atlas.css?v=8" />
 </head>
 <body>
   <header class="top">
@@ -15,6 +16,7 @@
       <button class="tab" data-tab="people">Personen</button>
       <button class="tab" data-tab="events">Serien</button>
       <button class="tab" data-tab="search">Suche</button>
+      <button class="tab" data-tab="atlas">Atlas</button>
       <button class="tab" onclick="location.href='/jobs.html'">Jobs</button>
     </nav>
   </header>
@@ -252,32 +254,88 @@
   </main>
 
   <main id="view-search" class="view wide hidden">
-    <h1>Suche</h1>
-    <form id="search-form" class="builder">
-      <p class="lead">Zeig mir Fotos, die …</p>
-      <div id="qb-root"></div>
-      <div class="qb-add">
-        <button type="button" class="mini" data-add="cond">+ Bedingung</button>
-        <button type="button" class="mini" data-add="group">+ Klammer</button>
-      </div>
+    <header class="search-hero">
+      <h1>Suche</h1>
+      <p class="lead">
+        Personen und Daten filtern hart. Der Satz darunter sortiert nach dem,
+        was auf dem Foto zu sehen ist — „Bier“, „Feuerwerk“, „Garten“.
+      </p>
+    </header>
 
-      <div class="field">
-        <input id="q-text" placeholder="Freitext — z.B. „Feuerwerk in der Nacht“" />
+    <div class="search-examples" id="search-examples"></div>
+
+    <form id="search-form" class="search-desk">
+      <section class="search-card">
+        <h2>Wer ist drauf</h2>
+        <p class="muted hint">Alle angehakten Personen auf demselben Foto (UND).</p>
+        <div id="search-people" class="search-people"></div>
+      </section>
+
+      <section class="search-card search-what">
+        <h2>Was du siehst</h2>
+        <input id="q-text" type="search" autocomplete="off"
+               placeholder="Bier, Feuerwerk in der Nacht, Gartenparty …" />
         <p class="hint muted">
-          Sortiert nach Ähnlichkeit, filtert nicht. Die Bedingungen oben grenzen ein,
-          der Freitext bestimmt die Reihenfolge darin.
+          Sortiert nach Ähnlichkeit, filtert nicht. Ohne Captions ist das nur
+          grobes CLIP — sobald die Bildsätze da sind, trifft „Bier“ ein Bierglas, nicht nur „getränke“.
         </p>
-      </div>
+      </section>
+
+      <section class="search-card">
+        <h2>Genau eingrenzen</h2>
+        <p class="lead">Zeig mir Fotos, die …</p>
+        <div id="qb-root"></div>
+        <div class="qb-add">
+          <button type="button" class="mini" data-add="cond">+ Bedingung</button>
+          <button type="button" class="mini" data-add="group">+ Klammer</button>
+        </div>
+      </section>
 
       <div class="qb-run">
         <button class="primary" type="submit">Suchen</button>
         <output id="qb-expr" class="expr"></output>
       </div>
     </form>
-    <div id="search-results" class="results"></div>
+    <p class="muted" id="search-meta"></p>
+    <div id="search-results" class="results">
+      <p class="muted">Wähle Personen, tippe was du siehst, oder nimm ein Beispiel oben.</p>
+    </div>
   </main>
 
-  <script src="/static/app.js?v=7"></script>
+
+  <main id="view-atlas" class="view wide hidden">
+    <div class="atlas-wrap">
+      <canvas id="atlas-canvas"></canvas>
+
+      <div class="atlas-bar">
+        <div class="atlas-group" id="atlas-levels"></div>
+        <select id="atlas-minsize" class="atlas-jump hidden" title="Kleine Serien ausblenden">
+          <option value="2">ab 2 Fotos</option>
+          <option value="3" selected>ab 3 Fotos</option>
+          <option value="5">ab 5 Fotos</option>
+          <option value="8">ab 8 Fotos</option>
+          <option value="15">ab 15 Fotos</option>
+        </select>
+        <div class="atlas-group" id="atlas-lenses"></div>
+        <div class="atlas-group" id="atlas-colors"></div>
+        <div class="atlas-group" id="atlas-filters"></div>
+        <select id="atlas-jump" class="atlas-jump"></select>
+        <select id="atlas-who" class="atlas-jump"></select>
+        <span class="atlas-spacer"></span>
+        <span class="atlas-count" id="atlas-count"></span>
+        <button class="chip" id="atlas-reset" title="Alles zeigen (Taste 0)">Übersicht</button>
+      </div>
+
+      <aside class="atlas-brief hidden" id="atlas-brief"></aside>
+      <div class="atlas-legend hidden" id="atlas-legend"></div>
+      <div class="atlas-hover hidden" id="atlas-hover"></div>
+      <aside class="atlas-sel hidden" id="atlas-sel"></aside>
+      <div class="atlas-status" id="atlas-status"></div>
+      <p class="atlas-built muted" id="atlas-built"></p>
+    </div>
+  </main>
+
+  <script type="module" src="/static/app.js?v=16"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

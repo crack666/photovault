@@ -44,3 +44,8 @@ sources.txt
 
 # Selbst gepflegte Liste privater Begriffe. Vorlage: .privacy-terms.example
 .privacy-terms
+
+# Die gerechnete Karte. Ihre Kontinentnamen kommen aus den Captions und
+# enthalten damit echte Personennamen -- wie der Index selbst gehoert sie
+# nicht ins Repository. Neu bauen: python -m tools.atlas_build
+web/static/atlas/atlas.json

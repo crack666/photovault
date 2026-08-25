@@ -1,19 +1,7 @@
-const $ = (id) => document.getElementById(id);
+import { $, escapeHtml } from "./core/dom.js?v=2";
+import { api, cropUrl } from "./core/api.js?v=2";
 
 const state = { clusters: [], index: 0, remaining: 0 };
-
-function cropUrl(faceId) {
-  return `/api/faces/${encodeURIComponent(faceId)}/crop`;
-}
-
-async function api(path, opts) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(opts && opts.headers) },
-    ...opts,
-  });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  return res.json();
-}
 
 function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === name));
@@ -23,6 +11,20 @@ function showTab(name) {
   if (name === "search") loadPersonPicker();
   if (name === "unknown") { loadUnknown(true); loadCandidates(); }
   if (name === "events") loadEventTab();
+  if (name === "atlas") openAtlas();
+}
+
+/* Der Atlas kommt als eigenes Modul und erst, wenn er gebraucht wird.
+
+   Das `?v=` an jedem Import ist kein Schmuck: ein `import "./model.js"` ohne
+   Parameter liefert aus dem Browser-Cache beliebig lange die alte Fassung,
+   auch wenn index.html schon die neue erwartet. Genau das ist passiert. Die
+   Zahl gilt fuer alle Module gemeinsam und wird gemeinsam erhoeht.
+   Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
+   app.js und atlas/ gegenseitig aneinander. */
+async function openAtlas() {
+  const { initAtlas } = await import("./atlas/index.js?v=2");
+  await initAtlas({ showLightbox });
 }
 
 /* ---- Unbekannte Gesichter: gezielt aussortieren ----
@@ -255,19 +257,31 @@ const FIELDS = [
 ];
 
 let peopleCache = [];
-let qbTree = { op: "and", children: [{ field: "person", value: "", label: "" }] };
+let qbTree = { op: "and", children: [] };
 
 async function loadPersonPicker() {
   if (!peopleCache.length) {
     try { peopleCache = await api("/api/persons"); } catch { peopleCache = []; }
   }
+  peopleCache.sort((a, b) => (b.face_count || 0) - (a.face_count || 0));
   renderBuilder();
+  renderPeopleChips();
+  renderSearchExamples();
 }
 
 function renderBuilder() {
-  $("qb-root").innerHTML = "";
-  $("qb-root").appendChild(renderGroup(qbTree, [], true));
+  const root = $("qb-root");
+  if (!root) return;
+  root.innerHTML = "";
+  root.appendChild(renderGroup(qbTree, [], true));
+  if (!qbTree.children.length) {
+    const p = document.createElement("p");
+    p.className = "muted hint";
+    p.textContent = "Keine extra Bedingung — Personen oben, Jahr oder Album hier.";
+    root.appendChild(p);
+  }
   updateExpression();
+  renderPeopleChips();
 }
 
 function renderGroup(group, path, isRoot) {
@@ -377,7 +391,107 @@ function nodeAt(path) {
 function removeAt(path) {
   const parent = nodeAt(path);
   parent.children.splice(path[path.length - 1], 1);
-  if (!qbTree.children.length) qbTree.children.push({ field: "person", value: "", label: "" });
+}
+
+function selectedPeople() {
+  return (qbTree.children || []).filter((c) => c.field === "person" && c.value);
+}
+
+function setPersonInQuery(person, on) {
+  const kids = qbTree.children;
+  const i = kids.findIndex((c) => c.field === "person" && c.value === person.id);
+  if (on && i < 0) kids.push({ field: "person", value: person.id, label: person.name });
+  if (!on && i >= 0) kids.splice(i, 1);
+}
+
+function renderPeopleChips() {
+  const host = $("search-people");
+  if (!host) return;
+  if (!peopleCache.length) {
+    host.innerHTML = "<p class='muted hint'>Noch niemand benannt — zuerst unter „Wer ist das?“.</p>";
+    return;
+  }
+  const chosen = new Set(selectedPeople().map((c) => c.value));
+  const shown = peopleCache.slice(0, 16);
+  host.innerHTML = shown.map((p) => `
+    <button type="button" class="search-person${chosen.has(p.id) ? " on" : ""}" data-id="${escapeHtml(p.id)}">
+      <img src="${cropUrl(p.cover_face_id)}?size=80" alt="" />
+      ${escapeHtml(p.name)}
+    </button>`).join("");
+  host.querySelectorAll(".search-person").forEach((b) => {
+    b.addEventListener("click", () => {
+      const p = peopleCache.find((x) => x.id === b.dataset.id);
+      if (!p) return;
+      setPersonInQuery(p, !b.classList.contains("on"));
+      renderBuilder();
+    });
+  });
+}
+
+function renderSearchExamples() {
+  const host = $("search-examples");
+  if (!host) return;
+  const named = peopleCache.filter((p) => (p.face_count || 0) >= 8);
+  const a = named[0], b = named[1];
+  const first = (p) => (p.name || "").split(/\s+/)[0] || p.name;
+  const items = [];
+  if (a && b) {
+    items.push({
+      title: `${first(a)} und ${first(b)}`,
+      hint: "beide auf einem Foto",
+      run: () => {
+        qbTree = { op: "and", children: [] };
+        setPersonInQuery(a, true);
+        setPersonInQuery(b, true);
+        $("q-text").value = "";
+      },
+    });
+    items.push({
+      title: `${first(a)} · Bier`,
+      hint: "Person plus was im Bild ist",
+      run: () => {
+        qbTree = { op: "and", children: [] };
+        setPersonInQuery(a, true);
+        $("q-text").value = "Bier";
+      },
+    });
+  }
+  items.push({
+    title: "Feuerwerk in der Nacht",
+    hint: "nur Freitext, sortiert",
+    run: () => {
+      qbTree = { op: "and", children: [] };
+      $("q-text").value = "Feuerwerk in der Nacht";
+    },
+  });
+  items.push({
+    title: "Strand",
+    hint: "Szene aus den Tags",
+    run: () => {
+      qbTree = { op: "and", children: [{ field: "tag", value: "strand", label: "" }] };
+      $("q-text").value = "";
+    },
+  });
+  items.push({
+    title: "Jahr 2015",
+    hint: "ein ganzes Jahr",
+    run: () => {
+      qbTree = { op: "and", children: [{ field: "year", value: "2015", label: "" }] };
+      $("q-text").value = "";
+    },
+  });
+  host.innerHTML = items.map((ex, i) =>
+    `<button type="button" class="search-ex" data-i="${i}">
+       <strong>${escapeHtml(ex.title)}</strong>
+       <span>${escapeHtml(ex.hint)}</span>
+     </button>`).join("");
+  host.querySelectorAll(".search-ex").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      items[Number(btn.dataset.i)].run();
+      renderBuilder();
+      await runSearch();
+    });
+  });
 }
 
 document.querySelectorAll("[data-add]").forEach((b) => {
@@ -408,7 +522,10 @@ function localExpression(node, top = true) {
 
 function updateExpression() {
   const text = localExpression(qbTree);
-  $("qb-expr").textContent = text ? `Fotos, die ${text}` : "Noch keine Bedingung — findet alle Fotos.";
+  const free = ($("q-text") && $("q-text").value.trim()) || "";
+  let line = text ? `Fotos, die ${text}` : "Noch keine Bedingung — alle Fotos";
+  if (free) line += `, sortiert nach „${free}“`;
+  $("qb-expr").textContent = line;
 }
 
 document.querySelectorAll(".tab").forEach((btn) => {
@@ -1346,21 +1463,42 @@ async function unassignPerson(p) {
 
 $("search-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const data = await api("/api/search/query", {
-    method: "POST",
-    body: JSON.stringify({
-      query: qbTree,
-      caption_query: $("q-text").value.trim() || null,
-      limit: 48,
-    }),
-  });
-  // Die Fassung vom Server ist die verbindliche -- sie stammt aus demselben
-  // Ausdrucksbaum, aus dem der Filter gebaut wurde.
-  $("qb-expr").textContent =
-    `Fotos, die ${data.expression} — ${data.total} Treffer` +
-    (data.conditions ? ` · ${data.conditions} Bedingung${data.conditions === 1 ? "" : "en"}` : "");
-  renderResults(data.results || []);
+  await runSearch();
 });
+$("q-text")?.addEventListener("input", updateExpression);
+
+async function runSearch() {
+  const box = $("search-results");
+  const meta = $("search-meta");
+  box.innerHTML = "<p class='muted'>Suche …</p>";
+  if (meta) meta.textContent = "";
+  let data;
+  try {
+    data = await api("/api/search/query", {
+      method: "POST",
+      body: JSON.stringify({
+        query: qbTree,
+        caption_query: $("q-text").value.trim() || null,
+        limit: 48,
+      }),
+    });
+  } catch (err) {
+    box.innerHTML = `<p class='muted'>Suche fehlgeschlagen (${escapeHtml(String(err.message || err).slice(0, 160))})</p>`;
+    return;
+  }
+  const free = $("q-text").value.trim();
+  $("qb-expr").textContent =
+    `Fotos, die ${data.expression}` +
+    (free ? `, sortiert nach „${free}“` : "") +
+    ` — ${data.total} Treffer` +
+    (data.conditions ? ` · ${data.conditions} Bedingung${data.conditions === 1 ? "" : "en"}` : "");
+  if (meta) {
+    meta.textContent = data.total
+      ? `${data.total} Treffer${data.total === 48 ? " (erste Seite)" : ""}`
+      : "Keine Treffer.";
+  }
+  renderResults(data.results || []);
+}
 
 function renderResults(results, unknown = []) {
   const box = $("search-results");
@@ -1372,7 +1510,10 @@ function renderResults(results, unknown = []) {
     box.appendChild(warn);
   }
   if (!results.length) {
-    box.insertAdjacentHTML("beforeend", "<p class='muted'>Keine Treffer.</p>");
+    box.insertAdjacentHTML(
+      "beforeend",
+      "<p class='muted'>Keine Treffer. Personen filtern hart; Freitext sortiert nur. Ohne Captions trifft „Bier“ oft nichts.</p>",
+    );
     return;
   }
   results.forEach((r, i) => {
@@ -1381,6 +1522,7 @@ function renderResults(results, unknown = []) {
     const head = r.caption_display || [r.date, r.folder_name].filter(Boolean).join(" · ");
     const names = (r.person_names || []).join(", ");
     const notes = (r.annotations || []).map((a) => `<span class="note">${escapeHtml(a)}</span>`).join("");
+    const tags = (r.scene_tags || []).slice(0, 6).map((t) => `<span class="note">${escapeHtml(t)}</span>`).join("");
     // Die erste Reihe eager: lazy laedt erst bei Sichtbarkeit, was je nach
     // Umgebung gar nicht ausloest und leere Kacheln hinterlaesst.
     const loading = i < 12 ? "eager" : "lazy";
@@ -1389,16 +1531,12 @@ function renderResults(results, unknown = []) {
       <figcaption>
         <div class="muted">${escapeHtml(head)}</div>
         ${names ? `<div class="names">${escapeHtml(names)}</div>` : ""}
-        ${r.caption_de ? `<p>${escapeHtml(r.caption_de)}</p>` : ""}
-        ${notes ? `<div class="notes">${notes}</div>` : ""}
+        ${r.caption_de ? `<p>${escapeHtml(r.caption_de)}</p>` : `<p class="muted">Noch keine Caption</p>`}
+        ${notes || tags ? `<div class="notes">${notes}${tags}</div>` : ""}
       </figcaption>`;
     el.querySelector("img").addEventListener("click", () => showLightbox(results, i));
     box.appendChild(el);
   });
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 loadQueue().catch((err) => {

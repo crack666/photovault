@@ -20,6 +20,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Nur fuer `python -m tools.atlas_build` -- die Karte wird selten neu gerechnet,
+# und numba/llvmlite gehoeren nicht in den Ingest-Pfad.
+atlas = [
+    "umap-learn>=0.5",
+    "scikit-learn>=1.4",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio",

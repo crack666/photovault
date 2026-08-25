@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-CAPTION_MODEL = os.environ.get("PHOTOVAULT_CAPTION_MODEL", "qwen3.8:27b-ctx128k")
+CAPTION_MODEL = os.environ.get("PHOTOVAULT_CAPTION_MODEL", "qwen3.8:27b-ctx8k")
 EMBED_MODEL = os.environ.get("PHOTOVAULT_EMBED_MODEL", "qwen3-embedding:4b-ctx2k")
 TEXT_VECTOR_SIZE = 2560
 #: Kontextgroesse fuer Caption-Anfragen. ``0`` bedeutet: gar kein ``num_ctx``
