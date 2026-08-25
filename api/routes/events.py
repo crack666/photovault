@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api import event_stamp, events_store
-from api.qdrant_util import client
+from api.qdrant_util import client, visible
 from ingest.event_suggest import (
     coalesce_same_album,
     neighbor_suggestions,
@@ -117,7 +117,7 @@ def _load(client, only_channel: str | None):
     offset = None
     while True:
         batch, offset = client.scroll(
-            collection_name=COLLECTION, limit=512, offset=offset,
+            collection_name=COLLECTION, scroll_filter=visible(), limit=512, offset=offset,
             with_payload=["taken_at", "date", "channel", "file_path", "folder_name",
                           "person_names", "caption_display", "event_name",
                           "event_excluded", "photo_id"],

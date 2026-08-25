@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.qdrant_util import PHOTOS, client
+from api.qdrant_util import PHOTOS, client, visible
 from ingest.folder_parser import album_dir
 from ingest.relocate import album_name_ok, plan_album_rename, rename_album
 
@@ -36,7 +36,7 @@ def list_albums(limit: int = 400) -> dict:
     offset = None
     while True:
         batch, offset = q.scroll(
-            collection_name=PHOTOS, limit=256, offset=offset,
+            collection_name=PHOTOS, scroll_filter=visible(), limit=256, offset=offset,
             with_payload=["file_path", "folder_name", "event_name"],
             with_vectors=False,
         )

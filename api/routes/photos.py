@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from api.qdrant_util import FACES, PHOTOS, client
+from api.qdrant_util import FACES, PHOTOS, client, visible
 from api.thumbs import drop_cached, jpeg_truncation_hint, make_thumb
 from ingest.reembed import apply_annotations, rebuild_text_vectors
 
@@ -492,6 +492,7 @@ def similar(req: SimilarRequest) -> dict:
             collection_name=PHOTOS,
             query=query,
             using=req.using,
+            query_filter=visible(),
             # Die Beispiele selbst kommen zurueck und wuerden Plaetze belegen.
             limit=limit + len(positive),
             with_payload=False,

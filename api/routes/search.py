@@ -8,6 +8,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from api.qdrant_util import visible
 from api.query import QueryNode
 from ingest.dates import date_bound
 
@@ -80,7 +81,7 @@ class QuerySearchRequest(BaseModel):
 class QuerySearchResponse(BaseModel):
     total: int
     results: list[dict]
-    #: Der Ausdruck in Worten -- kommt aus demselben Baum wie der Filter.
+    #: Der Ausdruck in Worten -- kommt aus derselben Verschachtelung wie der Filter.
     expression: str
     conditions: int
 
@@ -94,7 +95,7 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
 
     client = QdrantClient(url=QDRANT_URL)
     people = known_persons(client)
-    filter_ = to_filter(req.query, resolver=lambda v: resolve(v, people))
+    filter_ = visible(to_filter(req.query, resolver=lambda v: resolve(v, people)))
     expression = describe(req.query)
 
     try:
@@ -187,11 +188,14 @@ def search(req: SearchRequest) -> SearchResponse:
             FieldCondition(key="folder_name", match=MatchValue(value=req.folder_name))
         )
     if not conditions:
-        filter_ = None
+        inner = None
     elif req.match == "any":
-        filter_ = Filter(should=conditions)
+        inner = Filter(should=conditions)
     else:
-        filter_ = Filter(must=conditions)
+        inner = Filter(must=conditions)
+    # Wer ein Foto in den Papierkorb legt, will es nicht als Suchtreffer
+    # wiedersehen. Das war die offene Frage: von *wo* ausgeschlossen.
+    filter_ = visible(inner)
 
     # Fehler hier nicht verschlucken: eine kaputte Suche saehe sonst exakt aus
     # wie "keine Treffer" und bliebe unbemerkt.

@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from qdrant_client.models import FieldCondition, Filter, IsEmptyCondition, MatchValue, PayloadField
 
-from api.qdrant_util import FACES, PHOTOS, client
+from api.qdrant_util import FACES, PHOTOS, client, visible
 from ingest.face_cluster import cluster_faces, person_id_from_name
 from ingest.face_matcher import FaceMatcher
 from api.people_index import invalidate as invalidate_people
@@ -370,7 +370,9 @@ def _faces_of_person(q, person_id: str) -> list:
 
 
 def _photos_of_person(q, person_id: str) -> list:
-    filt = Filter(must=[FieldCondition(key="person_ids", match=MatchValue(value=person_id))])
+    filt = visible(
+        Filter(must=[FieldCondition(key="person_ids", match=MatchValue(value=person_id))])
+    )
     out, offset = [], None
     while True:
         batch, offset = q.scroll(
