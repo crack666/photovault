@@ -27,6 +27,10 @@ class SearchRequest(BaseModel):
     scene_tags: list[str] = []
     annotations: list[str] = []
     folder_name: Optional[str] = None
+    #: Bereich = die erste Ordnerebene, also woher das Foto stammt (`Handys`
+    #: der Dump, `Fotos` die Bibliothek). Mehrere heisst "einer davon" --
+    #: als Und-Bedingung waere es immer leer, ein Foto liegt an einem Ort.
+    spaces: list[str] = []
     caption_query: Optional[str] = None
     #: Wie die Kriterien verknüpft werden. "all" = jedes muss zutreffen
     #: (der Normalfall), "any" = eines genügt.
@@ -46,6 +50,29 @@ class SearchResponse(BaseModel):
     #: Namen, zu denen keine Person gefunden wurde -- die UI soll das zeigen,
     #: statt "keine Treffer" unerklaert stehen zu lassen.
     unknown_persons: list[str] = []
+
+
+def space_scope(spaces: list[str]):
+    """Bedingung „liegt in einem dieser Bereiche“ -- oder None.
+
+    Mehrere Bereiche heißen „einer davon“. Als Und-Bedingung wäre das Ergebnis
+    immer leer: ein Foto liegt an genau einem Ort.
+    """
+    if not spaces:
+        return None
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    terms = [FieldCondition(key="space", match=MatchValue(value=s)) for s in spaces]
+    return terms[0] if len(terms) == 1 else Filter(should=terms)
+
+
+def scope_text(spaces: list[str]) -> str:
+    """Der Geltungsbereich in Worten -- er darf nicht unsichtbar wirken."""
+    if not spaces:
+        return ""
+    if len(spaces) == 1:
+        return f"nur im Bereich {spaces[0]}"
+    return "nur in den Bereichen " + ", ".join(spaces)
 
 
 def _point_to_result(p) -> dict:
@@ -72,6 +99,9 @@ class QuerySearchRequest(BaseModel):
     """Zusammengeklickter Ausdruck statt fester Felder."""
 
     query: QueryNode
+    #: Geltungsbereich, nicht Bedingung -- wie der Papierkorb. Steht deshalb
+    #: neben dem Ausdruck und nicht in ihm: der Baum bleibt der des Nutzers.
+    spaces: list[str] = []
     caption_query: Optional[str] = None
     caption_min_score: Optional[float] = None
     limit: int = 50
@@ -84,6 +114,8 @@ class QuerySearchResponse(BaseModel):
     #: Der Ausdruck in Worten -- kommt aus derselben Verschachtelung wie der Filter.
     expression: str
     conditions: int
+    #: Der Geltungsbereich in Worten. Leer heißt: alles außer Papierkorb.
+    scope: str = ""
 
 
 @router.post("/query", response_model=QuerySearchResponse)
@@ -95,7 +127,13 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
 
     client = QdrantClient(url=QDRANT_URL)
     people = known_persons(client)
-    filter_ = visible(to_filter(req.query, resolver=lambda v: resolve(v, people)))
+    inner = to_filter(req.query, resolver=lambda v: resolve(v, people))
+    scope = space_scope(req.spaces)
+    if scope is not None:
+        from qdrant_client.models import Filter as _Filter
+
+        inner = _Filter(must=[inner, scope]) if inner is not None else _Filter(must=[scope])
+    filter_ = visible(inner)
     expression = describe(req.query)
 
     try:
@@ -128,6 +166,7 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
         results=results,
         expression=expression or "alle Fotos",
         conditions=count_conditions(req.query),
+        scope=scope_text(req.spaces),
     )
 
 
@@ -187,12 +226,21 @@ def search(req: SearchRequest) -> SearchResponse:
         conditions.append(
             FieldCondition(key="folder_name", match=MatchValue(value=req.folder_name))
         )
+
     if not conditions:
         inner = None
     elif req.match == "any":
         inner = Filter(should=conditions)
     else:
         inner = Filter(must=conditions)
+
+    # Der Bereich kommt als eigene Ebene dazu, nicht in die Kriterienliste:
+    # bei match="any" wäre er dort eine *Alternative* ("... oder liegt in
+    # Fotos") und würde die Auswahl aufweichen statt sie einzuschränken.
+    scope = space_scope(req.spaces)
+    if scope is not None:
+        inner = Filter(must=[inner, scope]) if inner is not None else Filter(must=[scope])
+
     # Wer ein Foto in den Papierkorb legt, will es nicht als Suchtreffer
     # wiedersehen. Das war die offene Frage: von *wo* ausgeschlossen.
     filter_ = visible(inner)
@@ -234,3 +282,37 @@ def search(req: SearchRequest) -> SearchResponse:
     except Exception as e:
         logger.exception("Search failed")
         raise HTTPException(500, f"Suche fehlgeschlagen: {type(e).__name__}: {e}") from e
+
+
+@router.get("/spaces")
+def list_spaces(limit: int = 40) -> dict:
+    """Welche Bereiche es gibt und wie viele Fotos darin liegen.
+
+    Der Bereich ist die erste Ordnerebene -- woher ein Foto stammt. An diesem
+    Bestand: `Handys` der Dump, aus dem aufgeräumt wird, `Fotos` die
+    Bibliothek. Das ist die Frage, die eine Bedeutungssuche allein nicht
+    beantwortet: Screenshots und Belege *sind* interessant, nur nicht zwischen
+    den Fotos von Menschen.
+
+    Gezählt wird ohne Papierkorb -- sonst stimmt die Zahl im Wähler nicht mit
+    der Zahl der Treffer überein, und das sähe aus wie ein Fehler.
+    """
+    from qdrant_client import QdrantClient
+
+    from api.qdrant_util import visible
+
+    client = QdrantClient(url=QDRANT_URL)
+    try:
+        hits = client.facet(collection_name=COLLECTION, key="space",
+                            facet_filter=visible(), limit=limit).hits
+    except Exception as e:
+        # Kein leeres Ergebnis vortäuschen: ohne Bereiche fehlt der Wähler,
+        # und der Grund soll dastehen.
+        logger.exception("Bereiche nicht zählbar")
+        raise HTTPException(
+            500, f"Bereiche nicht zählbar: {type(e).__name__}: {e}"
+        ) from e
+    return {
+        "spaces": [{"name": str(h.value), "count": h.count} for h in hits],
+        "total": sum(h.count for h in hits),
+    }

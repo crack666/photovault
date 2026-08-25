@@ -270,3 +270,38 @@ a.tab:hover { background: #2a3140; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ---- Geltungsbereich der Suche ----------------------------------------
+   Der Bereich schränkt jede Suche ein, auch die Bedeutungssuche. Eine
+   unsichtbare Einschränkung wäre eine Falle, also steht die Leiste über dem
+   Formular -- flach und ruhig, damit sie nicht wie ein weiteres Kriterium
+   aussieht. */
+
+.scope-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+.scope-label { color: var(--muted); }
+.scope-chips { display: flex; gap: 7px; flex-wrap: wrap; }
+.scope-chip {
+  min-height: 34px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid #313a4a;
+  background: #1c2029;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+.scope-chip em { font-style: normal; opacity: 0.6; margin-left: 4px; font-size: 11px; }
+.scope-chip:hover { background: #262c38; }
+.scope-chip.on {
+  border-color: var(--accent);
+  background: #263043;
+  color: var(--text);
+}
+.scope-hint { font-size: 12px; }

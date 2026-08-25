@@ -306,6 +306,23 @@ Der Freitext ist **kein Filter, sondern eine Rangfolge** — er sortiert innerha
 dessen, was die Kriterien übriglassen. `caption_min_score` schneidet schwache
 Treffer ab.
 
+**Geltungsbereiche** sind das, was *neben* den Kriterien gilt — sie schränken
+jede Suche ein, auch die Rangfolge nach Freitext:
+
+| Bereich | Wirkung | Umschaltbar |
+|---|---|---|
+| Papierkorb | vorgemerkte Fotos kommen nirgends mehr vor | nein, nur retten |
+| `spaces` | erste Ordnerebene: `Handys` der Dump, `Fotos` die Bibliothek | Chips über dem Formular |
+
+Beides sitzt bewusst eine Ebene über den Kriterien. Bei `match=any` würde ein
+Bereich in der Kriterienliste zur *Alternative* („zeigt Person X **oder** liegt
+in Fotos") und die Auswahl aufweichen, statt sie einzuschränken.
+
+Ein Geltungsbereich, der stillschweigend einschränkt, ist eine Falle — deshalb
+nennt der Ergebnissatz ihn mit: „Alle Fotos, nur im Bereich Fotos — 66 Treffer".
+Die Wahl bleibt über Sitzungen erhalten; alle Bereiche angehakt ist dasselbe wie
+keiner und wird dazu zurückgesetzt.
+
 ### Was einen Re-Ingest überlebt — auch bei Gesichtern
 
 Nicht nur am Foto (`caption_de`, `annotations`, `person_ids`, `person_names`),
@@ -552,7 +569,15 @@ python -m tools.quality_report --prefix /mnt/photo   # Datum, Gesichter, Tags, V
 python -m tools.acceptance --prefix /mnt/photo       # Szenarien aus docs/spec.md + Latenz
 python -m tools.atlas_build                          # Karte fuer den Tab "Atlas"
 python -m tools.reembed_all --dry-run                # Text-Vektoren neu bauen
+python -m tools.backfill_spaces --check              # Bereiche + Payload-Indizes pruefen
 ```
+
+`backfill_spaces` schreibt das Feld `space` (erste Ordnerebene) und legt die
+Indizes fuer `space`, `folder_name` und `trashed_at` an — die beiden letzten
+fehlten, die Albumsuche lief als Full Scan. Das Feld ist ein Zwischenspeicher,
+keine zweite Wahrheit: weicht es vom Pfad ab, ist das Feld falsch, und ein
+erneuter Lauf richtet es. Verschieben zieht es selbst mit, ein Lauf ist also nur
+nach Eingriffen von aussen faellig.
 
 ### Warum im Text-Vektor das Datum fehlt
 

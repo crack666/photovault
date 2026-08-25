@@ -35,7 +35,6 @@ import collections
 import json
 import logging
 import math
-import os
 import re
 import time
 from datetime import datetime, timezone
@@ -45,6 +44,7 @@ from typing import Any
 import numpy as np
 
 from api.qdrant_util import PHOTOS, client
+from ingest.spaces import assign
 
 logger = logging.getLogger(__name__)
 
@@ -377,21 +377,9 @@ def split_spaces(meta: list[dict]) -> tuple[str, list[str], list[int]]:
     beantworten kann: Screenshots und Dokumente *sind* interessant -- nur
     nicht zwischen den Fotos von Menschen.
     """
-    paths = [m["file_path"] for m in meta if m["file_path"]]
-    if not paths:
-        return "", ["?"], [0] * len(meta)
-    root = os.path.commonprefix(paths).rsplit("/", 1)[0]
-    names: list[str] = []
-    index: dict[str, int] = {}
-    out: list[int] = []
-    for m in meta:
-        path = m["file_path"] or ""
-        rest = path[len(root):].strip("/") if path.startswith(root) else path.strip("/")
-        name = rest.split("/")[0] if rest else "?"
-        if name not in index:
-            index[name] = len(names)
-            names.append(name)
-        out.append(index[name])
+    # Gerechnet wird das in ingest/spaces.py -- dieselbe Funktion, die das
+    # Payload-Feld `space` fuellt, damit Karte und Suche nicht auseinanderlaufen.
+    root, names, out = assign(m["file_path"] or "" for m in meta)
     logger.info("Bereiche unter %s: %s", root or "/",
                 ", ".join(f"{n} {out.count(i)}" for i, n in enumerate(names)))
     return root, names, out

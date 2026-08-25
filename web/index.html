@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
   <link rel="stylesheet" href="/static/styles.css?v=11" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=4" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=5" />
   <link rel="stylesheet" href="/static/atlas/atlas.css?v=11" />
   <link rel="stylesheet" href="/static/faces/strip.css?v=2" />
 </head>
@@ -264,6 +264,14 @@
 
     <div class="search-examples" id="search-examples"></div>
 
+    <!-- Bereich ist ein Geltungsbereich, keine Bedingung: er steht deshalb
+         ueber dem Formular und nicht darin. Alle an = keine Einschraenkung. -->
+    <div class="scope-bar" id="search-scope">
+      <span class="scope-label">Bereich</span>
+      <div class="scope-chips" id="scope-chips"></div>
+      <span class="muted scope-hint" id="scope-hint"></span>
+    </div>
+
     <form id="search-form" class="search-desk">
       <section class="search-card">
         <h2>Wer ist drauf</h2>
@@ -374,7 +382,7 @@
     </p>
   </main>
 
-  <script type="module" src="/static/app.js?v=29"></script>
+  <script type="module" src="/static/app.js?v=31"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

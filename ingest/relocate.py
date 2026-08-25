@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ingest.filetimes import rename_same_volume
 from ingest.identity import photo_id_for, point_id_for
+from ingest.spaces import root_from_index
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,15 @@ def replace_prefix(path: str, old_dir: str, new_dir: str) -> str:
 
 
 def migrate_photo(client, *, old_path: str, new_path: str, folder_name: str | None,
-                  photos: str = _PHOTOS, faces: str = _FACES) -> dict:
-    """Einen Foto-Punkt auf den neuen Pfad-Hash legen, Faces umhängen."""
+                  photos: str = _PHOTOS, faces: str = _FACES,
+                  space_root: str | None = None) -> dict:
+    """Einen Foto-Punkt auf den neuen Pfad-Hash legen, Faces umhängen.
+
+    `space_root` ist die Wurzel, unter der Bereiche gezählt werden. Ohne sie
+    bleibt das Feld `space` stehen wie es war -- und genau das wäre nach einem
+    Verschieben aus dem Dump in die Bibliothek falsch. Die Aufrufer bestimmen
+    die Wurzel einmal je Vorgang und geben sie durch.
+    """
     from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
 
     old_hash = photo_id_for(old_path)
@@ -61,6 +69,10 @@ def migrate_photo(client, *, old_path: str, new_path: str, folder_name: str | No
     payload["photo_id"] = new_hash
     if folder_name:
         payload["folder_name"] = folder_name
+    if space_root is not None:
+        from ingest.spaces import space_of
+
+        payload["space"] = space_of(new_path, space_root)
     vectors = found[0].vector
     if not vectors:
         vectors = {}
@@ -137,6 +149,7 @@ def rename_album(
 
     rename_same_volume(Path(old_dir), Path(new_dir))
     folder_name = Path(new_dir).name
+    space_root = root_from_index(client, photos)
     migrated, failed = [], []
     for point in indexed:
         old_path = (point.payload or {}).get("file_path") or ""
@@ -145,6 +158,7 @@ def rename_album(
             migrated.append(migrate_photo(
                 client, old_path=old_path, new_path=new_path,
                 folder_name=folder_name, photos=photos, faces=faces,
+                space_root=space_root,
             ))
         except Exception as e:
             logger.exception("Index-Migration fehlgeschlagen für %s", old_path)
@@ -311,6 +325,7 @@ def move_photos(
         if sample.exists() and sample.stat().st_dev != dest.stat().st_dev:
             raise OSError("nicht dasselbe Volume — kein Copy, Abbruch")
 
+    space_root = root_from_index(client, photos)
     migrated, failed = [], []
     for item in files:
         try:
@@ -324,6 +339,7 @@ def move_photos(
                     folder_name=folder_name,
                     photos=photos,
                     faces=faces,
+                    space_root=space_root,
                 )
             )
         except Exception as e:

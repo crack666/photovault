@@ -1,4 +1,4 @@
-import { $, escapeHtml } from "./core/dom.js?v=11";
+import { $, escapeHtml, num } from "./core/dom.js?v=11";
 import { api, cropUrl } from "./core/api.js?v=11";
 import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=11";
 import { gate } from "./core/capabilities.js?v=11";
@@ -268,6 +268,16 @@ const FIELDS = [
   { key: "folder",     label: "im Album",       kind: "text", ph: "Abi 08" },
 ];
 
+/* Bereichs-Wähler: der Bereich schränkt *jede* Suche ein, auch die
+   Bedeutungssuche. Weil eine unsichtbare Einschränkung eine Falle wäre,
+   stehen die Chips über dem Formular und der Umfang im Ergebnissatz. Leere
+   Auswahl heißt „alle" -- nicht „keine", denn niemand sucht absichtlich im
+   Nichts. Die Wahl bleibt über Sitzungen erhalten, sonst müsste man sie bei
+   jedem Aufräumdurchgang neu treffen. */
+const SCOPE_KEY = "pv-search-spaces";
+let spacesCache = [];
+let scopePick = new Set();
+
 let peopleCache = [];
 let peopleFilter = "";
 let peopleLimit = 16;
@@ -282,10 +292,59 @@ async function loadPersonPicker() {
     try { peopleCache = await api("/api/persons"); } catch { peopleCache = []; }
   }
   peopleCache.sort((a, b) => (b.face_count || 0) - (a.face_count || 0));
+  await loadScope();
   renderBuilder();
   renderPeopleChips();
   renderSearchExamples();
 }
+
+async function loadScope() {
+  const bar = $("search-scope");
+  if (!bar) return;
+  if (!spacesCache.length) {
+    try {
+      spacesCache = (await api("/api/search/spaces")).spaces || [];
+    } catch (e) {
+      // Nicht wegfallen lassen: ohne Wähler sucht man ungewollt überall.
+      $("scope-chips").innerHTML = "";
+      $("scope-hint").textContent =
+        `Bereiche nicht abrufbar (${String(e.message || e).slice(0, 90)}) — Suche läuft über alles.`;
+      return;
+    }
+  }
+  // Nur einen Bereich gibt es nichts zu wählen.
+  bar.classList.toggle("hidden", spacesCache.length < 2);
+  const known = new Set(spacesCache.map((s) => s.name));
+  try {
+    const saved = JSON.parse(localStorage.getItem(SCOPE_KEY) || "[]");
+    scopePick = new Set(saved.filter((n) => known.has(n)));
+  } catch { scopePick = new Set(); }
+  renderScope();
+}
+
+function renderScope() {
+  $("scope-chips").innerHTML = spacesCache.map((s) => `
+    <button type="button" class="scope-chip${scopePick.has(s.name) ? " on" : ""}"
+            data-space="${escapeHtml(s.name)}">
+      ${escapeHtml(s.name)} <em>${num(s.count)}</em>
+    </button>`).join("");
+  $("scope-hint").textContent = scopePick.size
+    ? `Suche nur in ${[...scopePick].join(", ")}.`
+    : "Alle Bereiche — nichts eingeschränkt.";
+}
+
+$("scope-chips")?.addEventListener("click", (e) => {
+  const chip = e.target.closest(".scope-chip");
+  if (!chip) return;
+  const name = chip.dataset.space;
+  if (scopePick.has(name)) scopePick.delete(name);
+  else scopePick.add(name);
+  // Alle angehakt ist dasselbe wie keiner -- dann lieber keiner, damit der
+  // Satz "nichts eingeschränkt" sagt statt alle drei Namen aufzuzählen.
+  if (scopePick.size === spacesCache.length) scopePick.clear();
+  try { localStorage.setItem(SCOPE_KEY, JSON.stringify([...scopePick])); } catch { /* privater Modus */ }
+  renderScope();
+});
 
 function renderBuilder() {
   const root = $("qb-root");
@@ -1564,6 +1623,7 @@ async function runSearch() {
       method: "POST",
       body: JSON.stringify({
         query: qbTree,
+        spaces: [...scopePick],
         caption_query: $("q-text").value.trim() || null,
         limit: 48,
       }),
@@ -1573,8 +1633,12 @@ async function runSearch() {
     return;
   }
   const free = $("q-text").value.trim();
+  // Ohne Bedingung heisst der Ausdruck "alle Fotos" -- mit dem Vorspann
+  // "Fotos, die" davor wird daraus ein Stolpersatz.
+  const satz = data.conditions ? `Fotos, die ${data.expression}` : "Alle Fotos";
   $("qb-expr").textContent =
-    `Fotos, die ${data.expression}` +
+    satz +
+    (data.scope ? `, ${data.scope}` : "") +
     (free ? `, sortiert nach „${free}“` : "") +
     ` — ${data.total} Treffer` +
     (data.conditions ? ` · ${data.conditions} Bedingung${data.conditions === 1 ? "" : "en"}` : "");

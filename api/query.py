@@ -27,6 +27,7 @@ FIELDS: dict[str, tuple[str, str]] = {
     "tag": ("scene_tags", "mit Szene"),
     "annotation": ("annotations", "mit Notiz"),
     "folder": ("folder_name", "im Album"),
+    "space": ("space", "im Bereich"),
 }
 
 
