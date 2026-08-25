@@ -151,6 +151,32 @@ Auf getesteter Hardware (RTX 5090, NAS über SMB) sind das **26 Fotos pro
 Sekunde** — 50 000 Bilder in gut einer halben Stunde. `--skip-caption` lässt
 die Bildbeschreibungen weg; die kommen später und dauern deutlich länger.
 
+### Von einem anderen Gerät aus
+
+PhotoVault hört standardmäßig nur auf `127.0.0.1` — das ist die richtige
+Voreinstellung, denn **es gibt keine Anmeldung**. Wer die Adresse erreicht,
+sieht alle Fotos, alle Namen und alle Gesichtsvektoren.
+
+Mit [Tailscale](https://tailscale.com) wird es ohne Portfreigabe im eigenen
+Netz erreichbar, und die Zugangskontrolle übernimmt Tailscale:
+
+```bash
+tailscale serve --bg --http=8000 http://127.0.0.1:8000
+```
+
+Danach steht die Oberfläche unter `http://<rechnername>.<tailnet>.ts.net:8000`.
+Das gilt **nur im eigenen Tailnet** — `serve`, nicht `funnel`; ins offene
+Internet geht davon nichts. Wieder abschalten:
+
+```bash
+tailscale serve --http=8000 off
+```
+
+Läuft der Server in WSL2 im Standard-NAT-Modus, genügt das trotzdem: der
+Proxy verbindet sich auf Windows-`localhost`, und WSLs `localhostForwarding`
+leitet von dort in die VM. `--host 0.0.0.0` allein hilft dagegen nicht — von
+außen kommt ohne Portproxy nichts in die WSL-VM hinein.
+
 ### Wenn etwas klemmt
 
 | | |
