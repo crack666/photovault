@@ -609,6 +609,8 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 | POST | `/api/photos/annotate` | Eigene Notizen an markierte Fotos (`add`/`remove`/`replace`) |
 | POST | `/api/photos/reembed` | Text-Vektoren neu bauen (IDs oder ganzes Album) |
 | POST | `/api/photos/similar` | „Mehr davon" — Nachbarn zu einer Auswahl, `using=clip\|text` |
+| GET | `/api/capabilities` | Was diese Installation kann — und was sonst fehlt |
+| GET | `/api/ingest/state` | Lücken im Index (Fotos ohne Text-/CLIP-Vektor) |
 | GET | `/api/jobs` | Alle Jobs mit Fortschritt |
 | GET | `/api/jobs/{id}` | Ein Job |
 | DELETE | `/api/jobs/{id}` | Einen Eintrag vergessen (nicht den Lauf) |

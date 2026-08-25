@@ -1,6 +1,7 @@
-import { $, escapeHtml } from "./core/dom.js?v=9";
-import { api, cropUrl } from "./core/api.js?v=9";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=9";
+import { $, escapeHtml } from "./core/dom.js?v=10";
+import { api, cropUrl } from "./core/api.js?v=10";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=10";
+import { gate } from "./core/capabilities.js?v=10";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -25,7 +26,7 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=9");
+  const { initAtlas } = await import("./atlas/index.js?v=10");
   await initAtlas({ showLightbox });
 }
 
@@ -264,6 +265,10 @@ let peopleLimit = 16;
 let qbTree = { op: "and", children: [] };
 
 async function loadPersonPicker() {
+  // Das Feld nahm bisher jede Eingabe an und antwortete erst beim Suchen mit
+  // 503. Wer kein Ollama hat, tippt sonst einmal ins Leere und weiss nicht,
+  // warum -- obwohl der Rest der Suche vollstaendig funktioniert.
+  gate("freetext", $("q-text"), $("q-text-gate"));
   if (!peopleCache.length) {
     try { peopleCache = await api("/api/persons"); } catch { peopleCache = []; }
   }

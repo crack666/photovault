@@ -693,3 +693,11 @@ nav { display: flex; gap: 8px; }
   font-size: .86rem;
 }
 .person-find input:focus { outline: 0; border-color: var(--accent); }
+
+/* Warum etwas gesperrt ist. Ausgrauen allein sagt es nicht. */
+.gate {
+  margin: 6px 0 0; padding: 7px 10px; border-radius: 8px;
+  background: #2a2214; border: 1px solid #4a3a2a;
+  color: #e0a13c; font-size: .78rem; line-height: 1.45;
+}
+input:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }

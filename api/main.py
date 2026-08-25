@@ -10,7 +10,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routes import albums, events, faces, ingest, jobs, persons, photos, search
+from api.routes import (
+    albums,
+    capabilities,
+    events,
+    faces,
+    ingest,
+    jobs,
+    persons,
+    photos,
+    search,
+)
 
 logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -39,6 +49,7 @@ app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(albums.router, prefix="/api/albums", tags=["albums"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
+app.include_router(capabilities.router, prefix="/api/capabilities", tags=["capabilities"])
 
 
 @app.get("/api/health")

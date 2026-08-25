@@ -6,16 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=9";
-import { api, thumbUrl } from "../core/api.js?v=9";
-import { openModal } from "../core/modal.js?v=9";
-import { createPathPick } from "../core/pathpick.js?v=9";
+import { $, escapeHtml, num } from "../core/dom.js?v=10";
+import { api, thumbUrl } from "../core/api.js?v=10";
+import { openModal } from "../core/modal.js?v=10";
+import { createPathPick } from "../core/pathpick.js?v=10";
+import { feature, gate } from "../core/capabilities.js?v=10";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, spaceCounts, tidiness,
   visibleMask,
-} from "./model.js?v=9";
-import { createScene } from "./scene.js?v=9";
+} from "./model.js?v=10";
+import { createScene } from "./scene.js?v=10";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -90,7 +91,13 @@ export async function initAtlas(deps = {}) {
   try {
     model = await loadAtlas();
   } catch (err) {
-    status.innerHTML = `<pre class="atlas-missing">${escapeHtml(err.message)}</pre>`;
+    // „Rechne die Karte" ist ein schlechter Rat, wenn der Befehl ohne
+    // Zusatzpaket scheitert. Dann steht hier, was wirklich fehlt.
+    const build = await feature("atlas_build");
+    status.innerHTML = `<pre class="atlas-missing">${escapeHtml(err.message)}${
+      build.ok ? "" : `
+
+${escapeHtml(build.why)}`}</pre>`;
     return;
   }
   status.textContent = "";
@@ -560,8 +567,10 @@ function paintSelection() {
       <input type="checkbox" id="atlas-reembed"> Textvektoren sofort neu rechnen
       <span class="muted">belegt die GPU — sonst greift die Notiz zwar als Filter, aber noch nicht in der Rangfolge</span>
     </label>
+    <p class="gate hidden" id="atlas-reembed-gate"></p>
     <p class="atlas-note" id="atlas-msg"></p>`;
 
+  gate("reembed", $("atlas-reembed"), $("atlas-reembed-gate"));
   $("atlas-clear").onclick = clearSelection;
   $("atlas-more").onclick = () => followThread([...selection]);
   if ($("atlas-back")) $("atlas-back").onclick = threadBack;

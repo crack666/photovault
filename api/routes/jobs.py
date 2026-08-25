@@ -12,23 +12,21 @@ getippten Feld — nie aus einer Zeichenkette des Aufrufers.
 """
 from __future__ import annotations
 
-import importlib.util
-import json
 import logging
 import os
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from api.capabilities import UNCHECKED, missing, ollama_models
 from api.qdrant_util import client
 from ingest.jobs import COLLECTION, list_jobs
-from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, ollama_url
+from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -95,12 +93,6 @@ RUNNABLE: dict[str, Runnable] = {
 GPU_KINDS = frozenset(r.kind for r in RUNNABLE.values() if r.gpu)
 
 
-#: „noch nicht nachgesehen" -- unterscheidbar von `None`, das „Ollama
-#: antwortet nicht" bedeutet. Mit einem gemeinsamen Sentinel liesse sich der
-#: Fall „unerreichbar" nicht pruefen, ohne Ollama abzuschalten.
-UNCHECKED: Any = object()
-
-
 def missing_requirements(spec: Runnable, models: Any = UNCHECKED) -> str:
     """Was fehlt, damit dieser Lauf durchkommt? Leerer Text heißt: nichts.
 
@@ -108,28 +100,15 @@ def missing_requirements(spec: Runnable, models: Any = UNCHECKED) -> str:
     Sekunden lang Vektoren und starb dann an einem fehlenden Zusatzpaket --
     sichtbar nur im Protokoll. Wer keine Grafikkarte hat, trifft genau darauf,
     und für den ist eine Absage mit Grund mehr wert als ein falscher Erfolg.
+
+    Die Prüfung selbst steht in `api.capabilities` — dieselbe, die die
+    Oberfläche fragt. Zwei Wahrheiten darüber, was diese Installation kann,
+    wären eine zu viel.
     """
-    gone = [m for m in spec.needs_modules if importlib.util.find_spec(m) is None]
-    if gone:
-        return f"{', '.join(gone)} nicht installiert. {spec.hint}".strip()
-    if spec.needs_models:
-        have = ollama_models() if models is UNCHECKED else models
-        if have is None:
-            return f"Ollama nicht erreichbar ({ollama_url()}). {spec.hint}".strip()
-        absent = [m for m in spec.needs_models if m not in have]
-        if absent:
-            return f"Modell fehlt: {', '.join(absent)}. {spec.hint}".strip()
-    return ""
-
-
-def ollama_models() -> Optional[set[str]]:
-    """Welche Modelle liegen bereit? `None` heißt: Ollama antwortet nicht."""
-    try:
-        with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=3) as resp:
-            data = json.loads(resp.read())
-    except Exception:
-        return None
-    return {str(m.get("name") or "") for m in data.get("models", [])}
+    return missing(
+        modules=spec.needs_modules, models=spec.needs_models,
+        hint=spec.hint, have_models=models,
+    )
 
 
 @router.get("")
