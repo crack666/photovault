@@ -595,6 +595,9 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 | POST | `/api/photos/similar` | „Mehr davon" — Nachbarn zu einer Auswahl, `using=clip\|text` |
 | GET | `/api/jobs` | Alle Jobs mit Fortschritt |
 | GET | `/api/jobs/{id}` | Ein Job |
+| DELETE | `/api/jobs/{id}` | Einen Eintrag vergessen (nicht den Lauf) |
+| POST | `/api/jobs/prune` | Liste aufräumen — `what=aborted\|finished` |
+| POST | `/api/jobs/run` | Lauf starten — `caption\|reembed\|atlas` |
 | POST | `/api/ingest/start` | Ingest starten (Stub) |
 | GET | `/api/ingest/progress` | Stand des jüngsten Ingest-Laufs |
 | GET | `/api/ingest/stats` | Anzahl indizierter Fotos |
@@ -602,7 +605,23 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 ### Fortschritt
 
 `http://127.0.0.1:8000/jobs.html` zeigt alle Läufe mit Balken, Rate, ETA und
-aktuellem Ordner; die Seite pollt alle 2 s. Der Tracker schreibt nach
+aktuellem Ordner; die Seite pollt alle 2 s. Von dort lassen sich die langen
+Läufe auch **starten** — Bildbeschreibungen, Text-Vektoren, Karte — ohne eine
+Shell auf dem Rechner mit den Fotos.
+
+Was gestartet werden darf, steht in `api.routes.jobs.RUNNABLE` und nirgends
+sonst. Die Oberfläche hat keine Anmeldung; diese Liste ist die einzige
+Schranke. Aufgerufen wird ohne Shell, und jedes Argument entsteht im Server
+aus einem getippten Feld. Zwei Läufe, die beide die Grafikkarte brauchen,
+startet sie nicht gleichzeitig — das macht beide langsamer, nicht schneller.
+
+Die Liste wächst mit jedem Lauf und jedem Abbruch. Sie ist deshalb seitenweise
+(20 je Seite, neueste zuerst), nach Art filterbar, und **Liste aufräumen**
+entfernt Einträge — nie einen laufenden, und je Art bleiben die drei jüngsten
+stehen. Aufgeräumt wird nach Kategorie („läuft nicht mehr"), nicht nach
+Zustandsnamen: im Bestand stehen `done`, `succeeded`, `partial` und
+`done-with-errors` aus mehreren Programmgenerationen, eine Namensliste hätte
+41 von 47 Einträgen stillschweigend nicht angefasst. Der Tracker schreibt nach
 `ingest_jobs` in Qdrant und ist über das Feld `kind` generisch — Caption-Nachläufe
 oder Re-Embeds können dieselbe Anzeige benutzen. Ein Lauf, dessen Prozess stirbt,
 erscheint nach 2 Minuten ohne Aktualisierung als `stale` statt ewig als `running`.

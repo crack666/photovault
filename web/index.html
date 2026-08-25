@@ -5,21 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
   <link rel="stylesheet" href="/static/styles.css?v=9" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=2" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=3" />
   <link rel="stylesheet" href="/static/atlas/atlas.css?v=10" />
 </head>
 <body>
   <header class="top">
     <div class="brand">PhotoVault</div>
-    <nav>
-      <button class="tab on" data-tab="label">Wer ist das?</button>
-      <button class="tab" data-tab="unknown">Unbekannte</button>
-      <button class="tab" data-tab="people">Personen</button>
-      <button class="tab" data-tab="events">Serien</button>
-      <button class="tab" data-tab="search">Suche</button>
-      <button class="tab" data-tab="atlas">Atlas</button>
-      <button class="tab" onclick="location.href='/jobs.html'">Jobs</button>
-    </nav>
+    <!-- Gefüllt aus core/nav.js, damit die Jobs-Seite dieselbe Leiste zeigt.
+         Vorher stand sie zweimal im HTML und war dort auf zwei Einträge
+         zusammengeschrumpft. -->
+    <nav id="nav"></nav>
   </header>
 
   <main id="view-label" class="view">
@@ -345,7 +340,7 @@
     </div>
   </main>
 
-  <script type="module" src="/static/app.js?v=23"></script>
+  <script type="module" src="/static/app.js?v=24"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

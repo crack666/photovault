@@ -139,3 +139,89 @@ class TestTrackerVectorSize:
         c = _Fresh()
         JobTracker(c, kind="ingest")
         assert len(c.upserts[0].vector) == DEFAULT_VECTOR_SIZE
+
+
+class TestDoomedJobs:
+    """Was aus der Liste darf und was nicht.
+
+    Die Liste wächst mit jedem Lauf und jedem Abbruch. Entscheidend ist, dass
+    ein *laufender* Eintrag nie verschwindet — sonst arbeitet ein Prozess
+    weiter, den niemand mehr sieht.
+    """
+
+    def _jobs(self):
+        # Neueste zuerst, so wie `list_jobs` liefert.
+        return [
+            {"job_id": "c1", "kind": "caption", "status": "running", "updated_at": 1000},
+            {"job_id": "c2", "kind": "caption", "status": "done", "updated_at": 900},
+            {"job_id": "c3", "kind": "caption", "status": "stale", "updated_at": 800},
+            {"job_id": "c4", "kind": "caption", "status": "done", "updated_at": 700},
+            {"job_id": "i1", "kind": "ingest", "status": "succeeded", "updated_at": 600},
+            {"job_id": "i2", "kind": "ingest", "status": "done-with-errors", "updated_at": 500},
+        ]
+
+    def test_running_is_never_touched(self):
+        from api.routes.jobs import doomed_jobs
+
+        doomed = doomed_jobs(self._jobs(), "finished", 0, 0, now=2000)
+        assert "c1" not in doomed
+
+    def test_legacy_statuses_count_as_finished(self):
+        """Im Bestand stehen `succeeded`, `partial`, `done-with-errors` aus
+        älteren Programmständen. Eine Namensliste hätte sie nie erwischt."""
+        from api.routes.jobs import doomed_jobs
+
+        doomed = doomed_jobs(self._jobs(), "finished", 0, 0, now=2000)
+        assert set(doomed) == {"c2", "c3", "c4", "i1", "i2"}
+
+    def test_aborted_only_takes_the_stale_ones(self):
+        from api.routes.jobs import doomed_jobs
+
+        assert doomed_jobs(self._jobs(), "aborted", 0, 0, now=2000) == ["c3"]
+
+    def test_the_newest_per_kind_stay(self):
+        """Man will sehen, was zuletzt lief — auch wenn es fertig ist."""
+        from api.routes.jobs import doomed_jobs
+
+        doomed = doomed_jobs(self._jobs(), "finished", 0, 2, now=2000)
+        # caption: c1 (läuft) und c2 sind die zwei jüngsten, also bleiben c3+c4 übrig.
+        assert set(doomed) == {"c3", "c4"}
+
+    def test_young_entries_survive_an_age_limit(self):
+        from api.routes.jobs import doomed_jobs
+
+        doomed = doomed_jobs(self._jobs(), "finished", 0.1, 0, now=1000)
+        # Alles jünger als 360 s vor `now` bleibt: 900, 800, 700.
+        assert set(doomed) == {"i1", "i2"}
+
+
+class TestBuildArgv:
+    """Die Kommandozeile entsteht im Server, nicht beim Aufrufer."""
+
+    def test_plain_call(self):
+        from api.routes.jobs import RUNNABLE, build_argv
+
+        argv = build_argv(RUNNABLE["atlas"], dry_run=False, limit=None)
+        assert argv[1:] == ["-m", "tools.atlas_build"]
+
+    def test_unknown_flag_is_dropped_not_passed(self):
+        """`atlas_build` kennt keinen Trockenlauf. Ihn mitzugeben ließe den
+        Start scheitern, mit dem Fehler im Protokoll statt in der Antwort."""
+        from api.routes.jobs import RUNNABLE, build_argv
+
+        assert "--dry-run" not in build_argv(RUNNABLE["atlas"], dry_run=True, limit=None)
+
+    def test_known_flags_are_passed(self):
+        from api.routes.jobs import RUNNABLE, build_argv
+
+        argv = build_argv(RUNNABLE["reembed"], dry_run=True, limit=500)
+        assert "--dry-run" in argv
+        assert argv[-2:] == ["--limit", "500"]
+
+    def test_limit_becomes_an_integer_string(self):
+        """Nichts vom Aufrufer landet unverändert in der Argumentliste."""
+        from api.routes.jobs import RUNNABLE, build_argv
+
+        argv = build_argv(RUNNABLE["reembed"], dry_run=False, limit=7)
+        assert argv[-1] == "7"
+        assert all(isinstance(a, str) for a in argv)

@@ -6,6 +6,18 @@
    Durchgehend fingergerecht: die Oberfläche wird über Tailscale auch vom
    Handy aus bedient, und dort ist ein 24-Pixel-Knopf unbenutzbar. */
 
+/* ---- Kopfzeile --------------------------------------------------------
+   Auf index.html sind die Tabs Knöpfe (sie schalten dort um), von der
+   Jobs-Seite aus Verweise. Beide sollen gleich aussehen -- `styles.css`
+   gestaltet aber nur `.tab, button`, ein <a> bekäme also kein Reset. */
+
+a.tab, span.tab {
+  display: inline-block;
+  text-decoration: none;
+  line-height: 1.45;
+}
+a.tab:hover { background: #2a3140; }
+
 .pv-modal-host {
   position: fixed;
   inset: 0;

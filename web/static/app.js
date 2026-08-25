@@ -1,5 +1,6 @@
 import { $, escapeHtml } from "./core/dom.js?v=9";
 import { api, cropUrl } from "./core/api.js?v=9";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=9";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -7,6 +8,7 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === name));
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
   $(`view-${name}`).classList.remove("hidden");
+  rememberTab(name);
   if (name === "people") loadPeople();
   if (name === "search") loadPersonPicker();
   if (name === "unknown") { loadUnknown(true); loadCandidates(); }
@@ -528,9 +530,15 @@ function updateExpression() {
   $("qb-expr").textContent = line;
 }
 
-document.querySelectorAll(".tab").forEach((btn) => {
-  btn.addEventListener("click", () => showTab(btn.dataset.tab));
+/* Die Leiste kommt aus core/nav.js, damit die Jobs-Seite dieselbe zeigt. Der
+   Tab steht dabei in der Adresse: von der Jobs-Seite führt jeder Eintrag auf
+   `/?tab=…`, und ein geteilter Link landet dort, wo er soll. */
+renderNav($("nav"), { active: tabFromUrl(), inPlace: true });
+$("nav").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-tab]");
+  if (btn) showTab(btn.dataset.tab);
 });
+showTab(tabFromUrl());
 
 async function loadQueue() {
   $("queue-meta").textContent = "Gesichter werden gruppiert …";

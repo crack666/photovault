@@ -4,13 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Jobs</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=9" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=3" />
   <style>
     .jobs { display: flex; flex-direction: column; gap: .75rem; max-width: 60rem; }
     .job {
       border: 1px solid var(--line, #2a2f36); border-radius: 10px;
       padding: .9rem 1.05rem; display: flex; flex-direction: column; gap: .55rem;
-      background: var(--card, #161a1f);
+      background: var(--card, #161a1f); position: relative;
     }
     .job-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
     .job-kind { font-weight: 600; }
@@ -35,24 +36,96 @@
     }
     .nums b { opacity: 1; }
     .none { opacity: .6; }
+
+    /* Einen Eintrag vergessen. Nur den Eintrag -- der Lauf ist längst vorbei. */
+    .job-forget {
+      position: absolute; top: .5rem; right: .5rem;
+      width: 26px; height: 26px; padding: 0;
+      border-radius: 7px; background: transparent; color: var(--muted);
+      border: 1px solid transparent; font-size: .7rem; opacity: 0;
+      transition: opacity .12s;
+    }
+    .job:hover .job-forget, .job-forget:focus { opacity: 1; }
+    .job-forget:hover { background: #3a2422; border-color: #6b3a38; color: #e8b0ad; }
+
+    /* ---- Läufe anstoßen ------------------------------------------------ */
+
+    .starters {
+      display: grid; gap: .6rem; max-width: 60rem; margin: 0 0 1.6rem;
+      grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    }
+    .starter {
+      display: flex; flex-direction: column; gap: .4rem;
+      padding: .85rem 1rem; border-radius: 12px;
+      background: #161a1f; border: 1px solid #2a2f36;
+    }
+    .starter h3 { margin: 0; font-size: .95rem; }
+    .starter p { margin: 0; font-size: .78rem; color: var(--muted); line-height: 1.45; }
+    .starter .row { display: flex; gap: .4rem; margin-top: .25rem; flex-wrap: wrap; }
+    .starter button {
+      min-height: 36px; padding: 0 .8rem; border-radius: 9px;
+      background: #232a36; border: 1px solid #3a4353; color: #ccd5e2; font-size: .82rem;
+    }
+    .starter button:hover:not(:disabled) { background: #2f3847; color: var(--text); }
+    .starter button.go { background: var(--accent); border-color: transparent; color: #0b1020; font-weight: 600; }
+    .starter button.go:hover:not(:disabled) { background: #a3c5ff; }
+    .starter button:disabled { opacity: .45; }
+    .starter .gpu { font-size: .68rem; color: #d8ae4c; }
+
+    .job-bar {
+      display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+      margin: 0 0 .9rem; max-width: 60rem;
+    }
+    .job-bar .spacer { flex: 1; }
+    .job-bar button {
+      min-height: 34px; padding: 0 .75rem; border-radius: 8px;
+      background: #232a36; border: 1px solid #3a4353; color: #ccd5e2; font-size: .8rem;
+    }
+    .job-bar button:hover { background: #2f3847; color: var(--text); }
+    .job-bar select {
+      background: #232a36; color: #cdd5e1; border: 1px solid #2f3747;
+      border-radius: 7px; padding: 5px 8px; font-size: .8rem;
+    }
+    #run-msg { margin: 0 0 1rem; font-size: .84rem; color: var(--accent); min-height: 1.2em; }
   </style>
 </head>
 <body>
   <header class="top">
     <div class="brand">PhotoVault</div>
-    <nav>
-      <button class="tab" onclick="location.href='/'">Wer ist das?</button>
-      <button class="tab on">Jobs</button>
-    </nav>
+    <nav id="nav"></nav>
   </header>
 
-  <main class="view">
+  <main class="view wide">
     <h1>Jobs</h1>
-    <p id="meta" class="muted"></p>
+
+    <div class="starters" id="starters"></div>
+    <p id="run-msg"></p>
+
+    <div class="job-bar">
+      <label>Art
+        <select id="filter-kind"><option value="">alle</option></select>
+      </label>
+      <span class="spacer"></span>
+      <span id="meta" class="muted"></span>
+      <button id="prune">Liste aufräumen</button>
+    </div>
+
     <div id="jobs" class="jobs"></div>
+    <p style="max-width:60rem;text-align:center">
+      <button id="more" class="hidden">Mehr laden</button>
+    </p>
   </main>
 
-<script>
+<script type="module">
+import { renderNav } from "/static/core/nav.js?v=9";
+import { openModal } from "/static/core/modal.js?v=9";
+
+renderNav(document.getElementById("nav"), { active: "jobs" });
+
+const PAGE = 20;
+let limit = PAGE;
+let kind = "";
+
 const fmtDur = (s) => {
   s = Math.max(0, Math.round(s || 0));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
@@ -61,18 +134,132 @@ const fmtDur = (s) => {
 const fmtTime = (t) => t ? new Date(t * 1000).toLocaleString("de-DE") : "—";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
 const badgeClass = (s) => ({
   running: "b-running", done: "b-done", stale: "b-stale",
 }[s] || (String(s).includes("error") ? "b-error" : "b-done"));
+
+const msg = (text) => { document.getElementById("run-msg").textContent = text || ""; };
+
+/* ---- Läufe anstoßen ---------------------------------------------------- */
+
+function renderStarters(runnable) {
+  const box = document.getElementById("starters");
+  // Nur neu zeichnen, wenn sich etwas geändert hat -- sonst springt der Fokus
+  // bei jedem Zwei-Sekunden-Tick weg.
+  const sig = JSON.stringify(runnable);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.innerHTML = (runnable || []).map(r => `
+    <div class="starter">
+      <h3>${esc(r.label)}</h3>
+      <p>${esc(r.note)}</p>
+      ${r.gpu ? `<span class="gpu">belegt die Grafikkarte</span>` : ""}
+      <div class="row">
+        ${r.dry_run ? `<button data-run="${r.id}" data-dry="1" ${r.busy ? "disabled" : ""}>Trockenlauf</button>` : ""}
+        <button class="go" data-run="${r.id}" ${r.busy ? "disabled" : ""}>${r.busy ? "läuft" : "Starten"}</button>
+      </div>
+    </div>`).join("");
+}
+
+document.getElementById("starters").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-run]");
+  if (!b) return;
+  const dry = !!b.dataset.dry;
+  const label = b.closest(".starter").querySelector("h3").textContent;
+  if (!dry) {
+    const dlg = openModal({
+      title: label,
+      lead: "Der Lauf startet losgelöst und läuft weiter, auch wenn du die Seite "
+          + "schließt. Beenden geht dann nur im Terminal.",
+      buttons: [{ id: "cancel", label: "Abbrechen" },
+                { id: "go", label: "Starten", kind: "primary" }],
+    });
+    if (await dlg.wait() !== "go") return;
+  }
+  msg("startet …");
+  try {
+    const res = await fetch("/api/jobs/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job: b.dataset.run, dry_run: dry }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.status);
+    msg(`${label}: gestartet (PID ${data.pid}). ${data.note} Protokoll: ${data.log}`);
+  } catch (err) {
+    msg(`Start fehlgeschlagen: ${err.message}`);
+  }
+  tick();
+});
+
+/* ---- Aufräumen --------------------------------------------------------- */
+
+document.getElementById("prune").onclick = async () => {
+  const dlg = openModal({
+    title: "Erledigte Einträge aufräumen",
+    lead: "Entfernt <b>abgebrochene</b> Einträge — Läufe ohne Lebenszeichen. "
+        + "Laufende bleiben, und je Art bleiben die drei jüngsten stehen. "
+        + "Die Läufe selbst sind davon nicht betroffen, nur ihre Zeilen hier.",
+    body: `<label class="mv-hide"><input type="checkbox" id="also-done"> auch
+           abgeschlossene entfernen
+           <span>dann bleibt nur, was noch läuft, plus die drei jüngsten je Art</span></label>`,
+    buttons: [{ id: "cancel", label: "Abbrechen" },
+              { id: "go", label: "Aufräumen", kind: "danger" }],
+  });
+  const alsoDone = document.getElementById("also-done");
+  if (await dlg.wait() !== "go") return;
+  const what = alsoDone.checked ? "finished" : "aborted";
+  try {
+    const res = await fetch("/api/jobs/prune", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what, keep_per_kind: 3 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.status);
+    msg(`${data.deleted} Einträge entfernt, ${data.kept} behalten.`);
+  } catch (err) {
+    msg(`Aufräumen fehlgeschlagen: ${err.message}`);
+  }
+  tick();
+};
+
+document.getElementById("jobs").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-forget]");
+  if (!b) return;
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(b.dataset.forget)}`,
+                            { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.status);
+  } catch (err) {
+    msg(`Vergessen fehlgeschlagen: ${err.message}`);
+  }
+  tick();
+});
+
+document.getElementById("filter-kind").onchange = (e) => {
+  kind = e.target.value; limit = PAGE; tick();
+};
+document.getElementById("more").onclick = () => { limit += PAGE; tick(); };
+
+/* ---- Liste ------------------------------------------------------------- */
 
 function render(data) {
   const box = document.getElementById("jobs");
   const jobs = data.jobs || [];
   document.getElementById("meta").textContent =
-    jobs.length ? `${data.running} laufend · ${jobs.length} insgesamt` : "";
+    `${data.running} laufend · ${data.returned} von ${data.total} gezeigt`;
+
+  const sel = document.getElementById("filter-kind");
+  const want = ["", ...(data.kinds || [])];
+  if (sel.dataset.sig !== want.join()) {
+    sel.dataset.sig = want.join();
+    sel.innerHTML = want.map(k =>
+      `<option value="${esc(k)}"${k === kind ? " selected" : ""}>${k || "alle"}</option>`).join("");
+  }
+  document.getElementById("more").classList.toggle("hidden", data.returned >= data.total);
+
   if (!jobs.length) {
-    box.innerHTML = "<p class='none'>Noch keine Jobs. Starte einen Ingest.</p>";
+    box.innerHTML = "<p class='none'>Noch keine Jobs. Oben einen starten.</p>";
     return;
   }
   box.innerHTML = jobs.map(j => {
@@ -80,6 +267,8 @@ function render(data) {
     const done = j.status !== "running";
     return `
       <div class="job">
+        ${done ? `<button class="job-forget" data-forget="${esc(j.job_id)}"
+                   title="Diesen Eintrag vergessen">✕</button>` : ""}
         <div class="job-head">
           <span class="job-kind">${esc(j.kind || "job")}</span>
           <span class="badge ${badgeClass(j.status)}">${esc(j.status)}</span>
@@ -105,9 +294,12 @@ function render(data) {
 
 async function tick() {
   try {
-    const res = await fetch("/api/jobs");
+    const url = `/api/jobs?limit=${limit}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error(res.status);
-    render(await res.json());
+    const data = await res.json();
+    renderStarters(data.runnable);
+    render(data);
   } catch (e) {
     document.getElementById("meta").textContent = `API nicht erreichbar: ${e.message}`;
   }
