@@ -115,6 +115,12 @@ Jetzt gilt: EXIF-Aufnahmezeit, sonst Dateizeit, **aber nur wenn deren Tag zum
 Datum passt**. Sonst ist sie der Kopierzeitpunkt und täuscht eine Präzision
 vor, die es nicht gibt.
 
+EXIF selbst hat drei Uhren. `DateTime` (Tag 306) ist oft der Import auf den
+PC, `DateTimeOriginal` die Aufnahme. Ein früherer Extraktor las 306 zuerst —
+dann clustert eine Kopiernacht fremde Anlässe zu einer Serie, und die UI sagt
+trotzdem „aus den Bilddaten". Die Reihenfolge und die Probe, *bevor* man den
+Index überschreibt, stehen in [dates.md](dates.md).
+
 Bei WhatsApp trägt das erstaunlich weit: 9 866 von 15 310 Dateien (64,4 %)
 haben eine Änderungszeit, deren Tag zum Dateinamen passt. Dass es der
 Empfangs- und nicht der Aufnahmezeitpunkt ist, spielt für die Sortierung keine
@@ -238,7 +244,7 @@ lohnt.
 
 1. Auswahl in `sources.txt` festlegen, `--dry-run` prüfen, ingesten
 2. `tools/prune.py` gegen dieselbe Liste — der Index folgt der Auswahl nicht von selbst
-3. `tools/backfill_taken_at.py`, falls Bestand aus älteren Läufen vorliegt
+3. `python -m tools.backfill_taken_at --preview`, Stichproben nach [dates.md](dates.md), dann der Schreib-Lauf — falls Bestand aus älteren Läufen vorliegt
 4. Gesichter benennen — das ist die Grundlage für alles Folgende
 5. Ereignisse bilden, Serien benennen
 6. Captions zuletzt: mit Namen im Kontext werden sie deutlich besser

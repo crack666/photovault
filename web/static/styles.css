@@ -537,7 +537,9 @@ nav { display: flex; gap: 8px; }
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px;
   cursor: pointer;
 }
-.sg-moves input[type="checkbox"] { margin: 0; flex: none; }
+.sg-moves input[type="checkbox"] {
+  margin: 0; flex: none; width: 16px; height: 16px; accent-color: var(--accent, #7aa2f7);
+}
 .sg-move.off code { opacity: .45; text-decoration: line-through; }
 .sg-arrow { color: var(--muted); padding: 0 8px; }
 .shot-strip {

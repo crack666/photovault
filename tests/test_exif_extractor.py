@@ -42,6 +42,33 @@ class TestExifExtractor:
         assert 52.4 < lat < 52.5
         assert 13.4 < lon < 13.5
 
+    def test_original_beats_the_copy_timestamp(self, tmp_path):
+        """DateTime (306) ist oft der Import auf den PC, nicht die Aufnahme."""
+        import piexif
+        from PIL import Image
+
+        p = tmp_path / "party.jpg"
+        Image.new("RGB", (32, 24), (10, 20, 30)).save(p, format="JPEG")
+        exif = piexif.load(str(p))
+        exif["0th"][piexif.ImageIFD.DateTime] = b"2009:01:20 02:02:03"
+        exif.setdefault("Exif", {})[piexif.ExifIFD.DateTimeOriginal] = b"2006:12:17 11:58:58"
+        piexif.insert(piexif.dump(exif), str(p))
+        got = self.extractor.extract(str(p))
+        assert got["date"] == "2006-12-17"
+        assert got["datetime"] == "2006-12-17T11:58:58Z"
+
+    def test_datetime_is_used_when_original_is_missing(self, tmp_path):
+        import piexif
+        from PIL import Image
+
+        p = tmp_path / "scan.jpg"
+        Image.new("RGB", (32, 24), (10, 20, 30)).save(p, format="JPEG")
+        exif = piexif.load(str(p))
+        exif["0th"][piexif.ImageIFD.DateTime] = b"2009:01:20 01:46:13"
+        piexif.insert(piexif.dump(exif), str(p))
+        got = self.extractor.extract(str(p))
+        assert got["datetime"] == "2009-01-20T01:46:13Z"
+
     def test_west_and_south_are_negative(self):
         lat = ExifExtractor._gps_to_decimal((10, 0, 0), b"S")
         lon = ExifExtractor._gps_to_decimal((20, 0, 0), b"W")

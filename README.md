@@ -33,7 +33,7 @@ beantworten. Und Google Fotos kann es, will dafür aber alles haben.
 | **Herkunft** | Eigene Aufnahmen, Empfangenes, Screenshots: sauber getrennt, filterbar. Die Bibliothek bleibt frei von Memes. |
 | **Suche** | Kriterien zusammenklicken statt Suchsyntax lernen — „Niki **und** Jonas, 2015, Griechenland". |
 | **Beschreibungen** | Optional deutsche Bildunterschriften per lokalem Sprachmodell, mit Album und Namen als Kontext. |
-| **Reparatur** | Falsche Kamera-Uhren finden, abgeleitete Aufnahmezeiten ins EXIF zurückschreiben — das Archiv wird besser, nicht nur der Index. |
+| **Reparatur** | Kopierzeit von Aufnahmezeit trennen, falsche Kamera-Uhren finden, abgeleitete Zeiten ins EXIF zurückschreiben — das Archiv wird besser, nicht nur der Index. |
 
 ## Voraussetzungen
 
@@ -215,7 +215,8 @@ Ab hier wird es technisch. Für die Benutzung reicht alles oben.
 
 1. **Scan** — NAS-Scan, UNC/Laufwerk
 2. **Datei-Zeiten** — mtime + ctime (Windows: Erstellung)
-3. **EXIF** — Pillow, optional (darf fehlen); DateTimeOriginal aus Exif-IFD
+3. **EXIF** — Pillow, optional (darf fehlen); DateTimeOriginal vor DateTime
+   (Kopierzeit). Probe vor dem Überschreiben: [docs/dates.md](docs/dates.md)
 4. **Folder-Parser** — `_photovault.json` + Ordner-/Datei-Regeln + Sequenz `IMG_0042`
 5. **Face** — insightface detect + embed (ndarray)
 6. **Face-Match** — ähnliche gelabelte Gesichter → `person_suggestions`

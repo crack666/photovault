@@ -1674,7 +1674,7 @@ function selectedMergeIds(s, dropped) {
   if (hasIds) {
     const ids = [];
     for (const src of sources) {
-      if (dropped && dropped.has(src.path)) continue;
+      if (dropped && dropped.has(sourcePath(src))) continue;
       for (const id of src.photo_ids || []) if (id && !ids.includes(id)) ids.push(id);
     }
     return ids;
@@ -1696,6 +1696,13 @@ function pathsEqual(a, b) {
   return n(a) === n(b) && n(a) !== "";
 }
 
+function sourcePath(src) {
+  if (!src) return "";
+  if (typeof src === "string") return src;
+  const path = src.path || src.folder || "";
+  return typeof path === "string" ? path : "";
+}
+
 function paintFromTo(box, sources, destParent, name, dropped) {
   if (!box) return;
   const dest = joinDest(destParent, name);
@@ -1705,9 +1712,9 @@ function paintFromTo(box, sources, destParent, name, dropped) {
     return;
   }
   const rows = sources.map((src, i) => {
-    const path = src.path || src;
-    const folder = src.folder || path;
-    const n = src.size || 0;
+    const path = sourcePath(src);
+    const folder = (src && src.folder) || path.split(/[/\\]/).pop() || path;
+    const n = (src && src.size) || 0;
     const on = !skip.has(path);
     const stays = dest && pathsEqual(path, dest);
     let tail = "";
@@ -1726,7 +1733,7 @@ function paintFromTo(box, sources, destParent, name, dropped) {
     </li>`;
   }).join("");
   box.innerHTML = `
-    <p class="muted hint">Haken weg: dieser Ordner bekommt den Namen nicht und wandert später nicht mit. Zusammenlegen setzt sonst nur den Namen — Dateien bleiben, bis du unter Benannt „Fotos dorthin legen“ klickst.</p>
+    <p class="muted hint">Haken weg: dieser Ordner bleibt wo er ist. Zusammenlegen vergibt den Namen und legt die angehakten Ordner nach dem Ziel (Move, gleichnamige Dateien werden zu -2).</p>
     <ul class="sg-moves">${rows}</ul>`;
 }
 
@@ -1748,8 +1755,9 @@ function bindSuggestionDest(el, s) {
       if (!cb || !box.contains(cb)) return;
       const src = el._sgSources[Number(cb.dataset.i)];
       if (!src) return;
-      if (cb.checked) el._sgDropped.delete(src.path);
-      else el._sgDropped.add(src.path);
+      const p = sourcePath(src);
+      if (cb.checked) el._sgDropped.delete(p);
+      else el._sgDropped.add(p);
       refresh();
     });
   }
@@ -1835,6 +1843,23 @@ function renderSuggestion(s, i) {
   </div>`;
 }
 
+function confirmMove(name, destParent, ids) {
+  if (!destParent || !ids.length) return true;
+  const dest = joinDest(destParent, name);
+  return confirm(
+    `${ids.length} Foto${ids.length === 1 ? "" : "s"} nach\n${dest}\nlegen (Move)?\n\n` +
+    `Abgewählte Ordner bleiben. Gleichnamige Dateien bekommen -2.`
+  );
+}
+
+async function shelveChecked(name, destParent, ids) {
+  if (!destParent || !ids.length) return null;
+  return api("/api/events/shelve", {
+    method: "POST",
+    body: JSON.stringify({ name, photo_ids: ids, dest_parent: destParent, dry_run: false }),
+  });
+}
+
 async function acceptSuggestion(s, el) {
   const name = el.querySelector("input")?.value.trim();
   const btn = el.querySelector(".sg-ok");
@@ -1845,6 +1870,7 @@ async function acceptSuggestion(s, el) {
       alert("Keine Ordner übrig — mindestens einen Haken setzen.");
       return;
     }
+    if (!confirmMove(name, s.dest_parent, ids)) return;
     btn.disabled = true;
     try {
       await api("/api/events/merge", {
@@ -1857,6 +1883,10 @@ async function acceptSuggestion(s, el) {
           photo_ids: ids,
         }),
       });
+      const moved = await shelveChecked(name, s.dest_parent, ids);
+      if (moved && moved.failed && moved.failed.length) {
+        alert(`Zusammengelegt, aber ${moved.failed.length} Dateien nicht verschoben.`);
+      }
       el.remove();
       refreshEventNames();
     } catch (err) {
@@ -1872,6 +1902,7 @@ async function acceptSuggestion(s, el) {
       alert("Keine Ordner übrig — mindestens einen Haken setzen.");
       return;
     }
+    if (!confirmMove(name, s.dest_parent, ids)) return;
     btn.disabled = true;
     try {
       await api("/api/events/name", {
@@ -1881,6 +1912,10 @@ async function acceptSuggestion(s, el) {
           photo_count: ids.length, photo_ids: ids,
         }),
       });
+      const moved = await shelveChecked(name, s.dest_parent, ids);
+      if (moved && moved.failed && moved.failed.length) {
+        alert(`Name gesetzt, aber ${moved.failed.length} Dateien nicht verschoben.`);
+      }
       el.remove();
       refreshEventNames();
     } catch (err) {

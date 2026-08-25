@@ -5,6 +5,38 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+#: DateTimeOriginal, DateTimeDigitized, DateTime (IFD0). 306 ist oft die
+#: letzte Aenderung — ein Import auf den PC, nicht die Aufnahme.
+_DT_ORIGINAL = 36867
+_DT_DIGITIZED = 36868
+_DT_IMAGE = 306
+
+
+def exif_capture_stamp(exif) -> str | None:
+    """Aufnahmezeit: Original vor Digitalisiert vor DateTime.
+
+    Sonst clustert eine Importnacht (ein DateTime fuer hunderte Dateien)
+    Geburtstage und Abistreiche zu einer Serie.
+    """
+    if not exif:
+        return None
+    try:
+        ifd = exif.get_ifd(0x8769) or {}
+    except Exception:
+        ifd = {}
+    for raw in (ifd.get(_DT_ORIGINAL), ifd.get(_DT_DIGITIZED), exif.get(_DT_IMAGE)):
+        if not raw:
+            continue
+        text = raw.decode("ascii", "ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+        text = text.strip("\x00 ").replace("-", ":")[:19]
+        try:
+            datetime.strptime(text, "%Y:%m:%d %H:%M:%S")
+        except ValueError:
+            continue
+        return text
+    return None
+
+
 class ExifExtractor:
     def extract(self, file_path: str, image=None) -> dict:
         """`image` ist ein bereits geoeffnetes PIL-Image -- spart einen
@@ -18,12 +50,7 @@ class ExifExtractor:
             exif = img.getexif()
             if not exif:
                 return result
-            date_str = exif.get(306)
-            if not date_str:
-                try:
-                    date_str = exif.get_ifd(0x8769).get(36867)
-                except Exception:
-                    date_str = None
+            date_str = exif_capture_stamp(exif)
             # Steht dort ein Wert, den *wir* geschrieben haben? Dann ist er
             # abgeleitet, nicht gemessen. Ohne diese Pruefung befoerdert der
             # naechste Lauf unsere Schaetzung zu EXIF mit Vertrauen 1.0, und

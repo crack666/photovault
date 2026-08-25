@@ -51,7 +51,7 @@ def ui_index():
     index = WEB_DIR / "index.html"
     if not index.is_file():
         return {"status": "ok", "ui": False}
-    return FileResponse(index)
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/jobs.html")
@@ -59,7 +59,7 @@ def ui_jobs():
     page = WEB_DIR / "jobs.html"
     if not page.is_file():
         return {"status": "ok", "ui": False}
-    return FileResponse(page)
+    return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 if (WEB_DIR / "static").is_dir():

@@ -54,6 +54,27 @@ class TestFileTimeFallback:
         assert got == "2009-01-01T00:00:00Z"
 
 
+class TestBackfillPrefersOriginal:
+    def test_import_night_does_not_block_the_real_day(self, monkeypatch):
+        """306-Kopierzeit im Index, Original an einem anderen Tag — übernehmen."""
+        from tools.backfill_taken_at import resolve
+
+        monkeypatch.setattr(
+            "tools.backfill_taken_at.exif_datetime",
+            lambda path: "2006-12-17T13:36:41Z",
+        )
+        monkeypatch.setattr(
+            "tools.backfill_taken_at.retry_io",
+            lambda fn, what=None: fn(),
+        )
+        got = resolve({
+            "date": "2009-01-20",
+            "file_path": "/album/x.jpg",
+            "taken_at": "2009-01-20T02:03:53Z",
+        })
+        assert got == "2006-12-17T13:36:41Z"
+
+
 class TestEdges:
     def test_year_only(self):
         assert _taken(date="2009") == "2009-01-01T00:00:00Z"
