@@ -24,6 +24,8 @@ from api.qdrant_util import client
 from ingest.event_suggest import (
     coalesce_same_album,
     neighbor_suggestions,
+    rank_suggestions,
+    suggestion_photo_count,
     timestamp_suggestions,
     unify_folder_suggestions,
 )
@@ -39,8 +41,35 @@ _RE_YEAR = re.compile(r"\b(19|20)\d{2}\b")
 
 COLLECTION = "photos"
 #: Serien unter dieser Groesse lohnen den Blick nicht -- ein Name fuer zwei
-#: Fotos kostet mehr Aufmerksamkeit, als er einbringt.
+#: Fotos kostet mehr Aufmerksamkeit, als er einbringt. Die UI kann das
+#: per min_size auf 2 senken, dann stehen die Kleinstserien hinten.
 MIN_SIZE = 5
+PAGE = 20
+MAX_PAGE = 200
+
+
+def _page(items: list, offset: int = 0, limit: int = PAGE) -> tuple[list, dict]:
+    """Ein Ausschnitt der bereits sortierten Liste, plus Blaetter-Metadaten."""
+    try:
+        offset = int(offset)
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = PAGE
+    offset = max(0, offset)
+    limit = max(1, min(limit, MAX_PAGE))
+    total = len(items)
+    if offset > total:
+        offset = total
+    page = items[offset : offset + limit]
+    return page, {
+        "offset": offset,
+        "limit": limit,
+        "returned": len(page),
+        "has_more": offset + len(page) < total,
+    }
 
 
 class NameRequest(BaseModel):
@@ -287,12 +316,18 @@ def _summarise(event, rows, names, forced_name: str | None = None) -> dict:
 
 
 @router.get("/unnamed")
-def unnamed(limit: int = 300, min_size: int = MIN_SIZE, channel: str = CAMERA) -> dict:
-    """Die größten Serien ohne Namen, absteigend.
+def unnamed(
+    limit: int = PAGE,
+    offset: int = 0,
+    min_size: int = MIN_SIZE,
+    channel: str = CAMERA,
+) -> dict:
+    """Die größten Serien ohne Namen, absteigend, seitenweise.
 
     Absteigend nach Größe, weil dort der Ertrag je Entscheidung am höchsten
     ist: eine Serie mit 150 Fotos zu benennen ordnet mehr als dreißig
-    Zweiergrüppchen.
+    Zweiergrüppchen. Kleinstserien (2–4 Fotos) sind oft eine Salve derselben
+    Szene — sie stehen hinten und sind per min_size=2 erreichbar.
     """
     q = client()
     rows = _load(q, channel or None)
@@ -303,16 +338,23 @@ def unnamed(limit: int = 300, min_size: int = MIN_SIZE, channel: str = CAMERA) -
 
     # Keine Zeitraum-Namen: sonst rutschen per ✕ entfernte Fotos wieder
     # in die benannte Serie, nur weil sie in derselben Stunde liegen.
+    min_size = max(2, int(min_size or MIN_SIZE))
     summaries = [_summarise(e, open_rows, []) for e in events if e.size >= 2]
     summaries = coalesce_same_album(summaries)
+    tiny = [s for s in summaries if s["size"] < min_size]
     summaries = [s for s in summaries if s["size"] >= min_size]
     summaries.sort(key=lambda s: -s["size"])
+    page, meta = _page(summaries, offset, limit)
     return {
         "total_events": len(groups) + len(events),
         "named": len(groups),
         "unnamed": len(summaries),
+        "unnamed_small": len(tiny),
         "photos_unnamed": sum(s["size"] for s in summaries),
-        "events": summaries[:limit],
+        "photos_small": sum(s["size"] for s in tiny),
+        "min_size": min_size,
+        "events": page,
+        **meta,
     }
 
 
@@ -424,8 +466,13 @@ def set_members(req: MembersRequest) -> dict:
 
 
 @router.get("/suggestions")
-def suggestions(channel: str = CAMERA, limit: int = 40) -> dict:
-    """Nachbar-Serien, gemischte Ordner, gleiche Uhrzeit — zum Bestätigen."""
+def suggestions(channel: str = CAMERA, limit: int = PAGE, offset: int = 0) -> dict:
+    """Nachbar-Serien, gemischte Ordner, gleiche Uhrzeit — zum Bestätigen.
+
+    Sortiert nach Fotozahl, nicht nach internem Score: 80 Fotos einer Feier
+    vor vier Schnappschüssen vom selben Berg. Blättern über offset/limit,
+    sonst bleiben 170 von 212 Karten unsichtbar.
+    """
     q = client()
     rows_all = _load(q, None)
     rows = (
@@ -457,15 +504,20 @@ def suggestions(channel: str = CAMERA, limit: int = 40) -> dict:
         for pid, r in rows_all.items()
     ]
     stamps = timestamp_suggestions(photo_rows, rejected=rejected)
-    items = [_with_dest(s) for s in (neighbors + unify + stamps)][:limit]
+    items = rank_suggestions(
+        [_with_dest(s) for s in (neighbors + unify + stamps)]
+    )
+    page, meta = _page(items, offset, limit)
     return {
-        "total": len(neighbors) + len(unify) + len(stamps),
-        "suggestions": items,
+        "total": len(items),
+        "suggestions": page,
+        **meta,
     }
 
 
 def _with_dest(suggestion: dict) -> dict:
     """Zielordner an die Karte hängen, damit die UI Von → Nach zeigen kann."""
+    suggestion["photo_count"] = suggestion_photo_count(suggestion)
     kind = suggestion.get("kind")
     if kind == "neighbor":
         paths: list[str] = []

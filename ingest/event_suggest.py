@@ -301,3 +301,26 @@ def _suggested_name(a: dict, b: dict) -> str:
         if ev.get("suggested_name"):
             return ev["suggested_name"]
     return ""
+
+
+def suggestion_photo_count(s: dict) -> int:
+    """Wie viele Fotos die Karte betrifft — grosse Paare zuerst zeigen."""
+    kind = s.get("kind")
+    if kind == "unify_folders":
+        return int((s.get("event") or {}).get("size") or 0)
+    a, b = s.get("a") or {}, s.get("b") or {}
+    if kind == "timestamp":
+        return int(bool(a)) + int(bool(b))
+    return int(a.get("size") or 0) + int(b.get("size") or 0)
+
+
+def rank_suggestions(items: list[dict]) -> list[dict]:
+    """Große Serien vor Schnappschuss-Salven, Score nur als Tie-Break.
+
+    Vier Fotos vom selben Berg in 20 Sekunden sind oft kein eigener Ordner.
+    80 Fotos einer Feier schon. Wer blättert, soll die zuerst sehen.
+    """
+    return sorted(
+        items,
+        key=lambda s: (-suggestion_photo_count(s), -float(s.get("score") or 0)),
+    )

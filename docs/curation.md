@@ -228,7 +228,12 @@ was ich selbst aufgenommen habe".
 
 Analog zu „Wer ist das?" eine Ansicht **„Unbenannte Serien"**: die größten
 Ereignisse ohne Namen, absteigend, mit Vorschaubildern und einem Eingabefeld.
-Ein Name deckt in einem Zug 50 bis 150 Fotos ab.
+Ein Name deckt in einem Zug 50 bis 150 Fotos ab. Die Liste blättert seitenweise
+(20 Karten); Filter `ab 20` / `ab 10` / `ab 5` / `ab 2` halten Kleinstserien
+hinten — 3–4 Schnappschüsse derselben Szene rechtfertigen selten einen eigenen
+Ordner, einen Namen manchmal schon. **Vorschläge** (Nachbar-Serien, gemischte
+Ordner) sind genauso sortiert und geblättert, sonst bleiben hintere Karten
+unsichtbar, bis man die ersten 40 abgearbeitet hat.
 
 Bei `HandyPics` warten dafür schon zwei Serien mit 55 und 53 Fotos, beide ohne
 erkannte Personen und ohne Albumnamen — genau die Fälle, die sonst nie

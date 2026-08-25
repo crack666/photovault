@@ -1414,6 +1414,17 @@ loadQueue().catch((err) => {
 
 let evChannel = "camera";
 let evTab = "unnamed";
+const EV_PAGE = 20;
+const SIZE_FILTERS = [
+  { min: 20, label: "ab 20" },
+  { min: 10, label: "ab 10" },
+  { min: 5, label: "ab 5" },
+  { min: 2, label: "ab 2" },
+];
+let evMinSize = 5;
+let evOffset = 0;
+let sgOffset = 0;
+let sgMeta = { offset: 0, returned: 0, total: 0 };
 
 function loadEventTab() {
   ["unnamed", "named", "suggest", "albums"].forEach((id) => {
@@ -1429,8 +1440,55 @@ function loadEventTab() {
 }
 
 $("ev-sub").querySelectorAll(".chan").forEach((b) => {
-  b.addEventListener("click", () => { evTab = b.dataset.evtab; loadEventTab(); });
+  b.addEventListener("click", () => {
+    evTab = b.dataset.evtab;
+    evOffset = 0;
+    sgOffset = 0;
+    loadEventTab();
+  });
 });
+
+function vorschlaegeLabel(n) {
+  const k = Number(n) || 0;
+  return k === 1 ? "1 Vorschlag" : `${k} Vorschläge`;
+}
+
+function renderPager(ids, offset, returned, total, onPage) {
+  const start = total === 0 ? 0 : offset + 1;
+  const end = Math.min(offset + returned, total);
+  const fits = total <= 0 || (offset <= 0 && end >= total);
+  const html = fits
+    ? ""
+    : `<button type="button" class="mini pager-prev" ${offset <= 0 ? "disabled" : ""} aria-label="Vorherige Seite">‹</button>
+       <span class="muted">${start}–${end} von ${total}</span>
+       <button type="button" class="mini pager-next" ${end >= total ? "disabled" : ""} aria-label="Nächste Seite">›</button>`;
+  (Array.isArray(ids) ? ids : [ids]).forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    el.innerHTML = html;
+    el.classList.toggle("hidden", !html);
+    const prev = el.querySelector(".pager-prev");
+    const next = el.querySelector(".pager-next");
+    if (prev) prev.addEventListener("click", () => {
+      if (offset <= 0) return;
+      onPage(Math.max(0, offset - EV_PAGE));
+    });
+    if (next) next.addEventListener("click", () => {
+      if (end >= total) return;
+      onPage(offset + (returned || EV_PAGE));
+    });
+  });
+}
+
+function bindSizeFilters(hostId, current, onPick) {
+  const host = $(hostId);
+  if (!host) return;
+  host.innerHTML = SIZE_FILTERS.map((f) =>
+    `<button type="button" class="chan${f.min === current ? " on" : ""}" data-min="${f.min}">${f.label} Fotos</button>`
+  ).join("");
+  host.querySelectorAll(".chan").forEach((b) =>
+    b.addEventListener("click", () => onPick(Number(b.dataset.min))));
+}
 
 function evWhen(ev) {
   if (ev.day_level || !ev.start) return "Uhrzeit unbekannt";
@@ -1454,25 +1512,44 @@ async function loadEvents() {
     .map((f) => `<button type="button" class="chan${f.key === evChannel ? " on" : ""}"
                    data-chan="${f.key}">${escapeHtml(f.label)}</button>`).join("");
   $("ev-chan").querySelectorAll(".chan").forEach((b) =>
-    b.addEventListener("click", () => { evChannel = b.dataset.chan; loadEvents(); }));
+    b.addEventListener("click", () => { evChannel = b.dataset.chan; evOffset = 0; loadEvents(); }));
+  bindSizeFilters("ev-size", evMinSize, (min) => {
+    evMinSize = min;
+    evOffset = 0;
+    loadEvents();
+  });
 
   let d;
   try {
-    // Alle laden statt zu blaettern: die Vorschaubilder haengen an
-    // loading="lazy", es kommt also nur an, was man auch ansieht -- und beim
-    // Durcharbeiten will man nicht alle 40 Serien nachladen muessen.
-    d = await api(`/api/events/unnamed?limit=400&channel=${encodeURIComponent(evChannel)}`);
+    d = await api(
+      `/api/events/unnamed?limit=${EV_PAGE}&offset=${evOffset}` +
+      `&min_size=${evMinSize}&channel=${encodeURIComponent(evChannel)}`
+    );
   } catch (err) {
     host.innerHTML = `<p class='muted'>Serien konnten nicht geladen werden (${escapeHtml(String(err.message || err).slice(0, 140))})</p>`;
     return;
   }
-  const gezeigt = d.events.length;
+  if (!d.events.length && evOffset > 0 && d.unnamed > 0) {
+    evOffset = Math.max(0, Math.floor((d.unnamed - 1) / EV_PAGE) * EV_PAGE);
+    return loadEvents();
+  }
+  const from = d.unnamed ? (d.offset || 0) + 1 : 0;
+  const to = (d.offset || 0) + (d.returned || d.events.length);
   $("ev-meta").textContent =
-    `${d.unnamed} von ${d.total_events} Serien ohne Namen · ${d.photos_unnamed} Fotos` +
-    (gezeigt < d.unnamed ? ` · ${gezeigt} geladen` : "");
+    `${d.unnamed} Serie${d.unnamed === 1 ? "" : "n"} ohne Namen · ${d.photos_unnamed} Fotos` +
+    (d.unnamed > (d.returned || 0) ? ` · ${from}–${to}` : "") +
+    (d.unnamed_small
+      ? ` · ${d.unnamed_small} mit unter ${d.min_size} Fotos ausgeblendet`
+      : "");
+  renderPager(["ev-pager", "ev-pager-2"], d.offset || 0, d.returned || d.events.length, d.unnamed, (off) => {
+    evOffset = off;
+    loadEvents();
+  });
 
   if (!d.events.length) {
-    host.innerHTML = "<p class='muted'>Alles benannt.</p>";
+    host.innerHTML = d.unnamed_small
+      ? `<p class='muted'>Keine Serie ab ${d.min_size} Fotos. ${d.unnamed_small} kleinere über „ab 2“.</p>`
+      : "<p class='muted'>Alles benannt.</p>";
     return;
   }
   host.innerHTML = d.events.map((ev, i) => `
@@ -1677,14 +1754,29 @@ async function loadSuggestions() {
   host.innerHTML = "<p class='muted'>Lade …</p>";
   let d;
   try {
-    d = await api("/api/events/suggestions?limit=40");
+    d = await api(`/api/events/suggestions?limit=${EV_PAGE}&offset=${sgOffset}`);
   } catch (err) {
     host.innerHTML = `<p class='muted'>Vorschläge nicht ladbar (${escapeHtml(String(err.message || err).slice(0, 140))})</p>`;
     return;
   }
-  $("sg-meta").textContent = d.total
-    ? `${d.total} Vorschlag${d.total === 1 ? "" : "e"}`
+  if (!d.suggestions.length && sgOffset > 0 && d.total > 0) {
+    sgOffset = Math.max(0, Math.floor((d.total - 1) / EV_PAGE) * EV_PAGE);
+    return loadSuggestions();
+  }
+  sgMeta = {
+    offset: d.offset || 0,
+    returned: d.returned || d.suggestions.length,
+    total: d.total || 0,
+  };
+  const from = sgMeta.total ? sgMeta.offset + 1 : 0;
+  const to = sgMeta.offset + sgMeta.returned;
+  $("sg-meta").textContent = sgMeta.total
+    ? `${vorschlaegeLabel(sgMeta.total)} · ${from}–${to}`
     : "Nichts Offenes.";
+  renderPager(["sg-pager", "sg-pager-2"], sgMeta.offset, sgMeta.returned, sgMeta.total, (off) => {
+    sgOffset = off;
+    loadSuggestions();
+  });
   if (!d.suggestions.length) {
     host.innerHTML = "<p class='muted'>Keine Vorschläge. Serien zuerst benennen hilft.</p>";
     return;
@@ -1702,6 +1794,26 @@ async function loadSuggestions() {
     if (reject) reject.addEventListener("click", () => rejectSuggestion(s, el));
     bindSuggestionDest(el, s);
   });
+}
+
+function suggestionGone(el) {
+  el.remove();
+  const left = $("sg-list").querySelectorAll(".serie").length;
+  sgMeta.total = Math.max(0, (sgMeta.total || 1) - 1);
+  sgMeta.returned = left;
+  const from = sgMeta.total ? sgMeta.offset + 1 : 0;
+  const to = sgMeta.offset + sgMeta.returned;
+  $("sg-meta").textContent = sgMeta.total
+    ? `${vorschlaegeLabel(sgMeta.total)} · ${from}–${to}`
+    : "Nichts Offenes.";
+  renderPager(["sg-pager", "sg-pager-2"], sgMeta.offset, sgMeta.returned, sgMeta.total, (off) => {
+    sgOffset = off;
+    loadSuggestions();
+  });
+  if (!left && sgMeta.total > 0) loadSuggestions();
+  else if (!left) {
+    $("sg-list").innerHTML = "<p class='muted'>Keine Vorschläge. Serien zuerst benennen hilft.</p>";
+  }
 }
 
 function suggestionSources(s) {
@@ -1867,10 +1979,11 @@ function renderSuggestion(s, i) {
     const people = (s.shared_people || []).length
       ? `gemeinsam: ${s.shared_people.slice(0, 4).join(", ")}`
       : "";
+    const n = s.photo_count || ((s.a && s.a.size || 0) + (s.b && s.b.size || 0));
     return `<div class="serie" data-i="${i}">
       <div class="serie-head">
         <div>
-          <strong>Zwei Serien, ${escapeHtml(gap)}</strong>
+          <strong>Zwei Serien, ${escapeHtml(gap)} · ${n} Fotos</strong>
           ${people ? `<span class="ev-people">${escapeHtml(people)}</span>` : ""}
         </div>
         <form class="serie-form sg-form">
@@ -1966,7 +2079,7 @@ async function acceptSuggestion(s, el) {
       if (moved && moved.failed && moved.failed.length) {
         alert(`Zusammengelegt, aber ${moved.failed.length} Dateien nicht verschoben.`);
       }
-      el.remove();
+      suggestionGone(el);
       refreshEventNames();
     } catch (err) {
       btn.disabled = false;
@@ -1995,7 +2108,7 @@ async function acceptSuggestion(s, el) {
       if (moved && moved.failed && moved.failed.length) {
         alert(`Name gesetzt, aber ${moved.failed.length} Dateien nicht verschoben.`);
       }
-      el.remove();
+      suggestionGone(el);
       refreshEventNames();
     } catch (err) {
       btn.disabled = false;
@@ -2017,7 +2130,7 @@ async function acceptSuggestion(s, el) {
         }),
       });
     }
-    el.remove();
+    suggestionGone(el);
   } catch (err) {
     btn.disabled = false;
     alert(err.message || err);
@@ -2044,7 +2157,7 @@ async function rejectSuggestion(s, el) {
         b_end: b.end || b.taken_at,
       }),
     });
-    el.remove();
+    suggestionGone(el);
   } catch (err) {
     alert(err.message || err);
   }

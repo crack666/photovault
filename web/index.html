@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
-  <link rel="stylesheet" href="/static/styles.css?v=6" />
+  <link rel="stylesheet" href="/static/styles.css?v=7" />
 </head>
 <body>
   <header class="top">
@@ -201,11 +201,16 @@
       <h1>Noch unbenannt</h1>
       <p class="muted" id="ev-meta">Lade …</p>
       <p class="muted" id="ev-hint">
-        Schritt 1: der Serie einen Namen geben. Danach liegt sie unter „Benannt“
-        — verschieben ist optional.
+        Große zuerst. Schritt 1: der Serie einen Namen geben. Danach liegt sie
+        unter „Benannt“ — ein eigener Ordner ist optional. 2–4 Fotos einer Szene
+        sind oft eine Schnappschuss-Salve; die stehen hinten und lohnen selten
+        einen Ordner, einen Namen aber manchmal schon.
       </p>
       <div class="chanbar" id="ev-chan"></div>
+      <div class="chanbar" id="ev-size"></div>
+      <div class="pager" id="ev-pager"></div>
       <div id="ev-list"></div>
+      <div class="pager sticky" id="ev-pager-2"></div>
     </div>
 
     <div id="ev-named" class="hidden">
@@ -224,11 +229,15 @@
       <h1>Vielleicht dieselbe Gelegenheit</h1>
       <p class="muted" id="sg-meta">Lade …</p>
       <p class="muted">
-        Jedes Karussell zeigt, wo die Fotos jetzt liegen. Zusammenlegen vergibt
-        den Namen und legt die angehakten Ordner nach dem Ziel darunter.
-        Abgewählte Ordner bleiben wo sie sind.
+        Große zuerst, dann blättern — sonst bleiben die hinteren Vorschläge
+        unsichtbar. Jedes Karussell zeigt, wo die Fotos jetzt liegen.
+        Zusammenlegen vergibt den Namen und legt die angehakten Ordner nach
+        dem Ziel darunter. Abgewählte Ordner bleiben wo sie sind. Kleine
+        Nachbar-Paare (3–4 Schnappschüsse) stehen hinten.
       </p>
+      <div class="pager" id="sg-pager"></div>
       <div id="sg-list"></div>
+      <div class="pager sticky" id="sg-pager-2"></div>
     </div>
 
     <div id="ev-albums" class="hidden">
@@ -268,7 +277,7 @@
     <div id="search-results" class="results"></div>
   </main>
 
-  <script src="/static/app.js?v=6"></script>
+  <script src="/static/app.js?v=7"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

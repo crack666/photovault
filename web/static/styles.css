@@ -579,6 +579,25 @@ nav { display: flex; gap: 8px; }
   min-width: 8ch;
 }
 
+.pager {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin: 8px 0 14px; min-height: 2.2rem;
+}
+.pager .muted { font-variant-numeric: tabular-nums; }
+.pager .mini {
+  min-width: 2.2rem; padding: 4px 12px;
+  border: 1px solid var(--line, #2a2f3d); border-radius: 8px;
+  background: var(--card); color: var(--text);
+}
+.pager .mini:disabled { opacity: .25; cursor: default; }
+.pager.sticky {
+  position: sticky; bottom: 8px; z-index: 4;
+  margin: 16px auto 8px; padding: 6px 14px; width: max-content;
+  max-width: calc(100% - 16px);
+  background: color-mix(in srgb, var(--bg) 88%, var(--card));
+  border: 1px solid var(--line, #2a2f3d); border-radius: 999px;
+}
+
 
 /* --- Kandidaten bereits benannter Personen ------------------------------- */
 

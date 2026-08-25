@@ -186,6 +186,33 @@ class TestSuggestedName:
         assert suggest_name(["Abiball", "Abistreich"], "2008-06-27") == "Abiball 2008"
 
 
+class TestEventPaging:
+    def test_page_clips_and_reports_has_more(self):
+        from api.routes.events import _page
+        items = list(range(45))
+        page, meta = _page(items, offset=20, limit=20)
+        assert page == list(range(20, 40))
+        assert meta["returned"] == 20
+        assert meta["has_more"] is True
+        last, last_meta = _page(items, offset=40, limit=20)
+        assert last == list(range(40, 45))
+        assert last_meta["has_more"] is False
+
+    def test_offset_past_the_end_is_empty_not_an_error(self):
+        from api.routes.events import _page
+        page, meta = _page([1, 2, 3], offset=50, limit=20)
+        assert page == []
+        assert meta["offset"] == 3
+        assert meta["returned"] == 0
+        assert meta["has_more"] is False
+
+    def test_limit_is_capped(self):
+        from api.routes.events import MAX_PAGE, _page
+        page, meta = _page(list(range(500)), offset=0, limit=10_000)
+        assert meta["limit"] == MAX_PAGE
+        assert len(page) == MAX_PAGE
+
+
 class TestSuggestionDest:
     def test_neighbor_shows_fotos_as_destination(self):
         from api.routes.events import _with_dest

@@ -6,6 +6,8 @@ from ingest.event_suggest import (
     coalesce_same_album,
     neighbor_score,
     neighbor_suggestions,
+    rank_suggestions,
+    suggestion_photo_count,
     timestamp_suggestions,
     unify_folder_suggestions,
 )
@@ -131,6 +133,39 @@ class TestUnifyFolders:
 
     def test_single_folder_is_silent(self):
         assert unify_folder_suggestions([_ev(folders=["GC 07"])]) == []
+
+
+class TestRankSuggestions:
+    def test_a_big_unify_beats_a_tiny_neighbor(self):
+        """80 Fotos einer Feier vor vier Schnappschüssen vom selben Berg."""
+        tiny = {
+            "kind": "neighbor",
+            "score": 9.0,
+            "a": {"size": 2},
+            "b": {"size": 2},
+        }
+        big = {
+            "kind": "unify_folders",
+            "score": 2.4,
+            "event": {"size": 80},
+        }
+        stamp = {
+            "kind": "timestamp",
+            "score": 3.0,
+            "a": {"id": "cam"},
+            "b": {"id": "wa"},
+        }
+        got = rank_suggestions([tiny, stamp, big])
+        assert [s["kind"] for s in got] == ["unify_folders", "neighbor", "timestamp"]
+        assert suggestion_photo_count(big) == 80
+        assert suggestion_photo_count(tiny) == 4
+        assert suggestion_photo_count(stamp) == 2
+
+    def test_equal_size_keeps_the_higher_score_first(self):
+        low = {"kind": "neighbor", "score": 1.2, "a": {"size": 10}, "b": {"size": 10}}
+        high = {"kind": "neighbor", "score": 4.0, "a": {"size": 10}, "b": {"size": 10}}
+        got = rank_suggestions([low, high])
+        assert got[0]["score"] == 4.0
 
 
 class TestTimestamp:
