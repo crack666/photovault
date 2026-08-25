@@ -508,3 +508,77 @@ def similar(req: SimilarRequest) -> dict:
         if str(p.id) not in seen
     ][:limit]
     return {"using": req.using, "strategy": req.strategy, "from": len(positive), "results": results}
+
+
+class RelocateRequest(BaseModel):
+    """Eine Auswahl in einen eigenen Ordner legen.
+
+    Der Anlass ist konkret: Screenshots und Dokumente sind ein eigenes Thema
+    und gehoeren nicht in dieselbe Sammlung wie die Fotos von Menschen. Sie zu
+    loeschen waere zu viel -- sie in einen eigenen Ordner zu schieben genau
+    richtig, und danach fallen sie aus der Bibliothek heraus.
+    """
+
+    photo_ids: list[str]
+    #: Ordnername unter dem Bibliotheksziel. `dest_parent` ueberschreibt das
+    #: automatisch gefundene Elternverzeichnis.
+    folder_name: str
+    dest_parent: Optional[str] = None
+    #: Ohne `confirm` wird nur geplant, nichts bewegt.
+    confirm: bool = False
+    #: Textvektoren nachziehen. Standard aus: das kostet je Foto einen
+    #: Ollama-Aufruf und damit die GPU, die vielleicht Captions rechnet.
+    reembed: bool = False
+
+
+@router.post("/relocate")
+def relocate(req: RelocateRequest) -> dict:
+    """Dateien verschieben (Move, kein Copy) und den Index nachziehen.
+
+    Standardmaessig ein Trockenlauf: die Antwort zeigt, was passieren wuerde.
+    Erst `confirm: true` bewegt etwas. Bei zweieinhalbtausend Dateien ist das
+    kein Komfort, sondern die Bremse vor dem Unwiderruflichen.
+    """
+    from pathlib import Path
+
+    from ingest.relocate import library_root_for, move_photos
+
+    if not req.photo_ids:
+        raise HTTPException(400, "photo_ids ist leer")
+    if not req.folder_name.strip():
+        raise HTTPException(400, "folder_name ist leer")
+
+    q = client()
+    if req.dest_parent:
+        parent = Path(req.dest_parent)
+    else:
+        # Das Bibliotheksziel steht neben dem Dump, nicht darin -- unter
+        # /mnt/photo/Handys/... liegt meist ein Geschwister `Fotos`.
+        sample = q.retrieve(collection_name=PHOTOS, ids=req.photo_ids[:20],
+                            with_payload=["file_path"], with_vectors=False)
+        paths = [(p.payload or {}).get("file_path") for p in sample]
+        try:
+            parent = library_root_for([p for p in paths if p])
+        except ValueError as e:
+            raise HTTPException(
+                400,
+                f"{e} — dest_parent angeben oder PHOTOVAULT_LIBRARY setzen.",
+            ) from e
+
+    try:
+        return move_photos(
+            q,
+            req.photo_ids,
+            parent / req.folder_name.strip(),
+            folder_name=req.folder_name.strip(),
+            dry_run=not req.confirm,
+            reembed=req.reembed,
+        )
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e)) from e
+    except OSError as e:
+        # Anderes Volume: `move_photos` bricht bewusst ab, statt zu kopieren.
+        raise HTTPException(409, str(e)) from e
+    except Exception as e:
+        logger.exception("Relocate failed")
+        raise HTTPException(500, f"Verschieben fehlgeschlagen: {e}") from e

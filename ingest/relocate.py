@@ -244,10 +244,18 @@ def move_photos(
     *,
     folder_name: str,
     dry_run: bool = True,
+    reembed: bool = True,
     photos: str = _PHOTOS,
     faces: str = _FACES,
 ) -> dict:
-    """Einzelne Dateien in einen neuen Ordner legen (Move, kein Copy)."""
+    """Einzelne Dateien in einen neuen Ordner legen (Move, kein Copy).
+
+    `reembed=False` laesst die Textvektoren, wie sie sind. Der Ordnername
+    steckt im Vektor, nach einem Umzug ist er also veraltet -- aber jeder
+    Vektor kostet einen Ollama-Aufruf, und wer tausend Screenshots aus der
+    Bibliothek schiebt, will dafuer nicht die GPU belegen, die gerade
+    Bildbeschreibungen rechnet. Nachziehen geht per POST /api/photos/reembed.
+    """
     dest = Path(dest)
     folder_name = album_name_ok(folder_name)
     ids = [i for i in dict.fromkeys(point_ids) if i]
@@ -326,12 +334,16 @@ def move_photos(
     plan["faces"] = sum(m.get("faces", 0) for m in migrated)
     plan["failed"] = failed
     plan["ok"] = not failed
-    try:
-        from ingest.reembed import rebuild_text_vectors
+    plan["reembedded"] = 0
+    if reembed and migrated:
+        try:
+            from ingest.reembed import rebuild_text_vectors
 
-        rebuild_text_vectors(client, [m["new_id"] for m in migrated], collection=photos)
-    except Exception:
-        logger.exception("Re-embed after shelve failed")
+            stats = rebuild_text_vectors(client, [m["new_id"] for m in migrated],
+                                         collection=photos)
+            plan["reembedded"] = stats.get("updated", 0)
+        except Exception:
+            logger.exception("Re-embed after shelve failed")
     return plan
 
 

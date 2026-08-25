@@ -53,6 +53,10 @@ export async function loadAtlas() {
   model.indexOfId = new Map(raw.ids.map((id, i) => [id, i]));
   model.year = Int16Array.from(model.t, (d) => (d < 0 ? -1 : new Date(d * DAY_MS).getUTCFullYear()));
   model.layouts = { bedeutung: byMeaning(model), zeit: byTime(model) };
+  // Schwerpunkt je Kontinent, je Anordnung -- Grundlage der Spreizung.
+  for (const name of Object.keys(model.layouts)) {
+    model.layouts[name].centroids = centroidsOf(model, model.layouts[name]);
+  }
   model.clusterLabel = raw.clusters.map(labelOf);
   return model;
 }
@@ -120,6 +124,40 @@ function byTime(m) {
     x[i] = start.get(y) + frac * width.get(y);
   }
   return { x, y: m.y, years, start, width };
+}
+
+/* ---- Spreizung -------------------------------------------------------
+   Die Kontinente liegen dicht an dicht, und die Raender sprenkeln
+   ineinander -- Screenshots tauchen mitten unter Fotos auf. Wie weit
+   auseinander sie liegen *sollen*, ist keine Messung, sondern Geschmack:
+   wer stoebert, will Enge; wer aufraeumt, will Trennung. Also ein Regler.
+
+   Jeder Punkt wird vom Bildmitte weg in Richtung seines Kontinent-
+   schwerpunkts geschoben, und alles anschliessend wieder auf 0..1 gestaucht.
+   Die Kontinente ruecken damit auseinander, ohne dass die Karte den Rand
+   verlaesst -- innerhalb eines Kontinents bleibt die Anordnung, wie sie war. */
+
+function centroidsOf(model, layout) {
+  const n = model.clusters.length;
+  const sum = new Float64Array(n * 2);
+  const count = new Int32Array(n);
+  for (let i = 0; i < model.n; i++) {
+    const c = model.cl[i];
+    sum[c * 2] += layout.x[i];
+    sum[c * 2 + 1] += layout.y[i];
+    count[c]++;
+  }
+  const out = new Float32Array(n * 2);
+  for (let c = 0; c < n; c++) {
+    out[c * 2] = count[c] ? sum[c * 2] / count[c] : 0.5;
+    out[c * 2 + 1] = count[c] ? sum[c * 2 + 1] / count[c] : 0.5;
+  }
+  return out;
+}
+
+/** Verschobene Position eines Punkts bei Spreizung `k` (0 = unveraendert). */
+export function spreadPoint(base, centroid, k) {
+  return (base + (centroid - 0.5) * k + 0.5 * k) / (1 + k);
 }
 
 /* ---- Einfaerben -------------------------------------------------------
@@ -204,7 +242,7 @@ export const FILTERS = [
   { id: "camera", label: "nur eigene Aufnahmen", hint: "kein WhatsApp, keine Screenshots" },
 ];
 
-export function visibleMask(model, filters) {
+export function visibleMask(model, filters, hidden) {
   const mask = new Uint8Array(model.n).fill(1);
   const camIndex = model.channels.indexOf("camera");
   for (let i = 0; i < model.n; i++) {
@@ -212,9 +250,29 @@ export function visibleMask(model, filters) {
     const buried = filters.fold && f & FLAG.IN_STACK && !(f & FLAG.STACK_HEAD);
     const tidy = filters.open && tidiness(f) > 0;
     const foreign = filters.camera && model.ch[i] !== camIndex;
-    if (buried || tidy || foreign) mask[i] = 0;
+    // Weggeraeumtes bleibt weg, bis die Karte neu gerechnet wird. Ohne das
+    // stehen verschobene Screenshots bis zum naechsten atlas_build wieder da.
+    const gone = hidden && hidden.has(model.ids[i]);
+    if (buried || tidy || foreign || gone) mask[i] = 0;
   }
   return mask;
+}
+
+/** Wie viele Fotos ein Filter wegnimmt -- fuer eine ehrliche Beschriftung. */
+export function foldedAway(model) {
+  let n = 0;
+  for (let i = 0; i < model.n; i++) {
+    const f = model.fl[i];
+    if (f & FLAG.IN_STACK && !(f & FLAG.STACK_HEAD)) n++;
+  }
+  return n;
+}
+
+/** Alle sichtbaren Fotos eines Kontinents. */
+export function photosOfCluster(model, cluster, mask) {
+  const out = [];
+  for (let i = 0; i < model.n; i++) if (model.cl[i] === cluster && (!mask || mask[i])) out.push(i);
+  return out;
 }
 
 /** Alle sichtbaren Fotos, auf denen diese Person bestaetigt ist.

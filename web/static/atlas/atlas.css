@@ -26,6 +26,8 @@
 }
 #atlas-canvas:active { cursor: grabbing; }
 #atlas-canvas.lasso, #atlas-canvas.lasso:active { cursor: crosshair; }
+/* Über einem Kontinentnamen wählt der Klick den ganzen Kontinent. */
+#atlas-canvas.on-label { cursor: pointer; }
 
 /* ---- Werkzeugleiste ---------------------------------------------------- */
 
@@ -199,6 +201,67 @@
   text-align: left;
 }
 .atlas-actions button:hover { background: #2c3444; }
+/* Verschieben fasst Dateien an -- das darf nicht wie „Diaschau" aussehen. */
+.atlas-actions .danger-action { border-color: #6b3a38; color: #e8b0ad; }
+.atlas-actions .danger-action:hover { background: #3a2422; color: #ffd7d4; }
+
+/* ---- Auswahl eindampfen ------------------------------------------------ */
+
+.atlas-refine {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2a3140;
+}
+.atlas-refine button {
+  text-align: left;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid #2f3747;
+  color: #b3bccb;
+  font-size: .78rem;
+}
+.atlas-refine button:hover { background: #232a36; color: var(--text); }
+.atlas-refine:empty { display: none; }
+
+/* ---- Regler ------------------------------------------------------------ */
+
+.atlas-controls {
+  position: absolute;
+  right: 14px; bottom: 44px;
+  width: 240px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #171b22f2;
+  border: 1px solid #2a3140;
+  box-shadow: 0 16px 44px #0009;
+}
+.atlas-controls label { display: block; margin-bottom: 10px; cursor: help; }
+.atlas-controls label span {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: .78rem;
+  color: #b3bccb;
+  margin-bottom: 3px;
+}
+.atlas-controls label em {
+  font-style: normal;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.atlas-controls input[type="range"] { width: 100%; accent-color: var(--accent); }
+.atlas-controls .chip {
+  background: #232a36;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: .76rem;
+  color: var(--muted);
+}
+.atlas-controls .chip:hover { color: var(--text); }
 .atlas-actions .primary-action {
   background: var(--accent);
   color: #0b1020;

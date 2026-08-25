@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor } from "./model.js?v=2";
-import { thumbUrl } from "../core/api.js?v=2";
+import { colorFor, spreadPoint } from "./model.js?v=4";
+import { thumbUrl } from "../core/api.js?v=4";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -26,6 +26,11 @@ export function createScene(canvas, model, hooks = {}) {
   let colorMode = "kontinent";
   let mode = "fotos";       // "fotos" | "serien"
   let minEventSize = 3;
+  // Regler, die direkt aufs Zeichnen wirken. Keine Messung, Geschmack --
+  // deshalb einstellbar und nicht von mir festgelegt.
+  let spread = 0;      // Kontinente auseinanderziehen
+  let tileScale = 1;   // Kachelgroesse
+  let declutter = 0;   // Mindestabstand gezeichneter Bilder in Pixeln
   let mask = new Uint8Array(model.n).fill(1);
   let selection = null; // Set<number> oder null
   let lassoPath = null;
@@ -145,7 +150,11 @@ export function createScene(canvas, model, hooks = {}) {
 
   function pump() {
     while (inflight < MAX_INFLIGHT && queue.length) {
-      const job = queue.pop(); // zuletzt angefragt = gerade im Blick
+      // Der Reihe nach, nicht zuletzt-zuerst. Angefragt wird von der
+      // Bildmitte nach aussen; bei eingeschalteter Entzerrung sind die
+      // mittleren die *einzigen*, die gezeichnet werden. Auf einem Stapel
+      // laegen sie ganz unten und die Karte bliebe minutenlang leer.
+      const job = queue.shift();
       inflight++;
       const img = new Image();
       img.decoding = "async";
@@ -173,13 +182,25 @@ export function createScene(canvas, model, hooks = {}) {
     if (mix >= 1) {
       px.set(toX);
       py.set(toY);
+      applySpread();
       return false;
     }
     for (let i = 0; i < model.n; i++) {
       px[i] = fromX[i] + (toX[i] - fromX[i]) * mix;
       py[i] = fromY[i] + (toY[i] - fromY[i]) * mix;
     }
+    applySpread();
     return true;
+  }
+
+  function applySpread() {
+    if (!spread) return;
+    const cc = model.layouts[layout].centroids;
+    for (let i = 0; i < model.n; i++) {
+      const c = model.cl[i] * 2;
+      px[i] = spreadPoint(px[i], cc[c], spread);
+      py[i] = spreadPoint(py[i], cc[c + 1], spread);
+    }
   }
 
   function draw() {
@@ -268,10 +289,34 @@ export function createScene(canvas, model, hooks = {}) {
     }
     near.sort((a, b) => a[0] - b[0]);
 
-    const box = Math.max(22, Math.min(96, cam.scale / 90));
-    for (const [, i, sx, sy] of near.slice(0, MAX_THUMBS)) {
+    const box = Math.max(22, Math.min(96, cam.scale / 90)) * tileScale;
+    // Entzerren: in dichten Gegenden liegen tausend Bilder aufeinander und
+    // alles wird zu Brei. Wer zu nah an einem schon gezeichneten Bild liegt,
+    // wird uebersprungen -- dann bleibt bei *jeder* Vergroesserung lesbar,
+    // was zu sehen ist, statt erst ganz weit unten.
+    const grid = declutter > 0 ? new Set() : null;
+    const cell = Math.max(1, declutter);
+    // Mehr Bilder als Rasterfelder koennen ohnehin nicht gezeichnet werden --
+    // ohne diese Schranke fragt jeder Durchlauf tausende Vorschaubilder an,
+    // von denen die allermeisten sofort wieder verworfen werden.
+    const maxCells = grid
+      ? (Math.ceil(w / cell) + 2) * (Math.ceil(h / cell) + 2)
+      : Infinity;
+    let drawn = 0;
+    for (const [, i, sx, sy] of near) {
+      if (drawn >= MAX_THUMBS) break;
+      if (grid) {
+        if (grid.size >= maxCells) break;
+        const key = `${Math.round(sx / cell)}:${Math.round(sy / cell)}`;
+        if (grid.has(key)) continue;
+        grid.add(key);
+      }
       const img = imageFor(i, size);
+      // Der Platz bleibt belegt, auch wenn das Bild noch laedt: sonst
+      // uebernimmt bei jedem Ladevorgang ein anderes Foto die Stelle und
+      // die Karte flackert.
       if (!img) continue;
+      drawn++;
       const ar = img.naturalWidth / img.naturalHeight || 1;
       const bw = ar >= 1 ? box : box * ar;
       const bh = ar >= 1 ? box / ar : box;
@@ -324,6 +369,20 @@ export function createScene(canvas, model, hooks = {}) {
   }
 
   /** Naechste Serie zum Zeiger -- gewichtet, damit grosse Kacheln leichter treffen. */
+  /** Kontinentname unter dem Zeiger -- sein Schwerpunkt traegt die Schrift. */
+  function labelAt(sx, sy) {
+    if (mode === "serien" || cam.scale > 6000) return -1;
+    const cc = model.layouts[layout].centroids;
+    for (const c of model.clusters) {
+      const cx = toScreenX(spread ? spreadPoint(c.x, cc[c.i * 2], spread) : c.x);
+      const cy = toScreenY(spread ? spreadPoint(c.y, cc[c.i * 2 + 1], spread) : c.y);
+      const label = model.clusterLabel[c.i];
+      const half = label.length * 3.6 + 8;
+      if (Math.abs(sx - cx) <= half && Math.abs(sy - cy) <= 11) return c.i;
+    }
+    return -1;
+  }
+
   function nearestEvent(sx, sy) {
     let best = -1, bestD = Infinity;
     for (const ev of model.events) {
@@ -344,8 +403,10 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+    const cc = model.layouts[layout].centroids;
     for (const c of model.clusters) {
-      const sx = toScreenX(c.x), sy = toScreenY(c.y);
+      const sx = toScreenX(spread ? spreadPoint(c.x, cc[c.i * 2], spread) : c.x);
+      const sy = toScreenY(spread ? spreadPoint(c.y, cc[c.i * 2 + 1], spread) : c.y);
       if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
       const label = model.clusterLabel[c.i];
       const weak = c.cap_share < 0.15;
@@ -437,7 +498,9 @@ export function createScene(canvas, model, hooks = {}) {
     if (!drag) {
       if (sx < 0 || sy < 0 || sx > r.width || sy > r.height) return;
       if (mode === "serien") { hooks.onHoverEvent?.(nearestEvent(sx, sy), sx, sy); return; }
-      hooks.onHover?.(nearest(sx, sy), sx, sy);
+      const overLabel = labelAt(sx, sy) >= 0;
+      canvas.classList.toggle("on-label", overLabel);
+      hooks.onHover?.(overLabel ? -1 : nearest(sx, sy), sx, sy);
       return;
     }
     if (drag.kind === "lasso") {
@@ -464,6 +527,11 @@ export function createScene(canvas, model, hooks = {}) {
         if (ev >= 0) hooks.onPickEvent?.(ev, e.ctrlKey || e.metaKey);
         return;
       }
+      // Ein Klick auf den Kontinentnamen waehlt den ganzen Kontinent. Das ist
+      // die praezise Alternative zum Lasso: wo die Raender ineinander
+      // sprenkeln, erwischt ein gezogener Kreis immer zu viel.
+      const lab = labelAt(sx, sy);
+      if (lab >= 0) { hooks.onPickCluster?.(lab, e.shiftKey); return; }
       const i = nearest(sx, sy);
       // Strg/Cmd nimmt den Faden auf, statt das Bild zu oeffnen.
       if (i >= 0) (e.ctrlKey || e.metaKey ? hooks.onThread : hooks.onPick)?.(i);
@@ -501,6 +569,9 @@ export function createScene(canvas, model, hooks = {}) {
     setMask(m) { mask = m; schedule(); },
     setSelection(sel) { selection = sel; schedule(); },
     setMode(m) { mode = m; schedule(); },
+    setSpread(k) { spread = k; schedule(); },
+    setTileScale(k) { tileScale = k; schedule(); },
+    setDeclutter(px_) { declutter = px_; schedule(); },
     setMinEventSize(n) { minEventSize = n; schedule(); },
     get mode() { return mode; },
     setLassoMode(on) { lassoMode = on; canvas.classList.toggle("lasso", on); },

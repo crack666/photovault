@@ -6,13 +6,13 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=2";
-import { api, thumbUrl } from "../core/api.js?v=2";
+import { $, escapeHtml, num } from "../core/dom.js?v=4";
+import { api, thumbUrl } from "../core/api.js?v=4";
 import {
-  COLOR_MODES, FILTERS, FLAG, countVisible, legendFor, loadAtlas, personNames,
-  photosOfEvent, photosOfPerson, tidiness, visibleMask,
-} from "./model.js?v=2";
-import { createScene } from "./scene.js?v=2";
+  COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
+  personNames, photosOfCluster, photosOfEvent, photosOfPerson, tidiness, visibleMask,
+} from "./model.js?v=4";
+import { createScene } from "./scene.js?v=4";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -27,6 +27,31 @@ let colorMode = "kontinent";
 let showLightbox = () => {};
 let booted = false;
 
+/* Weggeräumtes. Die Karte ist ein Standbild: verschiebt man Fotos, stünden sie
+   bis zum nächsten `atlas_build` weiter da. Die UI merkt sich deshalb, was weg
+   ist — und vergisst es, sobald eine neue Karte gerechnet wurde. */
+const HIDDEN_KEY = "pv-atlas-hidden";
+let hidden = new Set();
+
+function loadHidden(builtAt) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HIDDEN_KEY) || "null");
+    if (raw && raw.builtAt === builtAt) return new Set(raw.ids);
+  } catch (e) { /* ein kaputter Eintrag ist kein Grund, die Ansicht zu verweigern */ }
+  return new Set();
+}
+
+function saveHidden() {
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify({ builtAt: model.builtAt, ids: [...hidden] }));
+  } catch (e) { /* voller Speicher darf die Karte nicht kippen */ }
+}
+
+/** Was gerade sichtbar ist. Einmal benannt, damit `hidden` nirgends vergessen wird. */
+function mask() {
+  return visibleMask(model, filters, hidden);
+}
+
 export async function initAtlas(deps = {}) {
   if (booted) { scene?.resize(); return; }
   showLightbox = deps.showLightbox || showLightbox;
@@ -40,6 +65,7 @@ export async function initAtlas(deps = {}) {
     return;
   }
   status.textContent = "";
+  hidden = loadHidden(model.builtAt);
   booted = true;
 
   buildToolbar();
@@ -49,6 +75,7 @@ export async function initAtlas(deps = {}) {
     onThread: (i) => followThread([i]),
     onHoverEvent: showEventHover,
     onPickEvent: openEvent,
+    onPickCluster: pickCluster,
     onLasso: (hit, subtract) => applyLasso(hit, subtract),
   });
   applyFilters();
@@ -99,9 +126,16 @@ function buildToolbar() {
     paintLegend();
   };
 
+  // Die Beschriftung nennt die Wirkung, nicht den Mechanismus: „Stapel falten"
+  // sagt niemandem, was passiert.
+  const folded = foldedAway(model);
   $("atlas-filters").innerHTML = FILTERS.map((f) =>
-    `<button class="chip" data-filter="${f.id}" title="${escapeHtml(f.hint)}">${f.label}</button>`
-  ).join("") + `<button class="chip" id="atlas-lasso" title="Auswahl mit der Maus umkreisen (oder Shift halten)">Lasso</button>`;
+    `<button class="chip" data-filter="${f.id}" title="${escapeHtml(f.hint)}">${
+      f.id === "fold" ? `Dubletten falten −${num(folded)}` : f.label}</button>`
+  ).join("")
+    + `<button class="chip" id="atlas-lasso" title="Auswahl umkreisen (oder Shift halten). Wo Ränder ineinander laufen, trifft ein Klick auf den Kontinentnamen genauer.">Lasso</button>`
+    + `<button class="chip" id="atlas-knobs" title="Wie weit auseinander, wie groß, wie überlappend">Darstellung</button>`
+    + `<button class="chip" id="atlas-reopen" title="Was ist noch offen?">Aufgaben</button>`;
   $("atlas-filters").onclick = (e) => {
     const b = e.target.closest("[data-filter]");
     if (b) {
@@ -111,10 +145,17 @@ function buildToolbar() {
       return;
     }
     if (e.target.id === "atlas-lasso") {
-      const on = e.target.classList.toggle("on");
-      scene.setLassoMode(on);
+      scene.setLassoMode(e.target.classList.toggle("on"));
+      return;
     }
+    if (e.target.id === "atlas-knobs") {
+      $("atlas-controls").classList.toggle("hidden", !e.target.classList.toggle("on"));
+      return;
+    }
+    if (e.target.id === "atlas-reopen") paintBriefing();
   };
+
+  buildControls();
 
   const jump = $("atlas-jump");
   jump.innerHTML = "<option value=''>Kontinent anfliegen …</option>" +
@@ -137,7 +178,7 @@ function buildToolbar() {
     ).join("");
   who.onchange = () => {
     if (who.value === "") { clearSelection(); return; }
-    selection = photosOfPerson(model, Number(who.value), visibleMask(model, filters));
+    selection = photosOfPerson(model, Number(who.value), mask());
     scene.setSelection(selection);
     paintSelection();
   };
@@ -147,20 +188,70 @@ function buildToolbar() {
     `${num(model.n)} Fotos · ${model.clusters.length} Kontinente · ${model.space.toUpperCase()} · ${model.builtAt.slice(0, 10)}`;
 }
 
+/* ---- Regler -----------------------------------------------------------
+   „Das exakt feinzutunen ist quasi unmöglich" — stimmt. Also nicht ich,
+   sondern der Betrachter: drei Werte, die unmittelbar aufs Zeichnen wirken
+   und nichts neu rechnen. */
+
+const KNOBS = [
+  {
+    id: "spread", label: "Kontinente auseinander", min: 0, max: 2, step: 0.05, start: 0,
+    hint: "Schiebt jeden Kontinent vom Zentrum weg und staucht danach alles zurück ins Bild. "
+        + "Innerhalb eines Kontinents bleibt die Anordnung, wie sie ist — nur die Ränder hören auf, ineinander zu sprenkeln.",
+    apply: (v) => scene.setSpread(v), fmt: (v) => (v ? `${v.toFixed(2)}×` : "aus"),
+  },
+  {
+    id: "declutter", label: "Bilder entzerren", min: 0, max: 90, step: 5, start: 0,
+    hint: "Mindestabstand in Pixeln. Was zu nah an einem schon gezeichneten Bild liegt, bleibt weg — "
+        + "dann ist auch in dichten Gegenden etwas zu erkennen, ohne ganz hineinzuzoomen.",
+    apply: (v) => scene.setDeclutter(v), fmt: (v) => (v ? `${v} px` : "aus"),
+  },
+  {
+    id: "tiles", label: "Kachelgröße", min: 0.4, max: 2.5, step: 0.1, start: 1,
+    hint: "Nur die Darstellung, nicht die Auswahl.",
+    apply: (v) => scene.setTileScale(v), fmt: (v) => `${v.toFixed(1)}×`,
+  },
+];
+
+function buildControls() {
+  const box = $("atlas-controls");
+  box.innerHTML = KNOBS.map((k) => `
+    <label title="${escapeHtml(k.hint)}">
+      <span>${k.label}<em id="k-${k.id}-out">${k.fmt(k.start)}</em></span>
+      <input type="range" id="k-${k.id}" min="${k.min}" max="${k.max}" step="${k.step}" value="${k.start}">
+    </label>`).join("") + `<button class="chip" id="k-reset">zurücksetzen</button>`;
+
+  for (const k of KNOBS) {
+    const el = $(`k-${k.id}`);
+    el.oninput = () => {
+      const v = Number(el.value);
+      $(`k-${k.id}-out`).textContent = k.fmt(v);
+      k.apply(v);
+    };
+  }
+  $("k-reset").onclick = () => {
+    for (const k of KNOBS) {
+      $(`k-${k.id}`).value = k.start;
+      $(`k-${k.id}-out`).textContent = k.fmt(k.start);
+      k.apply(k.start);
+    }
+  };
+}
+
 function applyFilters() {
-  const mask = visibleMask(model, filters);
-  scene.setMask(mask);
+  const m = mask();
+  scene.setMask(m);
   // Ausgewaehltes, das gerade weggefiltert wurde, gehoert nicht mehr dazu --
   // sonst faerbt eine Aktion Fotos, die niemand sieht.
   if (selection.size) {
-    selection = new Set([...selection].filter((i) => mask[i]));
+    selection = new Set([...selection].filter((i) => m[i]));
     scene.setSelection(selection);
     paintSelection();
   }
-  updateCount(mask);
+  updateCount(m);
 }
 
-function updateCount(mask) {
+function updateCount(m) {
   if (scene.mode === "serien") {
     const n = Number($("atlas-minsize").value);
     const sel = model.events.filter((e) => e.n >= n);
@@ -168,7 +259,10 @@ function updateCount(mask) {
       `${num(sel.length)} Serien · ${num(sel.reduce((a, e) => a + e.n, 0))} Fotos`;
     return;
   }
-  $("atlas-count").textContent = `${num(countVisible(mask || visibleMask(model, filters)))} sichtbar`;
+  const shown = countVisible(m || mask());
+  $("atlas-count").textContent = hidden.size
+    ? `${num(shown)} sichtbar · ${num(hidden.size)} weggeräumt`
+    : `${num(shown)} sichtbar`;
 }
 
 function paintLegend() {
@@ -230,7 +324,8 @@ function paintBriefing() {
     if (e.target.closest("[data-faces]")) {
       // Die naechste Arbeit liegt woanders -- dann soll die Karte dorthin
       // zeigen und nicht selbst so tun, als koennte sie Gesichter benennen.
-      selection = new Set(faces.filter((i) => visibleMask(model, filters)[i]));
+      const m = mask();
+      selection = new Set(faces.filter((i) => m[i]));
       scene.setSelection(selection);
       scene.focusSet([...selection]);
       paintSelection();
@@ -240,8 +335,8 @@ function paintBriefing() {
     const b = e.target.closest("[data-go]");
     if (!b) return;
     const c = model.clusters[Number(b.dataset.go)];
-    const mask = visibleMask(model, filters);
-    selection = new Set(untouched.filter((i) => model.cl[i] === c.i && mask[i]));
+    const m = mask();
+    selection = new Set(untouched.filter((i) => model.cl[i] === c.i && m[i]));
     scene.setSelection(selection);
     scene.focusCluster(c);
     paintSelection();
@@ -301,7 +396,7 @@ function showEventHover(e, sx, sy) {
 }
 
 function openEvent(e, select) {
-  const idx = photosOfEvent(model, e, visibleMask(model, filters));
+  const idx = photosOfEvent(model, e, mask());
   if (!idx.length) return;
   if (select) {
     // Strg: die Serie wird zur Auswahl -- ab hier greifen Notiz, Beschreibung
@@ -332,6 +427,26 @@ function applyLasso(hit, subtract) {
   paintSelection();
 }
 
+/** Ganzen Kontinent wählen — die genaue Alternative zum Lasso.
+
+    Wo die Ränder ineinander sprenkeln, erwischt ein gezogener Kreis immer zu
+    viel oder zu wenig. Der Kontinent ist dagegen exakt definiert: er kommt aus
+    demselben k-means, das auch seinen Namen trägt. */
+function pickCluster(c, add) {
+  const idx = photosOfCluster(model, c, mask());
+  if (!add) selection = new Set(idx);
+  else for (const i of idx) selection.add(i);
+  scene.setSelection(selection);
+  paintSelection();
+}
+
+/** Auswahl auf eine Teilmenge eindampfen. */
+function refine(keep) {
+  selection = new Set([...selection].filter(keep));
+  scene.setSelection(selection);
+  paintSelection();
+}
+
 function clearSelection() {
   const who = $("atlas-who");
   if (who) who.value = "";
@@ -358,6 +473,13 @@ function paintSelection() {
   const chans = [...new Set(list.map((i) => model.channels[model.ch[i]]))];
   const strip = list.slice(0, 10);
 
+  // Aus wie vielen Kontinenten stammt die Auswahl? Ein Lasso erwischt fast
+  // immer mehrere -- dann soll man sie eindampfen koennen, statt neu zu ziehen.
+  const perCluster = new Map();
+  for (const i of list) perCluster.set(model.cl[i], (perCluster.get(model.cl[i]) || 0) + 1);
+  const ranked = [...perCluster.entries()].sort((a, b) => b[1] - a[1]);
+  const [topCluster, topCount] = ranked[0];
+
   panel.innerHTML = `
     <header>
       <b>${num(selection.size)} Fotos</b>
@@ -370,16 +492,25 @@ function paintSelection() {
     <dl>
       <dt>Jahre</dt><dd>${years.size ? `${Math.min(...years)}–${Math.max(...years)}` : "—"}</dd>
       <dt>Herkunft</dt><dd>${escapeHtml(chans.join(", "))}</dd>
+      <dt>Kontinente</dt><dd>${num(ranked.length)}</dd>
       <dt>mit Person</dt><dd>${num(withPerson)}</dd>
       <dt>mit Beschreibung</dt><dd>${num(withCap)}</dd>
       <dt>unberührt</dt><dd>${num(untouched)}</dd>
     </dl>
+    <div class="atlas-refine">
+      ${ranked.length > 1
+        ? `<button data-only="cluster">nur „${escapeHtml(model.clusterLabel[topCluster])}" (${num(topCount)})</button>` : ""}
+      <button data-all="cluster">ganzer Kontinent „${escapeHtml(model.clusterLabel[topCluster])}" (${num(model.clusters[topCluster].n)})</button>
+      ${untouched && untouched < selection.size
+        ? `<button data-only="open">nur unberührte (${num(untouched)})</button>` : ""}
+    </div>
     <div class="atlas-actions">
       <button id="atlas-more" class="primary-action">Mehr davon →</button>
       ${history.length ? `<button id="atlas-back">← zurück zum vorigen Stand</button>` : ""}
       <button id="atlas-show">Diaschau</button>
       <button id="atlas-note">Notiz anhängen …</button>
       <button id="atlas-cap">Beschreibung setzen …</button>
+      <button id="atlas-move" class="danger-action">In eigenen Ordner legen …</button>
     </div>
     <label class="atlas-reembed">
       <input type="checkbox" id="atlas-reembed"> Textvektoren sofort neu rechnen
@@ -393,6 +524,93 @@ function paintSelection() {
   $("atlas-show").onclick = () => showLightbox(selectedIds().map((id) => ({ id })), 0);
   $("atlas-note").onclick = addNote;
   $("atlas-cap").onclick = setCaption;
+  $("atlas-move").onclick = moveToFolder;
+  panel.querySelector(".atlas-refine").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.only === "cluster") refine((i) => model.cl[i] === topCluster);
+    else if (b.dataset.only === "open") refine((i) => tidiness(model.fl[i]) === 0);
+    else if (b.dataset.all === "cluster") pickCluster(topCluster, false);
+  };
+}
+
+/* ---- Wegräumen --------------------------------------------------------
+   Screenshots und Dokumente sind ein eigenes Thema und gehören nicht in
+   dieselbe Sammlung wie die Fotos von Menschen. Löschen wäre zu viel; sie in
+   einen eigenen Ordner zu legen ist genau richtig — danach fallen sie aus der
+   Bibliothek heraus und aus der Karte auch.
+
+   Zwei Schritte, weil das Verschieben Dateien anfasst: erst der Plan, dann
+   die Bestätigung. Bei zweieinhalbtausend Dateien ist das kein Komfort. */
+
+/** Ordnername oder ganzer Pfad. Ein Name landet im Bibliotheksordner --
+    das ist richtig für ein Album, aber falsch für Screenshots, die gerade
+    *heraus* sollen. Ein absoluter Pfad bestimmt das Ziel genau. */
+function splitDest(input) {
+  const value = input.trim().replace(/[/\\]+$/, "");
+  if (!value.startsWith("/")) return { folder_name: value };
+  const cut = value.lastIndexOf("/");
+  return { dest_parent: value.slice(0, cut) || "/", folder_name: value.slice(cut + 1) };
+}
+
+async function moveToFolder() {
+  const input = prompt(
+    `${num(selection.size)} Fotos in einen eigenen Ordner legen.\n\n` +
+    `Nur ein Name landet im Bibliotheksordner.\n` +
+    `Ein ganzer Pfad (mit / beginnend) bestimmt das Ziel genau — ` +
+    `für Screenshots meist besser, damit sie aus der Bibliothek herausfallen.`,
+    "/mnt/photo/Sonstiges/Screenshots",
+  );
+  if (!input || !input.trim()) return;
+  const target = splitDest(input);
+  if (!target.folder_name) return;
+
+  const msg = $("atlas-msg");
+  const ids = selectedIds();
+  msg.textContent = "plant …";
+  let plan;
+  try {
+    plan = await api("/api/photos/relocate", {
+      method: "POST",
+      body: JSON.stringify({ photo_ids: ids, ...target, confirm: false }),
+    });
+  } catch (e) {
+    msg.textContent = `Geht nicht: ${e.message}`;
+    return;
+  }
+
+  const skipped = plan.skipped?.length || 0;
+  const ok = confirm(
+    `${num(plan.photos)} Dateien verschieben nach:\n${plan.dest}\n\n` +
+    (skipped ? `${num(skipped)} bleiben liegen (schon dort, oder Datei fehlt).\n\n` : "") +
+    `Die Dateien werden bewegt, nicht kopiert. Fortfahren?`,
+  );
+  if (!ok) { msg.textContent = "abgebrochen"; return; }
+
+  msg.textContent = "verschiebt …";
+  try {
+    const res = await api("/api/photos/relocate", {
+      method: "POST",
+      body: JSON.stringify({
+        photo_ids: ids,
+        ...target,
+        confirm: true,
+        reembed: $("atlas-reembed").checked,
+      }),
+    });
+    // Verschobene Fotos haben im Index eine neue ID (der Pfad-Hash aendert
+    // sich). Fuer die Karte zaehlt nur: die alten stehen dort nicht mehr.
+    for (const id of ids) hidden.add(id);
+    saveHidden();
+    clearSelection();
+    applyFilters();
+    $("atlas-msg").textContent =
+      `${num(res.migrated ?? 0)} verschoben nach ${res.dest}.`
+      + (res.failed?.length ? ` ${num(res.failed.length)} fehlgeschlagen.` : "")
+      + ` Beim nächsten atlas_build sind sie auch aus der Karte.`;
+  } catch (e) {
+    msg.textContent = `Verschieben fehlgeschlagen: ${e.message}`;
+  }
 }
 
 async function addNote() {
@@ -463,15 +681,15 @@ async function followThread(seedIndices, opts = {}) {
     return;
   }
 
-  const mask = visibleMask(model, filters);
-  const hit = new Set(seedIndices.filter((i) => mask[i]));
+  const m = mask();
+  const hit = new Set(seedIndices.filter((i) => m[i]));
   let unbekannt = 0;
   for (const r of res.results) {
     const i = model.indexOfId.get(r.id);
     // Die Karte kann aelter sein als der Index -- neu Hinzugekommenes hat
     // hier noch keinen Platz. Das sagen wir, statt es zu verschweigen.
     if (i === undefined) { unbekannt++; continue; }
-    if (mask[i]) hit.add(i);
+    if (m[i]) hit.add(i);
   }
   history.push(new Set(selection));
   selection = hit;
@@ -508,9 +726,9 @@ function openAt(i) {
 }
 
 function indicesOfCluster(c) {
-  const mask = visibleMask(model, filters);
   const out = [];
-  for (let k = 0; k < model.n; k++) if (mask[k] && model.cl[k] === c) out.push(k);
+  const m = mask();
+  for (let k = 0; k < model.n; k++) if (m[k] && model.cl[k] === c) out.push(k);
   return out;
 }
 

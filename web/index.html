@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
   <link rel="stylesheet" href="/static/styles.css?v=9" />
-  <link rel="stylesheet" href="/static/atlas/atlas.css?v=8" />
+  <link rel="stylesheet" href="/static/atlas/atlas.css?v=9" />
 </head>
 <body>
   <header class="top">
@@ -326,6 +326,7 @@
         <button class="chip" id="atlas-reset" title="Alles zeigen (Taste 0)">Übersicht</button>
       </div>
 
+      <div class="atlas-controls hidden" id="atlas-controls"></div>
       <aside class="atlas-brief hidden" id="atlas-brief"></aside>
       <div class="atlas-legend hidden" id="atlas-legend"></div>
       <div class="atlas-hover hidden" id="atlas-hover"></div>
@@ -335,7 +336,7 @@
     </div>
   </main>
 
-  <script type="module" src="/static/app.js?v=16"></script>
+  <script type="module" src="/static/app.js?v=18"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->
