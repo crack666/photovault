@@ -40,6 +40,9 @@ export async function loadAtlas() {
     clusters: raw.clusters,
     events: raw.events || [],
     ev: Int32Array.from(raw.ev || []),
+    root: raw.root || "",
+    spaces: raw.spaces || [],
+    sp: Uint8Array.from(raw.sp || []),
     x: Float32Array.from(raw.x),
     y: Float32Array.from(raw.y),
     t: Int32Array.from(raw.t),
@@ -242,18 +245,39 @@ export const FILTERS = [
   { id: "camera", label: "nur eigene Aufnahmen", hint: "kein WhatsApp, keine Screenshots" },
 ];
 
+/* ---- Bereiche ---------------------------------------------------------
+   „Exkludieren" gibt es hier bewusst nicht. Ein Bereich ist kein Merker,
+   sondern der Ort auf der Platte -- die erste Ordnerebene unter der Wurzel.
+   Das loest zwei Fragen, an denen ein Flag scheitert:
+
+   *Wieder hereinnehmen* ist dieselbe Handlung wie Herausnehmen, nur in die
+   andere Richtung: zurueckverschieben. Es gibt keinen zweiten Zustand, der
+   mit der Wirklichkeit auseinanderlaufen koennte.
+
+   *Wovon ausgeschlossen?* muss nicht global entschieden werden. Jede Ansicht
+   filtert selbst, sichtbar und umschaltbar, statt dass irgendwo ein Haken
+   still ueberall wirkt. */
+
+export function spaceCounts(model) {
+  const counts = new Map();
+  for (let i = 0; i < model.n; i++) counts.set(model.sp[i], (counts.get(model.sp[i]) || 0) + 1);
+  return counts;
+}
+
 export function visibleMask(model, filters, hidden) {
   const mask = new Uint8Array(model.n).fill(1);
   const camIndex = model.channels.indexOf("camera");
+  const spacesOff = filters.spacesOff;
   for (let i = 0; i < model.n; i++) {
     const f = model.fl[i];
     const buried = filters.fold && f & FLAG.IN_STACK && !(f & FLAG.STACK_HEAD);
     const tidy = filters.open && tidiness(f) > 0;
     const foreign = filters.camera && model.ch[i] !== camIndex;
+    const otherSpace = spacesOff && spacesOff.has(model.sp[i]);
     // Weggeraeumtes bleibt weg, bis die Karte neu gerechnet wird. Ohne das
     // stehen verschobene Screenshots bis zum naechsten atlas_build wieder da.
     const gone = hidden && hidden.has(model.ids[i]);
-    if (buried || tidy || foreign || gone) mask[i] = 0;
+    if (buried || tidy || foreign || otherSpace || gone) mask[i] = 0;
   }
   return mask;
 }

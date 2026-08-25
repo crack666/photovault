@@ -37,7 +37,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
+  gap: 20px 16px;
   padding: 8px 10px;
   border-radius: 14px;
   background: #171b22e6;
@@ -48,38 +48,93 @@
 .atlas-group { display: flex; align-items: center; gap: 4px; }
 .atlas-spacer { flex: 1; }
 
-.atlas-label {
-  color: var(--muted);
-  font-size: .74rem;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  margin-right: 2px;
+/* Jede Gruppe sagt, was sie ist. Ohne die Überschrift muss man raten, ob
+   „Zustand" eine Ebene, eine Farbe oder ein Filter ist. */
+.atlas-seg, .atlas-toggles, .atlas-tools, .atlas-picks {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
+.atlas-seg::before, .atlas-toggles::before, .atlas-tools::before {
+  content: attr(data-group);
+  position: absolute;
+  top: -13px; left: 2px;
+  font-size: .58rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #5d6773;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.atlas-bar { padding-top: 18px; }
 
-.atlas-bar .chip {
-  background: #232a36;
-  color: #cdd5e1;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-size: .86rem;
+/* „Genau eines" — zusammenhängender Umschalter, geteilter Rahmen. */
+.atlas-seg { border: 1px solid #333c4d; border-radius: 8px; overflow: hidden; }
+.atlas-seg .chip {
+  background: transparent;
+  color: #97a2b2;
+  border: 0;
+  border-radius: 0;
+  padding: 5px 11px;
+  font-size: .84rem;
   cursor: pointer;
 }
-.atlas-bar .chip:hover { background: #2c3444; color: var(--text); }
-.atlas-bar .chip.on {
-  background: var(--accent);
-  color: #0b1020;
-  font-weight: 600;
+.atlas-seg .chip + .chip { border-left: 1px solid #333c4d; }
+.atlas-seg .chip:hover { background: #232a36; color: var(--text); }
+.atlas-seg .chip.on { background: var(--accent); color: #0b1020; font-weight: 600; }
+
+/* „An oder aus" — einzelne Schalter, aus = hohl, an = gefüllt. */
+.atlas-toggles { gap: 5px; }
+.tog {
+  background: transparent;
+  color: #8e99a9;
+  border: 1px dashed #3a4353;
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: .82rem;
+  cursor: pointer;
+}
+.tog b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .8; }
+.tog:hover { border-color: #55617a; color: var(--text); }
+.tog.on {
+  background: #253243;
+  border-style: solid;
+  border-color: #4a6a9a;
+  color: #dce6f4;
 }
 
-.atlas-jump {
+/* „Tut etwas" — Werkzeug mit Zeichen, eckig, deutlich anders als die Runden. */
+.atlas-tools { gap: 4px; }
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e2532;
+  color: #b9c3d2;
+  border: 1px solid #3d4759;
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: .82rem;
+  cursor: pointer;
+}
+.tool i { font-style: normal; font-size: .95rem; line-height: 1; opacity: .75; }
+.tool:hover { background: #2a3342; color: var(--text); border-color: #55617a; }
+.tool.on {
+  background: #3a3020;
+  border-color: #8a6d34;
+  color: #f0dcb0;
+}
+.tool.on i { opacity: 1; }
+
+.atlas-picks { gap: 5px; }
+.atlas-select {
   background: #232a36;
   color: #cdd5e1;
   border: 1px solid #2f3747;
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: .86rem;
-  max-width: 240px;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: .82rem;
+  max-width: 210px;
 }
 
 .atlas-count { color: var(--muted); font-size: .84rem; }

@@ -35,6 +35,7 @@ import collections
 import json
 import logging
 import math
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -136,6 +137,7 @@ def load_points(qc: Any, space: str, limit: int | None = None) -> tuple[np.ndarr
                     "gps": payload.get("gps"),
                     "face_count": int(payload.get("face_count") or 0),
                     "folder": payload.get("folder_name") or "",
+                    "file_path": payload.get("file_path") or "",
                 }
             )
         if offset is None or (limit and len(meta) >= limit):
@@ -348,6 +350,43 @@ def fallback_terms(labels: np.ndarray, meta: list[dict], c: int) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# Bereiche
+# --------------------------------------------------------------------------
+
+def split_spaces(meta: list[dict]) -> tuple[str, list[str], list[int]]:
+    """Die erste Ordnerebene unter der gemeinsamen Wurzel ist der Bereich.
+
+    Kein neues Feld, keine zweite Wahrheit: der Bereich *ist*, wo die Datei
+    liegt. Verschiebt man ein Foto, wechselt es den Bereich -- und genau das
+    ist der Zweck. An diesem Bestand ergibt das `Handys` (der Dump, aus dem
+    aufgeraeumt wird), `Fotos` (die Bibliothek) und `Sonstiges` (was
+    herausgezogen wurde).
+
+    Der Bereich beantwortet die Frage, die eine Bedeutungskarte allein nicht
+    beantworten kann: Screenshots und Dokumente *sind* interessant -- nur
+    nicht zwischen den Fotos von Menschen.
+    """
+    paths = [m["file_path"] for m in meta if m["file_path"]]
+    if not paths:
+        return "", ["?"], [0] * len(meta)
+    root = os.path.commonprefix(paths).rsplit("/", 1)[0]
+    names: list[str] = []
+    index: dict[str, int] = {}
+    out: list[int] = []
+    for m in meta:
+        path = m["file_path"] or ""
+        rest = path[len(root):].strip("/") if path.startswith(root) else path.strip("/")
+        name = rest.split("/")[0] if rest else "?"
+        if name not in index:
+            index[name] = len(names)
+            names.append(name)
+        out.append(index[name])
+    logger.info("Bereiche unter %s: %s", root or "/",
+                ", ".join(f"{n} {out.count(i)}" for i, n in enumerate(names)))
+    return root, names, out
+
+
+# --------------------------------------------------------------------------
 # Ereignisse
 # --------------------------------------------------------------------------
 
@@ -455,6 +494,7 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
     heads = pick_stack_heads(roots, meta)
     sizes = collections.Counter(roots.tolist())
 
+    root, spaces, space_of_photo = split_spaces(meta)
     events, event_of_photo = build_events(meta, coords)
     labels = kmeans_clusters(Xn, k)
     label_info = label_clusters(labels, meta, k)
@@ -502,6 +542,8 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
         "dup_threshold": dup_threshold,
         "channels": channels,
         "persons": people,
+        "root": root,
+        "spaces": spaces,
         "clusters": clusters,
         "events": events,
         "ids": [m["id"] for m in meta],
@@ -517,6 +559,7 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
         "fc": [min(m["face_count"], 255) for m in meta],
         "pe": [[person_index[n] for n in m["person_names"]] for m in meta],
         "ev": event_of_photo,
+        "sp": space_of_photo,
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -535,6 +578,12 @@ def report(payload: dict) -> None:
         return f"{hit:>6} ({100 * hit / n:4.1f}%)"
 
     print(f"\nKarte: {n} Fotos aus {payload['space']}-Vektoren, {len(payload['clusters'])} Kontinente")
+    counts = collections.Counter(payload["sp"])
+    bereiche = " · ".join(
+        f"{name} {counts[i]}" for i, name in enumerate(payload["spaces"]) if counts[i]
+    )
+    print(f"  Bereiche unter {payload['root'] or '/'}: {bereiche}")
+    print(f"  Serien            {len(payload['events']):>6}")
     print(f"  benannte Person   {share(FLAG_PERSON)}")
     print(f"  Beschreibung      {share(FLAG_CAPTION)}")
     print(f"  Datum aus EXIF    {share(FLAG_EXIF_DATE)}")

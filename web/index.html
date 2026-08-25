@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
   <link rel="stylesheet" href="/static/styles.css?v=9" />
-  <link rel="stylesheet" href="/static/atlas/atlas.css?v=9" />
+  <link rel="stylesheet" href="/static/atlas/atlas.css?v=10" />
 </head>
 <body>
   <header class="top">
@@ -307,23 +307,31 @@
     <div class="atlas-wrap">
       <canvas id="atlas-canvas"></canvas>
 
+      <!-- Drei Sorten Bedienelement, drei Erscheinungsbilder: „genau eines"
+           als zusammenhängender Umschalter, „an oder aus" als einzelne
+           Schalter, „tut etwas" als Werkzeug mit Zeichen. Vorher sahen alle
+           gleich aus und man musste durch Ausprobieren herausfinden, was was
+           ist. -->
       <div class="atlas-bar">
-        <div class="atlas-group" id="atlas-levels"></div>
-        <select id="atlas-minsize" class="atlas-jump hidden" title="Kleine Serien ausblenden">
+        <div class="atlas-seg" data-group="Ebene" id="atlas-levels"></div>
+        <select id="atlas-minsize" class="atlas-select hidden" title="Kleine Serien ausblenden">
           <option value="2">ab 2 Fotos</option>
           <option value="3" selected>ab 3 Fotos</option>
           <option value="5">ab 5 Fotos</option>
           <option value="8">ab 8 Fotos</option>
           <option value="15">ab 15 Fotos</option>
         </select>
-        <div class="atlas-group" id="atlas-lenses"></div>
-        <div class="atlas-group" id="atlas-colors"></div>
-        <div class="atlas-group" id="atlas-filters"></div>
-        <select id="atlas-jump" class="atlas-jump"></select>
-        <select id="atlas-who" class="atlas-jump"></select>
+        <div class="atlas-seg" data-group="Anordnung" id="atlas-lenses"></div>
+        <div class="atlas-seg" data-group="Farbe" id="atlas-colors"></div>
+        <div class="atlas-toggles" data-group="Bereich" id="atlas-spaces"></div>
+        <div class="atlas-toggles" data-group="Filter" id="atlas-filters"></div>
+        <div class="atlas-picks">
+          <select id="atlas-jump" class="atlas-select"></select>
+          <select id="atlas-who" class="atlas-select"></select>
+        </div>
         <span class="atlas-spacer"></span>
         <span class="atlas-count" id="atlas-count"></span>
-        <button class="chip" id="atlas-reset" title="Alles zeigen (Taste 0)">Übersicht</button>
+        <div class="atlas-tools" data-group="Werkzeug" id="atlas-tools"></div>
       </div>
 
       <div class="atlas-controls hidden" id="atlas-controls"></div>
@@ -336,7 +344,7 @@
     </div>
   </main>
 
-  <script type="module" src="/static/app.js?v=18"></script>
+  <script type="module" src="/static/app.js?v=20"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

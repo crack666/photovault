@@ -6,23 +6,50 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=4";
-import { api, thumbUrl } from "../core/api.js?v=4";
+import { $, escapeHtml, num } from "../core/dom.js?v=6";
+import { api, thumbUrl } from "../core/api.js?v=6";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
-  personNames, photosOfCluster, photosOfEvent, photosOfPerson, tidiness, visibleMask,
-} from "./model.js?v=4";
-import { createScene } from "./scene.js?v=4";
+  personNames, photosOfCluster, photosOfEvent, photosOfPerson, spaceCounts, tidiness,
+  visibleMask,
+} from "./model.js?v=6";
+import { createScene } from "./scene.js?v=6";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
   { id: "zeit", label: "Zeit × Bedeutung", hint: "waagerecht die Jahre, senkrecht dieselbe Bedeutungsachse" },
 ];
 
+/* Werkzeuge -- absichtlich anders gebaut als die Umschalter darüber: sie
+   verändern nicht, *was* man sieht, sondern *wie* man arbeitet. */
+const TOOLS = [
+  {
+    id: "atlas-lasso", glyph: "◌", label: "Lasso",
+    hint: "Auswahl umkreisen (oder Shift halten). Wo Ränder ineinander laufen, "
+        + "trifft ein Klick auf den Kontinentnamen genauer.",
+    run: (b) => scene.setLassoMode(b.classList.toggle("on")),
+  },
+  {
+    id: "atlas-knobs", glyph: "◑", label: "Darstellung",
+    hint: "Wie weit auseinander, wie groß, wie überlappend",
+    run: (b) => $("atlas-controls").classList.toggle("hidden", !b.classList.toggle("on")),
+  },
+  {
+    id: "atlas-reopen", glyph: "◆", label: "Aufgaben",
+    hint: "Was ist noch offen?",
+    run: () => paintBriefing(),
+  },
+  {
+    id: "atlas-reset", glyph: "⊙", label: "Übersicht",
+    hint: "Alles zeigen (Taste 0)",
+    run: () => { scene.fitAll(); clearSelection(); },
+  },
+];
+
 let model = null;
 let scene = null;
 let selection = new Set();
-let filters = { fold: false, open: false, camera: false };
+let filters = { fold: false, open: false, camera: false, spacesOff: new Set() };
 let colorMode = "kontinent";
 let showLightbox = () => {};
 let booted = false;
@@ -114,7 +141,9 @@ function buildToolbar() {
   const min = $("atlas-minsize");
   min.onchange = () => { scene.setMinEventSize(Number(min.value)); updateCount(); };
 
-  $("atlas-colors").innerHTML = "<span class='atlas-label'>Farbe</span>" + COLOR_MODES.map((m, i) =>
+  // Die Gruppenüberschrift kommt aus dem `data-group` im HTML, nicht aus einem
+  // eingeschobenen <span> -- sonst sitzt sie in der Reihe statt darüber.
+  $("atlas-colors").innerHTML = COLOR_MODES.map((m, i) =>
     `<button class="chip${i === 0 ? " on" : ""}" data-color="${m.id}">${m.label}</button>`
   ).join("");
   $("atlas-colors").onclick = (e) => {
@@ -126,33 +155,47 @@ function buildToolbar() {
     paintLegend();
   };
 
+  // Bereiche: die erste Ordnerebene auf der Platte. Ausschalten heisst
+  // „gerade nicht ansehen", nicht „ausgeschlossen" -- ein Klick nimmt sie
+  // wieder herein, und in Suche und Serien stehen sie unverändert.
+  const perSpace = spaceCounts(model);
+  $("atlas-spaces").innerHTML = model.spaces.map((name, i) =>
+    perSpace.get(i)
+      ? `<button class="tog on" data-space="${i}" title="${escapeHtml(model.root)}/${escapeHtml(name)} — Klick blendet aus, erneuter Klick zeigt wieder">${escapeHtml(name)} <b>${num(perSpace.get(i))}</b></button>`
+      : ""
+  ).join("");
+  $("atlas-spaces").onclick = (e) => {
+    const b = e.target.closest("[data-space]");
+    if (!b) return;
+    const i = Number(b.dataset.space);
+    if (filters.spacesOff.has(i)) filters.spacesOff.delete(i);
+    else filters.spacesOff.add(i);
+    b.classList.toggle("on", !filters.spacesOff.has(i));
+    applyFilters();
+  };
+
   // Die Beschriftung nennt die Wirkung, nicht den Mechanismus: „Stapel falten"
   // sagt niemandem, was passiert.
   const folded = foldedAway(model);
   $("atlas-filters").innerHTML = FILTERS.map((f) =>
-    `<button class="chip" data-filter="${f.id}" title="${escapeHtml(f.hint)}">${
-      f.id === "fold" ? `Dubletten falten −${num(folded)}` : f.label}</button>`
-  ).join("")
-    + `<button class="chip" id="atlas-lasso" title="Auswahl umkreisen (oder Shift halten). Wo Ränder ineinander laufen, trifft ein Klick auf den Kontinentnamen genauer.">Lasso</button>`
-    + `<button class="chip" id="atlas-knobs" title="Wie weit auseinander, wie groß, wie überlappend">Darstellung</button>`
-    + `<button class="chip" id="atlas-reopen" title="Was ist noch offen?">Aufgaben</button>`;
+    `<button class="tog" data-filter="${f.id}" title="${escapeHtml(f.hint)}">${
+      f.id === "fold" ? `Dubletten falten <b>−${num(folded)}</b>` : f.label}</button>`
+  ).join("");
   $("atlas-filters").onclick = (e) => {
     const b = e.target.closest("[data-filter]");
-    if (b) {
-      filters[b.dataset.filter] = !filters[b.dataset.filter];
-      b.classList.toggle("on", filters[b.dataset.filter]);
-      applyFilters();
-      return;
-    }
-    if (e.target.id === "atlas-lasso") {
-      scene.setLassoMode(e.target.classList.toggle("on"));
-      return;
-    }
-    if (e.target.id === "atlas-knobs") {
-      $("atlas-controls").classList.toggle("hidden", !e.target.classList.toggle("on"));
-      return;
-    }
-    if (e.target.id === "atlas-reopen") paintBriefing();
+    if (!b) return;
+    filters[b.dataset.filter] = !filters[b.dataset.filter];
+    b.classList.toggle("on", filters[b.dataset.filter]);
+    applyFilters();
+  };
+
+  $("atlas-tools").innerHTML = TOOLS.map((t) =>
+    `<button class="tool" id="${t.id}" title="${escapeHtml(t.hint)}"><i>${t.glyph}</i>${t.label}</button>`
+  ).join("");
+  $("atlas-tools").onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    TOOLS.find((t) => t.id === b.id)?.run(b);
   };
 
   buildControls();
@@ -183,7 +226,6 @@ function buildToolbar() {
     paintSelection();
   };
 
-  $("atlas-reset").onclick = () => { scene.fitAll(); clearSelection(); };
   $("atlas-built").textContent =
     `${num(model.n)} Fotos · ${model.clusters.length} Kontinente · ${model.space.toUpperCase()} · ${model.builtAt.slice(0, 10)}`;
 }
@@ -543,9 +585,8 @@ function paintSelection() {
    Zwei Schritte, weil das Verschieben Dateien anfasst: erst der Plan, dann
    die Bestätigung. Bei zweieinhalbtausend Dateien ist das kein Komfort. */
 
-/** Ordnername oder ganzer Pfad. Ein Name landet im Bibliotheksordner --
-    das ist richtig für ein Album, aber falsch für Screenshots, die gerade
-    *heraus* sollen. Ein absoluter Pfad bestimmt das Ziel genau. */
+/** Ordnername oder ganzer Pfad. Ein Name landet im Bibliotheksordner,
+    ein absoluter Pfad bestimmt das Ziel genau. */
 function splitDest(input) {
   const value = input.trim().replace(/[/\\]+$/, "");
   if (!value.startsWith("/")) return { folder_name: value };
@@ -553,13 +594,36 @@ function splitDest(input) {
   return { dest_parent: value.slice(0, cut) || "/", folder_name: value.slice(cut + 1) };
 }
 
+/** Ordnername aus dem, was ausgewählt ist.
+
+    Der Kontinentname kommt aus den Captions und beschreibt genau das, was in
+    der Auswahl steckt: „Screenshot · anzeigt" wird zu „Screenshots".
+    Zusammengesetzte Namen taugen nicht als Ordner, deshalb nur das erste
+    Wort, groß und im Plural. */
+function suggestFolder() {
+  const perCluster = new Map();
+  for (const i of selection) perCluster.set(model.cl[i], (perCluster.get(model.cl[i]) || 0) + 1);
+  const top = [...perCluster.entries()].sort((a, b) => b[1] - a[1])[0];
+  const word = model.clusters[top[0]].terms[0] || "Aussortiert";
+  const name = word.charAt(0).toUpperCase() + word.slice(1);
+  return /(s|en|er)$/.test(name) ? name : `${name}s`;
+}
+
 async function moveToFolder() {
+  const suggestion = suggestFolder();
+  // Zwei Ziele, ausdrücklich benannt. Beides ist ein Umzug auf der Platte --
+  // der Unterschied ist nur, ob PhotoVault den Ordner noch zu seinem
+  // Arbeitsbereich zählt.
+  const inside = `${model.root}/Fotos/${suggestion}`;
+  const outside = `${model.root}/Sonstiges/${suggestion}`;
   const input = prompt(
-    `${num(selection.size)} Fotos in einen eigenen Ordner legen.\n\n` +
-    `Nur ein Name landet im Bibliotheksordner.\n` +
-    `Ein ganzer Pfad (mit / beginnend) bestimmt das Ziel genau — ` +
-    `für Screenshots meist besser, damit sie aus der Bibliothek herausfallen.`,
-    "/mnt/photo/Sonstiges/Screenshots",
+    `${num(selection.size)} Fotos verschieben (Move, kein Copy).\n\n` +
+    `Im Arbeitsbereich — bleibt auf der Karte, nur woanders einsortiert:\n` +
+    `  ${inside}\n\n` +
+    `Daneben — verschwindet beim nächsten atlas_build von der Karte:\n` +
+    `  ${outside}\n\n` +
+    `Pfad bearbeiten oder bestätigen. Ein Name ohne / landet im Bibliotheksordner.`,
+    outside,
   );
   if (!input || !input.trim()) return;
   const target = splitDest(input);
@@ -598,16 +662,27 @@ async function moveToFolder() {
         reembed: $("atlas-reembed").checked,
       }),
     });
-    // Verschobene Fotos haben im Index eine neue ID (der Pfad-Hash aendert
-    // sich). Fuer die Karte zaehlt nur: die alten stehen dort nicht mehr.
-    for (const id of ids) hidden.add(id);
-    saveHidden();
+    // Ob sie von der Karte verschwinden, entscheidet das Ziel -- nicht die
+    // Handlung. Bleibt der Bereich sichtbar, bleiben auch die Fotos: sie sind
+    // nur woanders einsortiert.
+    const bereich = (res.dest || "").startsWith(model.root)
+      ? res.dest.slice(model.root.length).replace(/^\/+/, "").split("/")[0]
+      : "";
+    const stays = model.spaces.some(
+      (name, i) => name === bereich && !filters.spacesOff.has(i),
+    );
+    if (!stays) {
+      for (const id of ids) hidden.add(id);
+      saveHidden();
+    }
     clearSelection();
     applyFilters();
     $("atlas-msg").textContent =
       `${num(res.migrated ?? 0)} verschoben nach ${res.dest}.`
       + (res.failed?.length ? ` ${num(res.failed.length)} fehlgeschlagen.` : "")
-      + ` Beim nächsten atlas_build sind sie auch aus der Karte.`;
+      + (stays
+        ? ` Bereich „${bereich}" bleibt sichtbar — beim nächsten atlas_build stehen sie dort.`
+        : ` Von der Karte genommen. Nach dem nächsten atlas_build liegen sie im Bereich „${bereich}".`);
   } catch (e) {
     msg.textContent = `Verschieben fehlgeschlagen: ${e.message}`;
   }
