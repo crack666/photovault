@@ -43,6 +43,8 @@ export async function loadAtlas() {
     root: raw.root || "",
     spaces: raw.spaces || [],
     sp: Uint8Array.from(raw.sp || []),
+    tags: raw.tags || [],
+    tg: raw.tg || [],
     x: Float32Array.from(raw.x),
     y: Float32Array.from(raw.y),
     t: Int32Array.from(raw.t),
@@ -324,6 +326,28 @@ export function photosOfEvent(model, eventIndex, mask) {
   for (let i = 0; i < model.n; i++) if (model.ev[i] === eventIndex && (!mask || mask[i])) out.push(i);
   out.sort((a, b) => model.t[a] - model.t[b]);
   return out;
+}
+
+/** Alle sichtbaren Fotos mit dieser Szene.
+
+    Die Kontinente heissen teils „screenshot, dokument", aber Screenshots
+    liegen in neun davon. Sie einzeln anzuklicken ist Arbeit, die eine Auswahl
+    nach Tag erspart. */
+export function photosOfTag(model, tagIndex, mask) {
+  const hit = new Set();
+  for (let i = 0; i < model.n; i++) {
+    if (mask[i] && model.tg[i]?.includes(tagIndex)) hit.add(i);
+  }
+  return hit;
+}
+
+/** Wie viele Fotos je Szene? Fuer die Auswahlliste. */
+export function tagCounts(model) {
+  const counts = new Map();
+  for (let i = 0; i < model.n; i++) {
+    for (const t of model.tg[i] || []) counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  return counts;
 }
 
 export function countVisible(mask) {

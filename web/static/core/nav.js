@@ -15,6 +15,7 @@ export const TABS = [
   { id: "events", label: "Serien" },
   { id: "search", label: "Suche" },
   { id: "atlas", label: "Atlas" },
+  { id: "trash", label: "Papierkorb" },
 ];
 
 export const JOBS_PAGE = "/jobs.html";

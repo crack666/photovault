@@ -13,8 +13,8 @@ import { createPathPick } from "../core/pathpick.js?v=10";
 import { feature, gate } from "../core/capabilities.js?v=10";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
-  personNames, photosOfCluster, photosOfEvent, photosOfPerson, spaceCounts, tidiness,
-  visibleMask,
+  personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
+  spaceCounts, tagCounts, tidiness, visibleMask,
 } from "./model.js?v=10";
 import { createScene } from "./scene.js?v=10";
 
@@ -219,6 +219,30 @@ function buildToolbar() {
     if (!c) return;
     scene.focusCluster(c);
     jump.value = "";
+  };
+
+  // Szenen: die Kontinente heißen teils „screenshot, dokument", aber
+  // Screenshots liegen in neun davon. Ein Griff statt neun.
+  //
+  // Bewusst *nicht* `scene` genannt — so heißt schon die Leinwand, und ein
+  // überschatteter Name hat mich hier eine Runde gekostet.
+  const sceneSel = $("atlas-scene");
+  const perTag = tagCounts(model);
+  sceneSel.innerHTML = "<option value=''>Szene wählen …</option>" +
+    [...perTag.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) =>
+      `<option value="${t}">${escapeHtml(model.tags[t])} — ${num(n)}</option>`
+    ).join("");
+  sceneSel.onchange = () => {
+    const t = sceneSel.value;
+    // Zurücksetzen, damit dieselbe Szene wieder wählbar ist: `change` feuert
+    // sonst nicht erneut.
+    sceneSel.selectedIndex = 0;
+    sceneSel.blur();
+    if (t === "") return;
+    selection = photosOfTag(model, Number(t), mask());
+    scene.setSelection(selection);
+    if (selection.size) scene.focusSet([...selection]);
+    paintSelection();
   };
 
   const who = $("atlas-who");
@@ -562,6 +586,7 @@ function paintSelection() {
       <button id="atlas-note">Notiz anhängen …</button>
       <button id="atlas-cap">Beschreibung setzen …</button>
       <button id="atlas-move" class="danger-action">In eigenen Ordner legen …</button>
+      <button id="atlas-trash" class="danger-action">In den Papierkorb</button>
     </div>
     <label class="atlas-reembed">
       <input type="checkbox" id="atlas-reembed"> Textvektoren sofort neu rechnen
@@ -578,6 +603,7 @@ function paintSelection() {
   $("atlas-note").onclick = addNote;
   $("atlas-cap").onclick = setCaption;
   $("atlas-move").onclick = moveToFolder;
+  $("atlas-trash").onclick = toTrash;
   panel.querySelector(".atlas-refine").onclick = (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -866,6 +892,37 @@ async function run(path, body, done) {
     msg.textContent = `${done(res)} Die Karte zeigt es nach dem nächsten \`atlas_build\`.`;
   } catch (e) {
     msg.textContent = `Fehlgeschlagen: ${e.message}`;
+  }
+}
+
+/** Zur Löschung vormerken. Fasst keine Datei an — das tut erst der Papierkorb. */
+async function toTrash() {
+  const ids = selectedIds();
+  const dlg = openModal({
+    title: `${num(ids.length)} Fotos in den Papierkorb`,
+    lead: "Es wird <b>nichts angefasst</b> — nur vermerkt. Im Reiter "
+        + "<em>Papierkorb</em> kannst du sie einzeln retten oder alle endgültig "
+        + "löschen. Von der Karte sind sie sofort weg.",
+    buttons: [{ id: "cancel", label: "Abbrechen" },
+              { id: "go", label: "Vormerken", kind: "primary" }],
+  });
+  if (await dlg.wait() !== "go") return;
+  const msg = $("atlas-msg");
+  msg.textContent = "merkt vor …";
+  try {
+    const res = await api("/api/trash", {
+      method: "POST", body: JSON.stringify({ photo_ids: ids, trashed: true }),
+    });
+    // Sofort von der Karte nehmen: sie ist ein Standbild und wuerde sie sonst
+    // bis zum naechsten atlas_build weiter anbieten.
+    for (const id of ids) hidden.add(id);
+    saveHidden();
+    clearSelection();
+    applyFilters();
+    $("atlas-msg").textContent =
+      `${num(res.trashed)} vorgemerkt. Im Reiter Papierkorb rettbar oder endgültig löschbar.`;
+  } catch (e) {
+    msg.textContent = `Vormerken fehlgeschlagen: ${e.message}`;
   }
 }
 

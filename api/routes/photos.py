@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from api.qdrant_util import PHOTOS, client
-from api.thumbs import jpeg_truncation_hint, make_thumb
+from api.qdrant_util import FACES, PHOTOS, client
+from api.thumbs import drop_cached, jpeg_truncation_hint, make_thumb
 from ingest.reembed import apply_annotations, rebuild_text_vectors
 
 logger = logging.getLogger(__name__)

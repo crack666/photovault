@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Wer ist das?</title>
   <link rel="stylesheet" href="/static/styles.css?v=11" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=3" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=4" />
   <link rel="stylesheet" href="/static/atlas/atlas.css?v=11" />
 </head>
 <body>
@@ -324,6 +324,8 @@
         <div class="atlas-toggles" data-group="Filter" id="atlas-filters"></div>
         <div class="atlas-picks">
           <select id="atlas-jump" class="atlas-select"></select>
+          <select id="atlas-scene" class="atlas-select"
+                  title="Alle Fotos einer Szene wählen — Screenshots liegen über neun Kontinente verteilt"></select>
           <select id="atlas-who" class="atlas-select"></select>
         </div>
         <span class="atlas-spacer"></span>
@@ -341,7 +343,34 @@
     </div>
   </main>
 
-  <script type="module" src="/static/app.js?v=27"></script>
+
+  <main id="view-trash" class="view wide hidden">
+    <h1>Papierkorb</h1>
+    <p class="muted hint">
+      Vorgemerkt heißt: noch nichts angefasst. Die Dateien liegen unverändert da,
+      und ein Klick auf „retten" nimmt sie wieder heraus. Erst
+      <em>endgültig löschen</em> entfernt Datei, Indexeintrag, Gesichter und
+      Vorschaubild — das ist unumkehrbar.
+    </p>
+    <p id="trash-meta" class="muted"></p>
+    <p id="trash-cost" class="gate hidden"></p>
+
+    <div id="trash-actions" class="trash-bar hidden">
+      <button type="button" id="trash-all" class="mini">Alle auf dieser Seite</button>
+      <span id="trash-pick" class="muted"></span>
+      <span class="spacer"></span>
+      <button type="button" id="trash-restore" class="mini">Gewählte retten</button>
+      <button type="button" id="trash-empty" class="danger-action"></button>
+    </div>
+    <p id="trash-note" class="atlas-note"></p>
+
+    <div id="trash-grid" class="trash-grid"></div>
+    <p style="text-align:center">
+      <button type="button" id="trash-more" class="mini hidden"></button>
+    </p>
+  </main>
+
+  <script type="module" src="/static/app.js?v=28"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

@@ -20,6 +20,7 @@ from api.routes import (
     persons,
     photos,
     search,
+    trash,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(albums.router, prefix="/api/albums", tags=["albums"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(capabilities.router, prefix="/api/capabilities", tags=["capabilities"])
+app.include_router(trash.router, prefix="/api/trash", tags=["trash"])
 
 
 @app.get("/api/health")

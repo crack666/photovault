@@ -83,6 +83,13 @@ _RE_WORD = re.compile(r"[a-zA-ZÄÖÜäöüß]{4,}")
 #: der haeufigste steht in 16 % aller Captions und traegt trotzdem Bedeutung.
 MAX_DOC_FREQ = 0.20
 
+#: Ab so vielen Fotos taugt ein Szenen-Tag als Auswahl. Der Caption-Lauf
+#: ergaenzt eigene Tags, und der Schwanz besteht aus Einzelfaellen
+#: („hindernisparcours", „besprechungsnest", „milchreis") -- an diesem Bestand
+#: 11 205 verschiedene, von denen 206 mindestens hundertmal vorkommen. Ohne
+#: Schwelle waere die Liste unbenutzbar und die Karte um 700 kB groesser.
+MIN_TAG_PHOTOS = 100
+
 # Bitmaske fuer den Zustands-Layer. Die UI faerbt danach ein.
 FLAG_PERSON = 1 << 0  #: mindestens eine Person bestaetigt
 FLAG_CAPTION = 1 << 1  #: Beschreibung vorhanden
@@ -122,6 +129,10 @@ def load_points(qc: Any, space: str, limit: int | None = None) -> tuple[np.ndarr
             if not vec:
                 continue
             payload = point.payload or {}
+            # Was im Papierkorb liegt, gehoert nicht mehr auf die Karte --
+            # sonst waehlt man es beim naechsten Aufraeumen wieder mit aus.
+            if payload.get("trashed_at"):
+                continue
             vectors.append(vec)
             meta.append(
                 {
@@ -621,6 +632,14 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
     people = sorted({n for m in meta for n in m["person_names"]})
     person_index = {n: i for i, n in enumerate(people)}
 
+    # Szenen-Tags mit in die Karte. Die Kontinente heissen zwar teils
+    # "screenshot, dokument", aber Screenshots liegen in *neun* davon --
+    # sie einzeln anzuklicken ist Arbeit, die eine Auswahl nach Tag erspart.
+    # Haeufigste zuerst, damit die Liste in der UI schon sortiert ist.
+    tag_counts = collections.Counter(t for m in meta for t in m["tags"])
+    tags = [t for t, n in tag_counts.most_common() if n >= MIN_TAG_PHOTOS]
+    tag_index = {t: i for i, t in enumerate(tags)}
+
     payload = {
         "version": FORMAT_VERSION,
         "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -629,6 +648,7 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
         "dup_threshold": dup_threshold,
         "channels": channels,
         "persons": people,
+        "tags": tags,
         "root": root,
         "spaces": spaces,
         "clusters": clusters,
@@ -647,6 +667,7 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
         "pe": [[person_index[n] for n in m["person_names"]] for m in meta],
         "ev": event_of_photo,
         "sp": space_of_photo,
+        "tg": [[tag_index[t] for t in m["tags"] if t in tag_index] for m in meta],
     }
 
     step("schreiben")
@@ -671,6 +692,9 @@ def report(payload: dict) -> None:
         f"{name} {counts[i]}" for i, name in enumerate(payload["spaces"]) if counts[i]
     )
     print(f"  Bereiche unter {payload['root'] or '/'}: {bereiche}")
+    per_tag = collections.Counter(t for row in payload["tg"] for t in row)
+    top = ", ".join(f"{payload['tags'][i]} {n}" for i, n in per_tag.most_common(6))
+    print(f"  Szenen ab {MIN_TAG_PHOTOS} Fotos: {len(payload['tags'])}, häufigste {top}")
     print(f"  Serien            {len(payload['events']):>6}")
     print(f"  benannte Person   {share(FLAG_PERSON)}")
     print(f"  Beschreibung      {share(FLAG_CAPTION)}")

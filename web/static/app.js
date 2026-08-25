@@ -15,6 +15,7 @@ function showTab(name) {
   if (name === "unknown") { loadUnknown(true); loadCandidates(); }
   if (name === "events") loadEventTab();
   if (name === "atlas") openAtlas();
+  if (name === "trash") openTrash();
 }
 
 /* Der Atlas kommt als eigenes Modul und erst, wenn er gebraucht wird.
@@ -28,6 +29,13 @@ function showTab(name) {
 async function openAtlas() {
   const { initAtlas } = await import("./atlas/index.js?v=10");
   await initAtlas({ showLightbox });
+}
+
+let trashBound = false;
+async function openTrash() {
+  const mod = await import("./trash/index.js?v=10");
+  if (!trashBound) { mod.bindTrash(); trashBound = true; }
+  await mod.initTrash({ showLightbox });
 }
 
 /* ---- Unbekannte Gesichter: gezielt aussortieren ----

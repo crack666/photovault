@@ -147,6 +147,26 @@ def _render(file_path: str, size: int, box: list | None, pad: float, image=None)
     return buf.getvalue(), warn
 
 
+def drop_cached(file_path: str) -> int:
+    """Alle Vorschaubilder zu einer Datei wegwerfen.
+
+    Beim endgueltigen Loeschen bleibt sonst der Cache als Geisterbild zurueck:
+    das Foto ist weg, aber die Oberflaeche zeigt es weiter, bis der Eintrag
+    zufaellig verdraengt wird.
+    """
+    gone = 0
+    for size in ALLOWED_SIZES:
+        target = _cache_path(file_path, size)
+        try:
+            target.unlink()
+            gone += 1
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.debug("Thumb %s nicht loeschbar: %s", target, e)
+    return gone
+
+
 def cache_stats() -> dict:
     if not CACHE_DIR.is_dir():
         return {"files": 0, "bytes": 0}
