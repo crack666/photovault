@@ -225,3 +225,63 @@ class TestBuildArgv:
         argv = build_argv(RUNNABLE["reembed"], dry_run=False, limit=7)
         assert argv[-1] == "7"
         assert all(isinstance(a, str) for a in argv)
+
+
+class TestMissingRequirements:
+    """Was fehlt, muss *vor* dem Start gesagt werden.
+
+    Ohne Grafikkarte hat mancher gar kein Ollama, und `umap-learn` ist ein
+    Zusatzpaket. Vorher meldete die Oberfläche in beiden Fällen „gestartet
+    (PID …)", der Lauf starb Sekunden später, und der Grund stand nur im
+    Protokoll.
+    """
+
+    def test_nothing_missing(self):
+        from api.routes.jobs import Runnable, missing_requirements
+
+        spec = Runnable(module="x", label="X", note="", kind="x")
+        assert missing_requirements(spec, models=set()) == ""
+
+    def test_absent_python_package_is_named_with_its_remedy(self):
+        from api.routes.jobs import Runnable, missing_requirements
+
+        spec = Runnable(
+            module="x", label="X", note="", kind="x",
+            needs_modules=("gibtesnicht_xyz",), hint="pip install irgendwas",
+        )
+        msg = missing_requirements(spec, models=set())
+        assert "gibtesnicht_xyz" in msg
+        assert "pip install irgendwas" in msg
+
+    def test_unreachable_ollama_is_said_plainly(self):
+        from api.routes.jobs import Runnable, missing_requirements
+
+        spec = Runnable(module="x", label="X", note="", kind="x",
+                        needs_models=("irgendein-modell",))
+        assert "nicht erreichbar" in missing_requirements(spec, models=None)
+
+    def test_reachable_but_model_not_pulled(self):
+        from api.routes.jobs import Runnable, missing_requirements
+
+        spec = Runnable(module="x", label="X", note="", kind="x",
+                        needs_models=("fehlt:1b",), hint="ollama pull fehlt:1b")
+        msg = missing_requirements(spec, models={"anderes:7b"})
+        assert "fehlt:1b" in msg
+        assert "ollama pull" in msg
+
+    def test_a_present_model_passes(self):
+        from api.routes.jobs import Runnable, missing_requirements
+
+        spec = Runnable(module="x", label="X", note="", kind="x",
+                        needs_models=("da:7b",))
+        assert missing_requirements(spec, models={"da:7b"}) == ""
+
+    def test_a_missing_package_is_reported_before_ollama(self):
+        """Erst das, was ohne Netz feststellbar ist -- sonst wartet die
+        Antwort auf einen Zeitablauf, obwohl sie schon feststeht."""
+        from api.routes.jobs import Runnable, missing_requirements
+
+        spec = Runnable(module="x", label="X", note="", kind="x",
+                        needs_modules=("gibtesnicht_xyz",),
+                        needs_models=("egal:1b",))
+        assert "gibtesnicht_xyz" in missing_requirements(spec, models=None)

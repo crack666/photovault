@@ -71,6 +71,13 @@
     .starter button.go:hover:not(:disabled) { background: #a3c5ff; }
     .starter button:disabled { opacity: .45; }
     .starter .gpu { font-size: .68rem; color: #d8ae4c; }
+    /* Fehlt eine Voraussetzung, steht der Grund da statt eines Knopfs, der
+       „gestartet" sagt und dann nichts tut. */
+    .starter.blocked { border-color: #4a3a2a; }
+    .starter .why {
+      font-size: .74rem; color: #e0a13c; line-height: 1.4;
+      background: #2a2214; border-radius: 7px; padding: .35rem .5rem;
+    }
 
     .job-bar {
       display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
@@ -87,6 +94,18 @@
       border-radius: 7px; padding: 5px 8px; font-size: .8rem;
     }
     #run-msg { margin: 0 0 1rem; font-size: .84rem; color: var(--accent); min-height: 1.2em; }
+
+    /* Was im Index fehlt. Nicht mitgezählt, sondern abgefragt -- ein Zähler
+       gilt nur für einen Lauf, der Zustand gilt immer. */
+    .gaps { max-width: 60rem; margin: 0 0 1.2rem; display: flex; flex-direction: column; gap: .4rem; }
+    .gap {
+      display: flex; gap: .7rem; align-items: baseline; flex-wrap: wrap;
+      padding: .55rem .8rem; border-radius: 9px;
+      background: #2a2214; border: 1px solid #4a3a2a; font-size: .82rem;
+    }
+    .gap b { color: #e0a13c; font-variant-numeric: tabular-nums; }
+    .gap span { color: #c9b8a0; }
+    .gap i { font-style: normal; color: var(--muted); font-size: .76rem; }
   </style>
 </head>
 <body>
@@ -99,6 +118,7 @@
     <h1>Jobs</h1>
 
     <div class="starters" id="starters"></div>
+    <div id="gaps" class="gaps hidden"></div>
     <p id="run-msg"></p>
 
     <div class="job-bar">
@@ -149,16 +169,21 @@ function renderStarters(runnable) {
   const sig = JSON.stringify(runnable);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.innerHTML = (runnable || []).map(r => `
-    <div class="starter">
+  box.innerHTML = (runnable || []).map(r => {
+    const off = r.busy || !r.ready;
+    return `
+    <div class="starter${r.ready ? "" : " blocked"}">
       <h3>${esc(r.label)}</h3>
       <p>${esc(r.note)}</p>
       ${r.gpu ? `<span class="gpu">belegt die Grafikkarte</span>` : ""}
+      ${r.ready ? "" : `<span class="why">${esc(r.blocked)}</span>`}
       <div class="row">
-        ${r.dry_run ? `<button data-run="${r.id}" data-dry="1" ${r.busy ? "disabled" : ""}>Trockenlauf</button>` : ""}
-        <button class="go" data-run="${r.id}" ${r.busy ? "disabled" : ""}>${r.busy ? "läuft" : "Starten"}</button>
+        ${r.dry_run ? `<button data-run="${r.id}" data-dry="1" ${off ? "disabled" : ""}>Trockenlauf</button>` : ""}
+        <button class="go" data-run="${r.id}" ${off ? "disabled" : ""}>${
+          r.busy ? "läuft" : r.ready ? "Starten" : "nicht möglich"}</button>
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 
 document.getElementById("starters").addEventListener("click", async (e) => {
@@ -292,6 +317,24 @@ function render(data) {
   }).join("");
 }
 
+async function renderGaps() {
+  const box = document.getElementById("gaps");
+  try {
+    const s = await (await fetch("/api/ingest/state")).json();
+    const gaps = s.gaps || [];
+    box.classList.toggle("hidden", !gaps.length);
+    box.innerHTML = gaps.map(g => `
+      <div class="gap">
+        <b>${g.missing.toLocaleString("de-DE")}</b>
+        <span>von ${s.total.toLocaleString("de-DE")} Fotos ohne ${esc(g.vector)}-Vektor
+          — ${esc(g.means)}</span>
+        <i>${esc(g.remedy)}</i>
+      </div>`).join("");
+  } catch (e) {
+    box.classList.add("hidden");
+  }
+}
+
 async function tick() {
   try {
     const url = `/api/jobs?limit=${limit}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`;
@@ -305,7 +348,10 @@ async function tick() {
   }
 }
 tick();
+renderGaps();
 setInterval(tick, 2000);
+// Der Zustand ändert sich nur nach einem Lauf -- alle 30 s genügt.
+setInterval(renderGaps, 30000);
 </script>
 </body>
 </html>

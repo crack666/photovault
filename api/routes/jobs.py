@@ -12,19 +12,23 @@ getippten Feld — nie aus einer Zeichenkette des Aufrufers.
 """
 from __future__ import annotations
 
+import importlib.util
+import json
 import logging
 import os
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.qdrant_util import client
 from ingest.jobs import COLLECTION, list_jobs
+from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, ollama_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,32 +52,84 @@ class Runnable(BaseModel):
     #: Trockenlauf -- ihm einen mitzugeben ließe den Start unerklärlich
     #: scheitern, mit dem Fehler im Protokoll statt in der Antwort.
     flags: tuple[str, ...] = ()
+    #: Python-Pakete, die vorhanden sein müssen. `umap-learn` ist ein
+    #: Zusatzpaket; ohne es startet der Lauf, läuft fünf Sekunden und stirbt
+    #: mit einer klaren Meldung — im Protokoll, das niemand ansieht.
+    needs_modules: tuple[str, ...] = ()
+    #: Ollama-Modelle, die gezogen sein müssen. Ohne Grafikkarte hat mancher
+    #: gar kein Ollama, und dann ist „gestartet" eine Lüge.
+    needs_models: tuple[str, ...] = ()
+    #: Was zu tun ist, wenn etwas fehlt.
+    hint: str = ""
 
 
 RUNNABLE: dict[str, Runnable] = {
     "caption": Runnable(
         module="ingest.caption_pass", kind="caption", gpu=True,
         flags=("dry_run", "limit"),
+        needs_models=(CAPTION_MODEL,),
+        hint=f"Ollama starten und `ollama pull {CAPTION_MODEL}`. "
+             "Ohne Ollama funktioniert alles außer den Beschreibungen.",
         label="Bildbeschreibungen erzeugen",
         note="Vision-Modell über alle Fotos ohne Beschreibung. Stunden, nicht Minuten.",
     ),
     "reembed": Runnable(
         module="tools.reembed_all", kind="reembed", gpu=True,
         flags=("dry_run", "limit"),
+        needs_models=(EMBED_MODEL,),
+        hint=f"Ollama starten und `ollama pull {EMBED_MODEL}`.",
         label="Text-Vektoren neu bauen",
         note="Nach neuen Captions, Namen, Notizen — oder wenn sich die Regel geändert hat.",
     ),
     "atlas": Runnable(
         module="tools.atlas_build", kind="atlas",
         flags=("limit",),
+        needs_modules=("umap", "sklearn"),
+        hint="pip install 'photovault[atlas]'",
         label="Karte neu rechnen",
-        note="UMAP über die CLIP-Vektoren. Kein Trockenlauf. "
-             "Braucht umap-learn (pip install 'photovault[atlas]').",
+        note="UMAP über die CLIP-Vektoren, reine Rechenarbeit auf der CPU. Kein Trockenlauf.",
     ),
 }
 
 #: Arten, die sich die Grafikkarte teilen müssten.
 GPU_KINDS = frozenset(r.kind for r in RUNNABLE.values() if r.gpu)
+
+
+#: „noch nicht nachgesehen" -- unterscheidbar von `None`, das „Ollama
+#: antwortet nicht" bedeutet. Mit einem gemeinsamen Sentinel liesse sich der
+#: Fall „unerreichbar" nicht pruefen, ohne Ollama abzuschalten.
+UNCHECKED: Any = object()
+
+
+def missing_requirements(spec: Runnable, models: Any = UNCHECKED) -> str:
+    """Was fehlt, damit dieser Lauf durchkommt? Leerer Text heißt: nichts.
+
+    Vorher meldete die Oberfläche „gestartet (PID 81423)", der Lauf las vier
+    Sekunden lang Vektoren und starb dann an einem fehlenden Zusatzpaket --
+    sichtbar nur im Protokoll. Wer keine Grafikkarte hat, trifft genau darauf,
+    und für den ist eine Absage mit Grund mehr wert als ein falscher Erfolg.
+    """
+    gone = [m for m in spec.needs_modules if importlib.util.find_spec(m) is None]
+    if gone:
+        return f"{', '.join(gone)} nicht installiert. {spec.hint}".strip()
+    if spec.needs_models:
+        have = ollama_models() if models is UNCHECKED else models
+        if have is None:
+            return f"Ollama nicht erreichbar ({ollama_url()}). {spec.hint}".strip()
+        absent = [m for m in spec.needs_models if m not in have]
+        if absent:
+            return f"Modell fehlt: {', '.join(absent)}. {spec.hint}".strip()
+    return ""
+
+
+def ollama_models() -> Optional[set[str]]:
+    """Welche Modelle liegen bereit? `None` heißt: Ollama antwortet nicht."""
+    try:
+        with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=3) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        return None
+    return {str(m.get("name") or "") for m in data.get("models", [])}
 
 
 @router.get("")
@@ -98,13 +154,24 @@ def all_jobs(limit: int = 20, offset: int = 0, kind: Optional[str] = None) -> di
         "limit": limit,
         "returned": len(page),
         "kinds": sorted({j.get("kind") or "?" for j in jobs}),
-        "runnable": [
-            {"id": key, "label": r.label, "note": r.note, "gpu": r.gpu,
-             "dry_run": "dry_run" in r.flags,
-             "busy": any(j.get("kind") == r.kind for j in running)}
-            for key, r in RUNNABLE.items()
-        ],
+        # Einmal nach Ollama fragen, nicht je Lauf.
+        "runnable": _runnable_state(running),
     }
+
+
+def _runnable_state(running: list[dict]) -> list[dict]:
+    models = ollama_models() if any(r.needs_models for r in RUNNABLE.values()) else None
+    out = []
+    for key, r in RUNNABLE.items():
+        blocked = missing_requirements(r, models)
+        out.append({
+            "id": key, "label": r.label, "note": r.note, "gpu": r.gpu,
+            "dry_run": "dry_run" in r.flags,
+            "busy": any(j.get("kind") == r.kind for j in running),
+            "ready": not blocked,
+            "blocked": blocked,
+        })
+    return out
 
 
 @router.get("/{job_id}")
@@ -248,6 +315,9 @@ def run_job(req: RunRequest) -> dict:
     spec = RUNNABLE[req.job]
     if req.dry_run and "dry_run" not in spec.flags:
         raise HTTPException(400, f"{spec.label}: kennt keinen Trockenlauf.")
+    blocked = missing_requirements(spec)
+    if blocked:
+        raise HTTPException(503, f"{spec.label}: {blocked}")
 
     running = [j for j in list_jobs(client(), limit=10_000) if j.get("status") == "running"]
     busy = {j.get("kind") for j in running}

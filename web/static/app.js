@@ -259,6 +259,8 @@ const FIELDS = [
 ];
 
 let peopleCache = [];
+let peopleFilter = "";
+let peopleLimit = 16;
 let qbTree = { op: "and", children: [] };
 
 async function loadPersonPicker() {
@@ -414,18 +416,66 @@ function renderPeopleChips() {
     return;
   }
   const chosen = new Set(selectedPeople().map((c) => c.value));
-  const shown = peopleCache.slice(0, 16);
-  host.innerHTML = shown.map((p) => `
-    <button type="button" class="search-person${chosen.has(p.id) ? " on" : ""}" data-id="${escapeHtml(p.id)}">
-      <img src="${cropUrl(p.cover_face_id)}?size=80" alt="" />
-      ${escapeHtml(p.name)}
-    </button>`).join("");
+  const needle = peopleFilter.trim().toLowerCase();
+  const hit = (p) => !needle || (p.name || "").toLowerCase().includes(needle)
+    || (p.aliases || []).some((a) => String(a).toLowerCase().includes(needle));
+
+  // Bei 114 benannten Personen waren 98 unerreichbar: die Liste endete nach
+  // den 16 mit den meisten Gesichtern. Angehakte gehören immer dazu -- sonst
+  // sieht man nicht mehr, wen man gewählt hat, sobald man tippt.
+  const matching = peopleCache.filter(hit);
+  const visible = [
+    ...peopleCache.filter((p) => chosen.has(p.id)),
+    ...matching.filter((p) => !chosen.has(p.id)).slice(0, peopleLimit),
+  ];
+  const rest = matching.filter((p) => !chosen.has(p.id)).length - peopleLimit;
+
+  host.innerHTML = `
+    <div class="person-find">
+      <input type="search" id="person-find" placeholder="Namen suchen — ${peopleCache.length} benannt"
+             value="${escapeHtml(peopleFilter)}" autocomplete="off" />
+      ${chosen.size ? `<button type="button" class="mini" id="person-none">Auswahl leeren</button>` : ""}
+    </div>
+    ${visible.map((p) => `
+      <button type="button" class="search-person${chosen.has(p.id) ? " on" : ""}" data-id="${escapeHtml(p.id)}">
+        <img src="${cropUrl(p.cover_face_id)}?size=80" alt="" />
+        ${escapeHtml(p.name)}
+      </button>`).join("")}
+    ${rest > 0 ? `<button type="button" class="mini" id="person-more">+${rest} weitere</button>` : ""}
+    ${!visible.length ? `<p class="muted hint">Niemand mit „${escapeHtml(peopleFilter)}“.</p>` : ""}`;
+
+  const find = $("person-find");
+  find.oninput = () => {
+    peopleFilter = find.value;
+    peopleLimit = 16;
+    const at = find.selectionStart;
+    renderPeopleChips();
+    // Nach dem Neuzeichnen ist das Feld ein anderes -- Fokus und Schreibmarke
+    // müssen zurück, sonst tippt man nach jedem Zeichen ins Nichts.
+    const again = $("person-find");
+    again.focus();
+    again.setSelectionRange(at, at);
+  };
+  if ($("person-more")) {
+    $("person-more").onclick = () => { peopleLimit += 32; renderPeopleChips(); };
+  }
+  if ($("person-none")) {
+    $("person-none").onclick = () => {
+      selectedPeople().forEach((c) => {
+        const p = peopleCache.find((x) => x.id === c.value);
+        if (p) setPersonInQuery(p, false);
+      });
+      renderBuilder();
+      renderPeopleChips();
+    };
+  }
   host.querySelectorAll(".search-person").forEach((b) => {
     b.addEventListener("click", () => {
       const p = peopleCache.find((x) => x.id === b.dataset.id);
       if (!p) return;
       setPersonInQuery(p, !b.classList.contains("on"));
       renderBuilder();
+      renderPeopleChips();
     });
   });
 }
@@ -448,13 +498,16 @@ function renderSearchExamples() {
         $("q-text").value = "";
       },
     });
+    // Das Beispielwort war „Bier" -- fest verdrahtet, und die Person davor
+    // kommt aus den Daten. Bei einem Kind an erster Stelle stand da dann
+    // „<Kind> · Bier". Ein Wort, das zu jedem passt, oder keins.
     items.push({
-      title: `${first(a)} · Bier`,
+      title: `${first(a)} · Geburtstag`,
       hint: "Person plus was im Bild ist",
       run: () => {
         qbTree = { op: "and", children: [] };
         setPersonInQuery(a, true);
-        $("q-text").value = "Bier";
+        $("q-text").value = "Geburtstag";
       },
     });
   }

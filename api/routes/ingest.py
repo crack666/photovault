@@ -52,3 +52,50 @@ def get_stats() -> dict:
     except Exception:
         count = 0
     return {"total_photos": count}
+
+
+#: Was fehlt, was das bedeutet, und was es behebt. Reihenfolge = Wichtigkeit.
+_GAPS = (
+    ("text", "Freitextsuche findet sie nicht",
+     "Text-Vektoren neu bauen — braucht Ollama"),
+    ("clip", "keine Ähnlichkeitssuche, nicht auf der Karte",
+     "Datei prüfen: meist beschädigt oder nicht lesbar"),
+)
+
+
+@router.get("/state")
+def index_state() -> dict:
+    """Was im Index fehlt — abgefragt, nicht mitgezählt.
+
+    Schlägt das Text-Embedding während eines Ingest fehl (kein Ollama, und ohne
+    Grafikkarte hat das mancher gar nicht), schreibt die Pipeline den Punkt
+    **ohne** Textvektor weiter und sagt nur eine Warnung pro Stapel. Man merkt
+    es erst Wochen später an einer Freitextsuche, die nichts findet.
+
+    Ein mitlaufender Zähler wäre die falsche Antwort: er gilt nur für den einen
+    Lauf und läuft mit der Wirklichkeit auseinander. Der Zustand dagegen ist
+    jederzeit ableitbar und kann nicht veralten.
+    """
+    from qdrant_client.models import Filter, HasVectorCondition
+
+    q = client()
+    try:
+        total = q.count(collection_name=PHOTOS, exact=True).count
+    except Exception as e:
+        return {"total": 0, "gaps": [], "error": str(e)}
+
+    gaps = []
+    for name, means, remedy in _GAPS:
+        try:
+            have = q.count(
+                collection_name=PHOTOS, exact=True,
+                count_filter=Filter(must=[HasVectorCondition(has_vector=name)]),
+            ).count
+        except Exception:
+            continue
+        if total - have > 0:
+            gaps.append({
+                "vector": name, "missing": total - have,
+                "means": means, "remedy": remedy,
+            })
+    return {"total": total, "gaps": gaps}

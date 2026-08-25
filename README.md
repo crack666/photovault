@@ -49,21 +49,37 @@ beantworten. Und Google Fotos kann es, will dafür aber alles haben.
 Gesichtserkennung, Szenenerkennung, Datum, Ereignisse und die Suche brauchen
 keine GPU und kein Sprachmodell.
 
-**Optional — Grafikkarte.** Nicht nötig, aber der Unterschied ist groß.
-Gemessen an derselben Maschine:
+**Optional — Grafikkarte.** Nicht nötig. Der Unterschied ist deutlich, aber
+kleiner als man denkt. Gemessen an derselben Maschine, je Foto:
 
-| | mit NVIDIA-GPU | nur CPU |
-|---|---|---|
-| Gesichtserkennung je Foto | ~30 ms | **~860 ms** |
-| 5 000 Fotos | ~4 min | ~1,5 h |
-| 43 000 Fotos | ~30 min | **~11 h** |
+| | GPU | CPU, 4 Kerne | CPU, 8 | CPU, 24 |
+|---|---|---|---|---|
+| Lesen und Dekodieren | — | 64 ms | 57 ms | 89 ms |
+| Gesichter (insightface) | ~30 ms | 150 ms | 154 ms | 149 ms |
+| Szene (CLIP ViT-L/14) | ~40 ms | 401 ms | 245 ms | 153 ms |
+| **zusammen** | **~26 Fotos/s** | **1,6/s** | **2,2/s** | **2,6/s** |
+| 5 000 Fotos | ~3 min | 51 min | 38 min | 33 min |
+| 43 000 Fotos | ~30 min | 7,3 h | 5,4 h | 4,7 h |
 
-Reine CPU-Verarbeitung funktioniert also — sie dauert nur. Für ein paar
-tausend Fotos ist das ein Nachtlauf, für ein großes Archiv ein Wochenende.
-Der Ingest läuft wiederaufsetzbar (`--resume` ist Standard), man kann ihn also
-abbrechen und fortsetzen. Wer eine NVIDIA-Karte hat, braucht ~4 GB VRAM und
-`onnxruntime-gpu` passend zur CUDA-Version — siehe [Ohne Docker
+Die Gesichtserkennung kostet auf der CPU **150 ms**, nicht die 860 ms, die
+hier früher standen: `buffalo_l` bringt fünf Modelle mit, gebraucht werden
+zwei, und `allowed_modules` schaltet die anderen drei ab (siehe
+`ingest/face_embedder.py`). Sie ist auch fast unabhängig von der Kernzahl —
+skalieren tut CLIP, und das ist auf vier Kernen der Engpass.
+
+Für ein paar tausend Fotos ist das also ein Kaffee, für ein großes Archiv ein
+Abend. Der Ingest läuft wiederaufsetzbar (`--resume` ist Standard), man kann
+ihn abbrechen und fortsetzen. Wer eine NVIDIA-Karte hat, braucht ~4 GB VRAM
+und `onnxruntime-gpu` passend zur CUDA-Version — siehe [Ohne Docker
 entwickeln](#ohne-docker-entwickeln).
+
+**Was ohne Grafikkarte alles funktioniert:** Datum und Herkunft, Gesichter
+finden und benennen, Serien, die Suche nach Personen, Jahr, Ort, Album und
+Tags — und der **Atlas**, denn UMAP rechnet ohnehin auf der CPU. Nur die
+Bildbeschreibungen und die *Freitextsuche* brauchen Ollama; ohne es tragen die
+Kontinente ihre Szenen-Tags als Namen statt der Captions. Was fehlt, sagt die
+Jobs-Seite: Läufe, deren Voraussetzung nicht da ist, sind dort gesperrt und
+nennen den Grund, statt „gestartet" zu melden und still zu sterben.
 
 **Optional — [Ollama](https://ollama.com) für deutsche Bildbeschreibungen.**
 Läuft auf dem Host, nicht im Compose-Verbund: es braucht GPU-Durchreichung und

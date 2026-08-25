@@ -684,3 +684,12 @@ nav { display: flex; gap: 8px; }
 .cand-head button:disabled { opacity: .5; cursor: default; }
 .cand .faces { display: flex; flex-wrap: wrap; gap: 4px; }
 .cand .faces img { width: 56px; height: 56px; object-fit: cover; border-radius: 5px; }
+
+/* Personenliste in der Suche: durchsuchbar, weil 16 von 114 zu wenig sind. */
+.person-find { display: flex; gap: 8px; width: 100%; margin-bottom: 4px; }
+.person-find input {
+  flex: 1; min-width: 0; padding: 7px 11px; border-radius: 999px;
+  background: #12161e; color: var(--text); border: 1px solid #313a4a; font: inherit;
+  font-size: .86rem;
+}
+.person-find input:focus { outline: 0; border-color: var(--accent); }
