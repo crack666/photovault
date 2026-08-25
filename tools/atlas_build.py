@@ -482,20 +482,107 @@ def day_number(taken_at: str | None) -> int:
     return int((dt - datetime(1970, 1, 1, tzinfo=timezone.utc)).days)
 
 
-def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path) -> dict:
+#: Die Schritte, in der Reihenfolge, in der sie laufen. Anteile aus den
+#: gemessenen Zeiten an 17 370 Fotos -- ein Balken, der sich gleichmaessig
+#: fuellt, ist eine Luege, wenn UMAP zwei Drittel der Zeit braucht.
+PHASES = (
+    ("laden", 0.10),
+    ("umap", 0.55),
+    ("stapel", 0.10),
+    ("bereiche", 0.02),
+    ("serien", 0.08),
+    ("kontinente", 0.12),
+    ("schreiben", 0.03),
+)
+
+
+def progress_reporter(job) -> Any:
+    """Meldet, was *jetzt* laeuft — nicht, was gerade fertig wurde.
+
+    Der erste Entwurf meldete den abgeschlossenen Schritt, und weil UMAP allein
+    die Haelfte der Zeit braucht, stand dort eine halbe Minute lang „laden",
+    waehrend schon projiziert wurde. Der Anteil zaehlt dagegen nur, was hinter
+    uns liegt.
+
+    Eigene Funktion, weil die Namen sonst mit denen im Rechenteil kollidieren:
+    `order` hiess dort schon eine Sortierung aus numpy, und `step("schreiben")`
+    starb an `'numpy.ndarray' object has no attribute 'index'`.
+    """
+    phase_order = [name for name, _ in PHASES]
+    phase_share = dict(PHASES)
+
+    def step(name: str) -> None:
+        if job is None:
+            return
+        i = phase_order.index(name)
+        job.update(processed=int(sum(phase_share[n] for n in phase_order[:i]) * 100),
+                   phase=name)
+
+    return step
+
+
+def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
+          track: bool = True) -> dict:
+    """Rechnen und dabei Bescheid geben.
+
+    Von der Jobs-Seite aus gestartet, versprach die Antwort „der Fortschritt
+    erscheint in dieser Liste" -- dieser Lauf meldete sich dort aber nie.
+
+    Das Melden umschliesst den *ganzen* Rechenteil. Im ersten Entwurf deckte
+    das `try` nur die erste Haelfte ab; ein Fehler danach liess den Job auf
+    ewig „running" stehen, bis er nach zwei Minuten als `stale` galt.
+    """
     qc = client()
+    job = None
+    if track:
+        try:
+            from ingest.jobs import JobTracker
+
+            job = JobTracker(qc, kind="atlas", source=space)
+            job.update(total=100, processed=0, phase="laden", force=True)
+        except Exception as e:  # Tracking darf den Lauf nie stoppen.
+            logger.debug("Job-Tracking nicht verfuegbar: %s", e)
+
+    try:
+        payload = compute(space, k, limit, dup_threshold, out_dir,
+                          step=progress_reporter(job), qc=qc)
+    except BaseException as e:
+        # Auch SystemExit: „umap-learn fehlt" gehoert in die Liste, nicht nur
+        # ins Protokoll.
+        if job is not None:
+            job.finish("error", phase=str(e).splitlines()[0][:200] or type(e).__name__,
+                       errors=1)
+        raise
+    if job is not None:
+        job.finish("done", processed=100, total=100,
+                   phase=f"{payload['n']} Fotos, {len(payload['clusters'])} Kontinente")
+    return payload
+
+
+def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
+            step: Any = lambda _name: None, qc: Any = None) -> dict:
+    """Die eigentliche Rechnung. Weiss nichts von Jobs."""
+    qc = qc or client()
+
+    step("laden")
     X, meta = load_points(qc, space, limit)
     if len(X) < k:
         raise SystemExit(f"Nur {len(X)} Punkte mit {space}-Vektor -- zu wenig fuer eine Karte.")
 
+    step("umap")
     Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-9)
     coords = to_unit(project(Xn))
+
+    step("stapel")
     roots = find_stacks(Xn, dup_threshold)
     heads = pick_stack_heads(roots, meta)
     sizes = collections.Counter(roots.tolist())
 
+    step("bereiche")
     root, spaces, space_of_photo = split_spaces(meta)
+    step("serien")
     events, event_of_photo = build_events(meta, coords)
+    step("kontinente")
     labels = kmeans_clusters(Xn, k)
     label_info = label_clusters(labels, meta, k)
 
@@ -562,6 +649,7 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
         "sp": space_of_photo,
     }
 
+    step("schreiben")
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / "atlas.json"
     target.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
@@ -607,10 +695,13 @@ def main() -> None:
     ap.add_argument("--limit", type=int, help="nur die ersten N Fotos (zum Ausprobieren)")
     ap.add_argument("--dup-threshold", type=float, default=DUP_THRESHOLD)
     ap.add_argument("--out", type=Path, default=OUT_DIR)
+    ap.add_argument("--no-track", action="store_true",
+                    help="nicht in die Job-Liste schreiben")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    payload = build(args.space, args.clusters, args.limit, args.dup_threshold, args.out)
+    payload = build(args.space, args.clusters, args.limit, args.dup_threshold, args.out,
+                    track=not args.no_track)
     report(payload)
 
 

@@ -371,6 +371,12 @@ pip install 'photovault[atlas]'   # umap-learn + scikit-learn, nur hierfür
 python -m tools.atlas_build
 ```
 
+Oder ohne Terminal: **Jobs → Karte neu rechnen**. Der Lauf meldet sich mit
+Phase und Anteil in derselben Liste (`laden` 0 % → `umap` 10 % → `stapel`
+65 % → fertig), denn UMAP allein braucht die Hälfte der Zeit — ein Balken,
+der sich gleichmäßig füllt, wäre eine Lüge. Fehlt `umap-learn`, ist der Knopf
+gesperrt und nennt den Grund, statt zu starten und still zu sterben.
+
 Das Ergebnis ist eine statische Datei unter `web/static/atlas/atlas.json`
 (1,3 MB). Sie wird über den vorhandenen StaticFiles-Mount ausgeliefert — die
 Karte neu zu rechnen braucht **keinen API-Neustart**.

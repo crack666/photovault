@@ -263,3 +263,66 @@ def test_kleine_auswahl_bleibt_unangetastet():
 
     ids = ["a", "b", "c"]
     assert _sample(ids, 64) == ids
+
+
+# --------------------------------------------------------------------------
+# Fortschritt melden
+# --------------------------------------------------------------------------
+
+class _FakeJob:
+    def __init__(self):
+        self.calls = []
+
+    def update(self, **fields):
+        self.calls.append(fields)
+
+
+class TestProgressReporter:
+    """Melden, was *läuft* — nicht, was fertig wurde.
+
+    Der erste Entwurf meldete den abgeschlossenen Schritt. Weil UMAP allein die
+    Hälfte der Zeit braucht, stand auf der Jobs-Seite eine halbe Minute lang
+    „laden", während längst projiziert wurde.
+    """
+
+    def test_the_phase_names_what_is_running(self):
+        from tools.atlas_build import progress_reporter
+
+        job = _FakeJob()
+        step = progress_reporter(job)
+        step("laden")
+        step("umap")
+        assert [c["phase"] for c in job.calls] == ["laden", "umap"]
+
+    def test_the_percentage_counts_only_finished_work(self):
+        from tools.atlas_build import PHASES, progress_reporter
+
+        job = _FakeJob()
+        step = progress_reporter(job)
+        step("laden")
+        step("umap")
+        assert job.calls[0]["processed"] == 0
+        assert job.calls[1]["processed"] == int(dict(PHASES)["laden"] * 100)
+
+    def test_it_reaches_the_last_phase(self):
+        from tools.atlas_build import PHASES, progress_reporter
+
+        job = _FakeJob()
+        step = progress_reporter(job)
+        for name, _ in PHASES:
+            step(name)
+        assert job.calls[-1]["phase"] == PHASES[-1][0]
+        assert job.calls[-1]["processed"] < 100  # fertig meldet erst `build`
+
+    def test_without_a_job_it_does_nothing(self):
+        """Ohne Qdrant-Collection läuft die Rechnung trotzdem."""
+        from tools.atlas_build import progress_reporter
+
+        step = progress_reporter(None)
+        step("laden")  # darf nicht werfen
+
+    def test_shares_add_up(self):
+        """Sonst endet der Balken bei 80 % oder springt über 100."""
+        from tools.atlas_build import PHASES
+
+        assert abs(sum(share for _, share in PHASES) - 1.0) < 1e-9
