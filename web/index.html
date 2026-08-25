@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/static/styles.css?v=11" />
   <link rel="stylesheet" href="/static/core/ui.css?v=4" />
   <link rel="stylesheet" href="/static/atlas/atlas.css?v=11" />
+  <link rel="stylesheet" href="/static/faces/strip.css?v=2" />
 </head>
 <body>
   <header class="top">
@@ -159,6 +160,9 @@
       </header>
       <p id="lb-file-warn" class="lb-file-warn hidden"></p>
       <dl id="lb-meta"></dl>
+      <!-- Wer ist auf diesem Foto? Die Gegenrichtung zu "Gesichter ohne
+           Namen": dort fragt der Stapel, hier antwortet das Foto. -->
+      <div id="lb-faces" class="fs hidden"></div>
       <div id="lb-date-accept" class="lb-date-accept">
         <p class="muted" id="lb-date-hint">Datum korrigieren, wenn Ordner oder Nachbarn etwas anderes sagen.</p>
         <input type="date" id="lb-date-input" />
@@ -370,7 +374,7 @@
     </p>
   </main>
 
-  <script type="module" src="/static/app.js?v=28"></script>
+  <script type="module" src="/static/app.js?v=29"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

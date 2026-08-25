@@ -1,7 +1,8 @@
-import { $, escapeHtml } from "./core/dom.js?v=10";
-import { api, cropUrl } from "./core/api.js?v=10";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=10";
-import { gate } from "./core/capabilities.js?v=10";
+import { $, escapeHtml } from "./core/dom.js?v=11";
+import { api, cropUrl } from "./core/api.js?v=11";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=11";
+import { gate } from "./core/capabilities.js?v=11";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=11";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -27,13 +28,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=10");
+  const { initAtlas } = await import("./atlas/index.js?v=11");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=10");
+  const mod = await import("./trash/index.js?v=11");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -1260,7 +1261,7 @@ function fillMap(gps) {
   $("lb-map-coord").textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 }
 
-async function loadPhotoInfo(id) {
+async function loadPhotoInfo(id, opts = {}) {
   const dl = $("lb-meta");
   dl.innerHTML = "<dt class='muted'>lädt …</dt><dd></dd>";
   let d;
@@ -1320,7 +1321,18 @@ async function loadPhotoInfo(id) {
     $("lb-date-state").textContent = "";
   }
   $("lb-info").dataset.dateSource = d.date_source || "";
+
+  // Der Gesichtsstreifen laedt sich nach einer Zuordnung selbst neu und
+  // ruft dann hier zurueck -- ohne `skipFaces` wuerden sich die beiden
+  // gegenseitig immer wieder neu laden.
+  if (!opts.skipFaces) {
+    mountFaceStrip($("lb-faces"), id, {
+      onChange: () => loadPhotoInfo(id, { skipFaces: true }),
+    });
+  }
 }
+
+bindFaceStrip($("lb-faces"));
 
 $("lb-toggle").addEventListener("click", () => setLbInfoOpen(false));
 $("lb-reveal").addEventListener("click", () => setLbInfoOpen(true));

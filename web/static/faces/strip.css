@@ -1,0 +1,159 @@
+/* Der Gesichtsstreifen im Detailbereich der Großansicht.
+
+   Die Kacheln sind absichtlich groß (72 px) und die Vorschlagsknöpfe zeigen
+   ein Beispielgesicht: „Ist das dieselbe Person?“ beantwortet man durch
+   Vergleichen, nicht durch Namenlesen. Fingergerecht, weil die Oberfläche
+   über Tailscale auch vom Handy bedient wird. */
+
+.fs {
+  margin: 14px 0 4px;
+  padding-top: 12px;
+  border-top: 1px solid #2a3140;
+}
+
+.fs-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.fs-open {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #3a2f1c;
+  color: #f0c477;
+}
+.fs-state { color: var(--muted); font-size: 12px; }
+.fs-err {
+  margin: 6px 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #3a2226;
+  color: #ffbfc6;
+  font-size: 12px;
+}
+
+/* ---- Die Kacheln ------------------------------------------------------ */
+
+.fs-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.fs-face {
+  flex: 0 0 auto;
+  width: 76px;
+  padding: 4px 4px 5px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background: #20252f;
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+}
+.fs-face img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  background: #14171d;
+}
+.fs-face span {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Benannt ist ruhig, offen ist die Aufgabe -- der Blick soll dort landen. */
+.fs-face.named span { color: var(--muted); }
+.fs-face.open { border-color: #f0c47755; }
+.fs-face.open span { color: #f0c477; }
+.fs-face.skipped span, .fs-face.ignored span { color: #7d879a; font-style: italic; }
+.fs-face.on { border-color: var(--accent); background: #263043; }
+.fs-face:hover { background: #2a3140; }
+
+/* ---- Namensfeld ------------------------------------------------------- */
+
+.fs-form {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #191d25;
+  border: 1px solid #2a3140;
+  font-size: 13px;
+}
+.fs-lead { margin: 0 0 8px; }
+
+.fs-suggs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.fs-sugg {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid #313a4a;
+  border-radius: 999px;
+  background: #232936;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.fs-sugg img {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #14171d;
+}
+.fs-sugg em { color: var(--muted); font-style: normal; font-size: 11px; }
+/* Ein starker Treffer ist fast immer der richtige -- er darf auffallen. */
+.fs-sugg.strong { border-color: var(--accent); background: #263043; }
+.fs-sugg:hover { background: #2f3949; }
+
+.fs-pick, .fs-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  color: var(--muted);
+}
+.fs-pick select, .fs-new input {
+  flex: 1 1 150px;
+  min-height: 38px;
+  padding: 6px 9px;
+  border-radius: 9px;
+  border: 1px solid #313a4a;
+  background: #14171d;
+  color: var(--text);
+  font: inherit;
+}
+.fs-new button, .fs-acts button {
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid #313a4a;
+  background: #2a3140;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.fs-new button:hover, .fs-acts button:hover { background: #36405230; border-color: var(--accent); }
+.fs-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.fs-acts .quiet { background: none; color: var(--muted); font-size: 12px; }
+
+/* ---- Die Nachfrage nach dem Benennen ---------------------------------- */
+
+.fs-follow { border-color: #3d4c66; background: #1b212c; }
+/* Abgewählt heißt: bleibt liegen. Muss man auf einen Blick sehen. */
+.fs-sugg.out { opacity: 0.38; border-style: dashed; }
+.fs-sugg.out img { filter: grayscale(1); }
+.fs-fine { font-size: 11px; margin: 4px 0 0; line-height: 1.4; }
+.fs-acts button[disabled] { opacity: 0.45; cursor: default; }

@@ -46,17 +46,36 @@ class MoveFacesRequest(BaseModel):
     name: str
 
 
-def _scroll_faces(q, filt: Filter | None, limit: int = 2000) -> list:
+def _scroll_faces(
+    q,
+    filt: Filter | None,
+    limit: int | None = 2000,
+    *,
+    with_vectors: bool = True,
+    payload=True,
+) -> list:
+    """Gesichter durchblättern. `limit=None` heißt: wirklich alle.
+
+    Die Vektoren sind hier der Kostenfaktor -- 512 Floats je Gesicht, bei
+    14.000 benannten Gesichtern rund 29 MB je Aufruf. Wer nur Namen zählt,
+    braucht sie nicht und kann sich deshalb leisten, den Bestand vollständig
+    zu lesen statt ihn abzuschneiden. Ein `limit`, das kleiner ist als der
+    Bestand, liefert nämlich keine Auswahl, sondern ein falsches Ergebnis:
+    Personen, deren Gesichter hinten liegen, existieren dann einfach nicht.
+    """
     points = []
     offset = None
-    while len(points) < limit:
+    # Ohne Vektoren sind die Batches winzig -- dann lohnen größere Häppchen,
+    # sonst wären es bei 14.000 Punkten 56 Rundreisen statt 14.
+    step = 256 if with_vectors else 1024
+    while limit is None or len(points) < limit:
         batch, offset = q.scroll(
             collection_name=FACES,
             scroll_filter=filt,
-            limit=min(256, limit - len(points)),
+            limit=step if limit is None else min(step, limit - len(points)),
             offset=offset,
-            with_payload=True,
-            with_vectors=True,
+            with_payload=payload,
+            with_vectors=with_vectors,
         )
         points.extend(batch)
         if offset is None:
@@ -73,7 +92,10 @@ def list_persons() -> list[dict]:
     q = client()
     try:
         labeled = Filter(must_not=[IsEmptyCondition(is_empty=PayloadField(key="person_id"))])
-        points = _scroll_faces(q, labeled, limit=5000)
+        points = _scroll_faces(
+            q, labeled, limit=None, with_vectors=False,
+            payload=["person_id", "person_name"],
+        )
     except Exception:
         return []
     people: dict[str, dict] = {}
@@ -244,7 +266,10 @@ def unknown_faces(
     """
     q = client()
     try:
-        raw = _scroll_faces(q, _unlabeled_filter(), limit=20000)
+        raw = _scroll_faces(
+            q, _unlabeled_filter(), limit=None, with_vectors=False,
+            payload=["photo_id", "file_path", "box", "score", "frontality"],
+        )
     except Exception:
         logger.exception("Loading unknown faces failed")
         return {"faces": [], "total": 0, "returned": 0, "stats": _face_stats(q)}
