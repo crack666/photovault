@@ -1,9 +1,9 @@
-import { $, escapeHtml, num } from "./core/dom.js?v=25";
-import { api, cropUrl } from "./core/api.js?v=25";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=25";
-import { gate } from "./core/capabilities.js?v=25";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=25";
-import { askConfirm, askText, notify } from "./core/modal.js?v=25";
+import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=31";
+import { api, cropUrl } from "./core/api.js?v=31";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=31";
+import { gate } from "./core/capabilities.js?v=31";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=31";
+import { askConfirm, askText, notify } from "./core/modal.js?v=31";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -29,13 +29,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=25");
+  const { initAtlas } = await import("./atlas/index.js?v=31");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=25");
+  const mod = await import("./trash/index.js?v=31");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -1623,7 +1623,9 @@ document.querySelector(".lb-next").addEventListener("click", () => stepLightbox(
 $("lightbox").addEventListener("click", (e) => { if (e.target.id === "lightbox") closeLightbox(); });
 document.addEventListener("keydown", (e) => {
   if ($("lightbox").classList.contains("hidden")) return;
-  if (e.target.tagName === "TEXTAREA") return;  // beim Tippen nicht weiterblättern
+  // Beim Tippen kein Blättern und kein Umschalten -- geprueft wurde vorher
+  // nur TEXTAREA, und das Namensfeld ist ein INPUT.
+  if (isTyping(e)) return;
   if (e.key === "Escape") closeLightbox();
   if (e.key === "ArrowLeft") stepLightbox(-1);
   if (e.key === "ArrowRight") stepLightbox(1);

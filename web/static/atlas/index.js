@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=25";
-import { api, thumbUrl } from "../core/api.js?v=25";
-import { askText, openModal } from "../core/modal.js?v=25";
-import { createPathPick } from "../core/pathpick.js?v=25";
-import { feature, gate } from "../core/capabilities.js?v=25";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=31";
+import { api, thumbUrl } from "../core/api.js?v=31";
+import { askText, openModal } from "../core/modal.js?v=31";
+import { createPathPick } from "../core/pathpick.js?v=31";
+import { feature, gate } from "../core/capabilities.js?v=31";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=25";
-import { createScene } from "./scene.js?v=25";
+} from "./model.js?v=31";
+import { createScene } from "./scene.js?v=31";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -1329,6 +1329,8 @@ function indicesOfCluster(c) {
 
 function onKey(e) {
   if ($("view-atlas").classList.contains("hidden")) return;
+  // „0" setzt die Ansicht zurueck -- in einem Eingabefeld ist es eine Null.
+  if (isTyping(e)) return;
   if (e.key === "Escape" && selection.size) { clearSelection(); e.stopPropagation(); }
   if (e.key === "0") scene.fitAll();
 }
