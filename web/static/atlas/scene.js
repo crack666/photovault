@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=13";
-import { thumbUrl } from "../core/api.js?v=13";
+import { colorFor, spreadPoint } from "./model.js?v=14";
+import { thumbUrl } from "../core/api.js?v=14";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -100,7 +100,31 @@ const MS_PER_THUMB_START = 0.03;
    ein, statt zwischen zwei Zustaenden zu wechseln. */
 const MS_RISE = 0.4;
 const MS_FALL = 0.05;
-const MAX_INFLIGHT = 8;
+
+//: Reissleine gegen Ausreisser: mehr als das kostet ein Vorschaubild nie,
+//: und ein einzelner Messfehler soll die Karte nicht leerraeumen.
+const MS_PER_THUMB_MAX = 0.15;
+
+//: Rasterweite fuer die Schaetzung der belegten Flaeche. Grob genug, dass
+//: ein Haufen als zusammenhaengende Flaeche zaehlt, fein genug, dass leere
+//: Gegenden nicht mitgerechnet werden.
+const COARSE = 48;
+/* Gleichzeitige Abrufe.
+
+   Der Engpass sitzt nicht hier, sondern im Server: ein Vorschaubild, das es
+   noch nicht gibt, wird aus dem Original auf der Platte gerechnet, und das
+   dauert rund 190 ms. Gemessen saettigt er bei etwa 55 Bildern je Sekunde --
+   mit 8 gleichzeitigen sind es 48, mit 24 dann 59, mit 48 wieder 54. Also
+   16: der Rest ist Warten auf dieselbe Warteschlange. */
+const MAX_INFLIGHT = 16;
+
+//: Nach so langer Zeit gilt eine Anfrage als verloren. Grosszuegig: sie soll
+//: nur verhindern, dass ein haengender Abruf einen der acht Plaetze fuer
+//: immer belegt, nicht langsame Abrufe abwuergen.
+const LOAD_TIMEOUT_MS = 20000;
+
+//: So oft darf ein Bild scheitern, bevor es endgueltig uebersprungen wird.
+const MAX_TRIES = 2;
 const TRANSITION_MS = 700;
 
 export function createScene(canvas, model, hooks = {}) {
@@ -131,7 +155,8 @@ export function createScene(canvas, model, hooks = {}) {
   //: Geschmackssache -- und die Antwort haengt am Geraet, nicht an meiner
   //: Meinung.
   const stats = { visible: 0, drawn: 0, budget: 0, raster: false, gap: 0, shift: 0,
-                  ms: 0, fanMs: 0, cached: 0, off: "", perThumb: MS_PER_THUMB_START };
+                  ms: 0, fanMs: 0, imgMs: 0, cached: 0, off: "", gapReason: "",
+                  perThumb: MS_PER_THUMB_START };
 
   //: Gemessene Kosten je gezeichnetem Bild. Siehe FRAME_BUDGET_MS.
   let msPerThumb = MS_PER_THUMB_START;
@@ -157,9 +182,17 @@ export function createScene(canvas, model, hooks = {}) {
   const py = new Float32Array(model.n);
   let buckets = [];
 
+  //: Schluessel -> Bild, `false` (endgueltig gescheitert) oder `null`
+  //: (angefragt). `null` heisst nicht "kommt gleich": es heisst nur, dass
+  //: niemand es nochmal anfragen soll, solange es unterwegs ist.
   const images = new Map();
   let inflight = 0;
   const queue = [];
+  //: Schluessel, die in `queue` warten und noch nicht gestartet sind. Nur
+  //: die duerfen beim Neupriorisieren verworfen werden.
+  const queued = new Set();
+  //: Fehlversuche je Schluessel.
+  const attempts = new Map();
 
   /* ---- Kamera ---------------------------------------------------------- */
 
@@ -254,6 +287,7 @@ export function createScene(canvas, model, hooks = {}) {
     const hit = images.get(key);
     if (hit !== undefined) return hit;
     images.set(key, null);
+    queued.add(key);
     queue.push({ key, id, size });
     pump();
     return null;
@@ -305,6 +339,25 @@ export function createScene(canvas, model, hooks = {}) {
     return null;
   }
 
+  /* Die Warteschlange gilt fuer *dieses* Bild, nicht fuer die Sitzung.
+
+     Vorher war sie ein Rueckstau: jeder Durchlauf haengte an, was er gerade
+     brauchte, und nichts wurde je entfernt. Nach ein paar Schwenks standen
+     11.615 Eintraege darin, von denen 231 wirklich angefragt worden waren --
+     alles Weitere wartete hinter Fotos, die laengst aus dem Bild geschoben
+     waren. Wer zur Seite schob, sah dort deshalb nur Punkte, und zwar
+     dauerhaft: die neu sichtbaren Bilder standen ganz hinten an.
+
+     Also wird vor jedem Durchlauf geleert, was noch nicht gestartet ist.
+     Was laeuft, laeuft weiter; was gebraucht wird, stellt sich neu an -- und
+     zwar wieder von der Bildmitte nach aussen. Die Schlange ist damit nie
+     laenger als ein Bildschirm voll. */
+  function resetQueue() {
+    for (const k of queued) images.delete(k);
+    queue.length = 0;
+    queued.clear();
+  }
+
   function pump() {
     while (inflight < MAX_INFLIGHT && queue.length) {
       // Der Reihe nach, nicht zuletzt-zuerst. Angefragt wird von der
@@ -312,11 +365,34 @@ export function createScene(canvas, model, hooks = {}) {
       // mittleren die *einzigen*, die gezeichnet werden. Auf einem Stapel
       // laegen sie ganz unten und die Karte bliebe minutenlang leer.
       const job = queue.shift();
+      queued.delete(job.key);
       inflight++;
       const img = new Image();
       img.decoding = "async";
-      img.onload = () => { images.set(job.key, img); inflight--; pump(); schedule(); };
-      img.onerror = () => { images.set(job.key, false); inflight--; pump(); };
+      let done = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        inflight--;
+        if (value) {
+          images.set(job.key, value);
+          schedule();
+        } else {
+          // Zweimal darf es schiefgehen -- ein Aussetzer soll ein Foto nicht
+          // fuer den Rest der Sitzung schwaerzen.
+          const tries = (attempts.get(job.key) || 0) + 1;
+          attempts.set(job.key, tries);
+          if (tries >= MAX_TRIES) images.set(job.key, false);
+          else images.delete(job.key);
+        }
+        pump();
+      };
+      img.onload = () => finish(img);
+      img.onerror = () => finish(false);
+      // Sicherung: eine Anfrage, die weder ankommt noch scheitert, wuerde
+      // sonst einen der acht Plaetze dauerhaft belegen -- und nach acht
+      // solchen Faellen laedt die Karte nie wieder etwas nach.
+      setTimeout(() => finish(false), LOAD_TIMEOUT_MS);
       img.src = thumbUrl(job.id, job.size);
     }
   }
@@ -565,14 +641,44 @@ export function createScene(canvas, model, hooks = {}) {
     // Naheliegende. Abstand einmal rechnen, nicht in jedem Vergleich.
     const cx = w / 2, cy = h / 2;
     const near = [];
+    /* Wieviel Flaeche die sichtbaren Fotos tatsaechlich belegen.
+
+       Nicht die Fensterflaeche: Fotos liegen in Haufen, und zwischen den
+       Haufen ist leer. Rechnet man den Abstand aus der Fensterflaeche, kommt
+       fuer ein kleines Haeufchen ein viel zu grosser Abstand heraus -- dann
+       passen in den Haufen nur noch eine Handvoll Bilder, obwohl daneben
+       alles frei ist. Gemessen: 52 gezeichnet von 4.014 sichtbaren.
+
+       Grob genuegt: in Feldern von COARSE Pixeln zaehlen, wieviele belegt
+       sind. Das kostet nichts, weil der Durchlauf ohnehin stattfindet. */
+    const busy = new Set();
     for (let i = 0; i < model.n; i++) {
       if (!mask[i]) continue;
       const sx = toScreenX(px[i]), sy = toScreenY(py[i]);
       if (sx < -60 || sy < -60 || sx > w + 60 || sy > h + 60) continue;
       near.push([(sx - cx) ** 2 + (sy - cy) ** 2, i, sx, sy]);
+      busy.add(((sx / COARSE) | 0) * 4096 + ((sy / COARSE) | 0));
     }
+    const filled = Math.max(COARSE * COARSE, busy.size * COARSE * COARSE);
     near.sort((a, b) => a[0] - b[0]);
     stats.visible = near.length;
+/* Gemessen wird genau das Zeichnen, nichts sonst.
+
+       Zwei Anlaeufe daneben, aus demselben Grund: alles ausser dem
+       Zeichnen kostet gleich viel, ob danach zehn Bilder erscheinen oder
+       tausend -- der Durchlauf ueber 17.000 Punkte, das Sortieren, und vor
+       allem die Auswahl, die 4.000 Bewerber gegen das Raster prueft.
+       Rechnet man davon irgendetwas mit, entsteht eine Spirale: kleineres
+       Budget, gleicher Grundaufwand, also hoehere Kosten *je Bild*, also
+       noch kleineres Budget. Beobachtet als 102 µs je Bild und ein Budget
+       am Anschlag.
+
+       Also die Uhr direkt um die drawImage-Aufrufe. Zwei Zeitabfragen je
+       Bild kosten Bruchteile einer Mikrosekunde und messen dafuer das,
+       worum es geht. */
+    let imgMs = 0;
+    // Was noch nicht gestartet ist, gilt fuer dieses Bild neu.
+    resetQueue();
 
     const box = Math.max(22, Math.min(96, cam.scale / 90)) * tileScale;
 
@@ -592,19 +698,29 @@ export function createScene(canvas, model, hooks = {}) {
        vergroesserter Kachel. */
     const size = box * (window.devicePixelRatio || 1) > 160 ? 320 : 160;
 
-    // Mindestabstand zwischen zwei gezeichneten Bildern, als Vielfaches der
-    // Kachelbreite -- so bleibt der Regler auf jeder Zoomstufe gleich
-    // wirksam. Steht er auf aus, greift ein Viertel: die Bilder liegen dann
-    // dicht uebereinander wie zuvor, aber ein Haufen in der Bildmitte kann
-    // nicht das ganze Budget verbrauchen.
-    const gap = box * (declutter > 0 ? declutter : SPACING);
-    // Wie viele Bilder mit diesem Abstand ueberhaupt ins Fenster passen.
-    // Haengt am Fenster, nicht an einer Zahl im Quelltext.
-    const fits = Math.ceil((w + 2 * gap) / gap) * Math.ceil((h + 2 * gap) / gap);
-    // Was hinpasst, was die Reissleine erlaubt, und was in einem ruhigen Bild
-    // zu schaffen ist -- das Kleinste davon gewinnt.
+    /* Abstand und Anzahl haengen zusammen, und in dieser Reihenfolge.
+
+       Der Regler gibt den *gewuenschten* Abstand vor, als Vielfaches der
+       Kachelbreite -- so wirkt er auf jeder Zoomstufe gleich. Steht er auf
+       aus, greift ein Viertel: die Bilder liegen dann dicht uebereinander.
+
+       Das allein reicht aber nicht. Zeichnen kann die Karte nur so viele
+       Bilder, wie in ein ruhiges Bild passen -- gemessen, siehe unten. Sind
+       das weniger, als bei diesem Abstand ins Fenster gehen, muessen sie
+       *weiter* auseinander, sonst reichen sie nicht bis zum Rand. Genau das
+       war der Fehler: 1.844 Bilder mit 16 px Abstand fuellen nur ein Viertel
+       der 6.500 Rasterfelder, und weil von der Mitte nach aussen verteilt
+       wird, blieb der Rand leer. Der Kegel war zurueck, nur groesser.
+
+       Also andersherum gerechnet: um eine Flaeche mit N Bildern gleichmaessig
+       zu belegen, braucht es die Wurzel aus Flaeche durch N als Abstand. Der
+       groessere der beiden Wuensche gewinnt. */
     const affordable = Math.floor(FRAME_BUDGET_MS / Math.max(msPerThumb, 1e-4));
-    const budget = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, fits, affordable));
+    const budget = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, affordable));
+    const wanted = box * (declutter > 0 ? declutter : SPACING);
+    const cover = Math.sqrt(filled / budget);
+    const gap = Math.max(wanted, cover);
+    const fits = Math.ceil((w + 2 * gap) / gap) * Math.ceil((h + 2 * gap) / gap);
 
     //  punkte  -- kommt hier gar nicht an, draw() ueberspringt uns.
     //  kegel   -- kein Abstand, nur das Budget: die Mitte verbraucht es.
@@ -630,11 +746,16 @@ export function createScene(canvas, model, hooks = {}) {
     const taken = new Map();
     const gap2 = gap * gap;
 
+    // Zahl statt Zeichenkette als Rasterschluessel: je Bewerber neun
+    // Nachschlagevorgaenge, bei 4.000 Bewerbern also 36.000 -- als
+    // zusammengesetzte Zeichenkette waren das ebenso viele neue Objekte.
+    const key = (gx, gy) => (gx + 2048) * 4096 + (gy + 2048);
+
     function free(sx, sy) {
       const gx = Math.floor(sx / gap), gy = Math.floor(sy / gap);
       for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
-          const list = taken.get((gx + dx) + ":" + (gy + dy));
+          const list = taken.get(key(gx + dx, gy + dy));
           if (!list) continue;
           for (let k = 0; k < list.length; k += 2) {
             const ddx = list[k] - sx, ddy = list[k + 1] - sy;
@@ -646,10 +767,10 @@ export function createScene(canvas, model, hooks = {}) {
     }
 
     function claim(sx, sy) {
-      const key = Math.floor(sx / gap) + ":" + Math.floor(sy / gap);
-      const list = taken.get(key);
+      const k = key(Math.floor(sx / gap), Math.floor(sy / gap));
+      const list = taken.get(k);
       if (list) list.push(sx, sy);
-      else taken.set(key, [sx, sy]);
+      else taken.set(k, [sx, sy]);
     }
 
     let drawn = 0;
@@ -669,6 +790,7 @@ export function createScene(canvas, model, hooks = {}) {
       const ar = img.naturalWidth / img.naturalHeight || 1;
       const bw = ar >= 1 ? box : box * ar;
       const bh = ar >= 1 ? box / ar : box;
+      const tImg = performance.now();
       ctx.globalAlpha = picked && !selection.has(i) ? 0.28 : 1;
       ctx.drawImage(img, sx - bw / 2, sy - bh / 2, bw, bh);
       if (picked && selection.has(i)) {
@@ -677,6 +799,7 @@ export function createScene(canvas, model, hooks = {}) {
         ctx.strokeRect(sx - bw / 2, sy - bh / 2, bw, bh);
       }
       ctx.globalAlpha = 1;
+      imgMs += performance.now() - tImg;
       shown.push([i, sx - bw / 2, sy - bh / 2, bw, bh]);
       return true;
     }
@@ -716,8 +839,8 @@ export function createScene(canvas, model, hooks = {}) {
 
     // Nur messen, wenn genug gezeichnet wurde -- bei einer Handvoll Bildern
     // steckt in der Zahl mehr Grundrauschen als Bildkosten.
-    if (drawn > 60) {
-      const each = (performance.now() - t0 - fanMs) / drawn;
+    if (drawn > 30) {
+      const each = Math.min(MS_PER_THUMB_MAX, imgMs / drawn);
       msPerThumb += (each - msPerThumb) * (each > msPerThumb ? MS_RISE : MS_FALL);
     }
     stats.perThumb = msPerThumb;
@@ -725,8 +848,10 @@ export function createScene(canvas, model, hooks = {}) {
     stats.budget = capped ? budget : Infinity;
     stats.raster = spaced || fan;
     stats.gap = spaced || fan ? Math.round(gap) : 0;
+    stats.gapReason = gap > wanted + 0.5 ? "Fläche" : (declutter > 0 ? "Regler" : "");
     stats.shift = fan ? Math.round(shift) : 0;
     stats.fanMs = Math.round(fanMs * 10) / 10;
+    stats.imgMs = Math.round(imgMs * 10) / 10;
   }
 
   /** Eine Kachel je Gelegenheit statt eines Punkts je Foto.
@@ -989,7 +1114,15 @@ export function createScene(canvas, model, hooks = {}) {
     setTileScale(k) { tileScale = k; schedule(); },
     setDeclutter(px_) { declutter = px_; schedule(); },
     setThumbMode(m) { thumbMode = m; schedule(); },
-    stats: () => ({ ...stats, cached: images.size }),
+    stats: () => {
+      // Nur wirklich geladene Bilder zaehlen. `images.size` enthielt auch die
+      // Platzhalter der Angefragten -- 11.615 "Bilder im Speicher" bei 231
+      // tatsaechlichen Abrufen, und die Megabyte daneben waren entsprechend
+      // erfunden.
+      let real = 0;
+      for (const v of images.values()) if (v) real++;
+      return { ...stats, cached: real, queued: queue.length, inflight };
+    },
     setMinEventSize(n) { minEventSize = n; schedule(); },
     get mode() { return mode; },
     setLassoMode(on) { lassoMode = on; canvas.classList.toggle("lasso", on); },

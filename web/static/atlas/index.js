@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=13";
-import { api, thumbUrl } from "../core/api.js?v=13";
-import { openModal } from "../core/modal.js?v=13";
-import { createPathPick } from "../core/pathpick.js?v=13";
-import { feature, gate } from "../core/capabilities.js?v=13";
+import { $, escapeHtml, num } from "../core/dom.js?v=14";
+import { api, thumbUrl } from "../core/api.js?v=14";
+import { openModal } from "../core/modal.js?v=14";
+import { createPathPick } from "../core/pathpick.js?v=14";
+import { feature, gate } from "../core/capabilities.js?v=14";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=13";
-import { createScene } from "./scene.js?v=13";
+} from "./model.js?v=14";
+import { createScene } from "./scene.js?v=14";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -431,11 +431,16 @@ function paintStats() {
   const was = s.off
     ? `<b>keine Bilder</b> — ${escapeHtml(s.off)}`
     : `<b>${num(s.drawn)}</b> von ${num(s.visible)} sichtbaren gezeichnet`
-      + ` · ${budget}${s.gap ? ` · ${s.gap} px Abstand` : ""}`
+      + ` · ${budget}${s.gap ? ` · ${s.gap} px Abstand${
+            s.gapReason ? ` (${escapeHtml(s.gapReason)})` : ""}` : ""}`
       + (s.shift ? ` · bis ${s.shift} px verschoben` : "");
+  const teile = [];
+  if (s.imgMs) teile.push(`${s.imgMs} ms zeichnen`);
+  if (s.fanMs) teile.push(`${s.fanMs} ms schieben`);
   box.innerHTML = `${was} · ${s.ms} ms`
-    + (s.fanMs ? ` (davon ${s.fanMs} ms schieben)` : "")
-    + ` · ${num(s.cached)} Bilder im Speicher (~${num(speicher)} MB)`;
+    + (teile.length ? ` (${teile.join(", ")})` : "")
+    + ` · ${num(s.cached)} Bilder im Speicher (~${num(speicher)} MB)`
+    + (s.queued ? ` · ${num(s.queued)} warten` : "");
 }
 
 function paintLegend() {
