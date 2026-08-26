@@ -305,3 +305,20 @@ a.tab:hover { background: #2a3140; }
   color: var(--text);
 }
 .scope-hint { font-size: 12px; }
+
+/* ---- Papierkorb in der Grossansicht -----------------------------------
+   Unten und ruhig: eine Handlung, die man sucht, wenn man sie braucht --
+   nicht eine, auf die man beim Bearbeiten der Beschreibung stösst. */
+
+.lb-danger {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #2a3140;
+}
+.lb-danger button.danger { border-color: #5a3238; color: #ffbfc6; }
+.lb-danger button.danger:hover { background: #3a2226; }
+.lb-danger .muted { font-size: 12px; line-height: 1.45; flex: 1 1 140px; }

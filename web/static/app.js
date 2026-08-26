@@ -1,8 +1,8 @@
-import { $, escapeHtml, num } from "./core/dom.js?v=21";
-import { api, cropUrl } from "./core/api.js?v=21";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=21";
-import { gate } from "./core/capabilities.js?v=21";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=21";
+import { $, escapeHtml, num } from "./core/dom.js?v=22";
+import { api, cropUrl } from "./core/api.js?v=22";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=22";
+import { gate } from "./core/capabilities.js?v=22";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=22";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -28,13 +28,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=21");
+  const { initAtlas } = await import("./atlas/index.js?v=22");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=21");
+  const mod = await import("./trash/index.js?v=22");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -1408,6 +1408,16 @@ async function loadPhotoInfo(id, opts = {}) {
   }
   $("lb-info").dataset.dateSource = d.date_source || "";
 
+  // Der Knopf gehoert zu *diesem* Foto -- sonst steht beim naechsten noch
+  // "Zurückholen" da, und ein Klick darauf holt etwas zurück, das nie weg war.
+  const trash = $("lb-trash");
+  if (trash) {
+    trash.dataset.back = d.trashed_at ? "1" : "";
+    trash.textContent = d.trashed_at ? "Zurückholen" : "In den Papierkorb";
+    trash.classList.toggle("danger", !d.trashed_at);
+    $("lb-trash-state").textContent = d.trashed_at ? "liegt im Papierkorb." : "";
+  }
+
   // Der Gesichtsstreifen laedt sich nach einer Zuordnung selbst neu und
   // ruft dann hier zurueck -- ohne `skipFaces` wuerden sich die beiden
   // gegenseitig immer wieder neu laden.
@@ -1475,6 +1485,47 @@ $("lb-set-date").addEventListener("click", async () => {
   } catch (err) {
     $("lb-date-state").textContent = `Fehler: ${String(err.message || err).slice(0, 120)}`;
   }
+});
+
+/* Papierkorb aus der Grossansicht.
+
+   Ohne Rueckfrage, weil die erste Stufe keine Datei anfasst -- sie setzt
+   einen Vermerk. Der Rueckweg steht dafuer direkt daneben, solange das Foto
+   offen ist: ein Fehlgriff ist damit ein Klick und kein Verlust. Wirklich
+   geloescht wird nur im Reiter „Papierkorb", und dort mit Haken.
+
+   Was danach passiert, steht dabei -- Suche, Serien und Alben lassen es
+   sofort weg, die Karte erst beim naechsten Rechnen, weil sie ein Standbild
+   ist. Ohne diesen Satz sieht es aus, als haette der Klick nicht gewirkt. */
+async function trashFromLightbox(id, back) {
+  const state = $("lb-trash-state");
+  const btn = $("lb-trash");
+  state.textContent = back ? "hole zurück …" : "merkt vor …";
+  btn.disabled = true;
+  try {
+    await api("/api/trash", {
+      method: "POST",
+      body: JSON.stringify({ photo_ids: [id], trashed: !back }),
+    });
+  } catch (e) {
+    state.textContent = `Fehlgeschlagen: ${String(e.message || e).slice(0, 120)}`;
+    btn.disabled = false;
+    return;
+  }
+  btn.disabled = false;
+  btn.dataset.back = back ? "" : "1";
+  btn.textContent = back ? "In den Papierkorb" : "Zurückholen";
+  btn.classList.toggle("danger", back);
+  state.textContent = back
+    ? "wieder da."
+    : "Im Papierkorb. Aus Suche, Serien und Alben sofort weg — von der Karte "
+      + "erst beim nächsten Rechnen.";
+}
+
+$("lb-trash").addEventListener("click", () => {
+  const id = $("lb-info").dataset.photoId;
+  if (!id) return;
+  trashFromLightbox(id, $("lb-trash").dataset.back === "1");
 });
 
 $("lb-keep-caption").addEventListener("click", async () => {

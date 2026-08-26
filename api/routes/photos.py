@@ -91,6 +91,10 @@ def photo_detail(point_id: str) -> dict:
         "exif": exif,
         "ingested_at": p.get("ingested_at"),
         "file_warning": p.get("file_warning"),
+        # Damit die Grossansicht weiss, ob ihr Knopf "in den Papierkorb" oder
+        # "zurueckholen" heissen muss. Ohne das stand beim Oeffnen eines schon
+        # vorgemerkten Fotos das Falsche dran.
+        "trashed_at": p.get("trashed_at"),
     }
 
 
