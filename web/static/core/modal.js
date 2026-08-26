@@ -94,3 +94,41 @@ function escapeAttr(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 }
+
+
+/** Einen Text erfragen -- im eigenen Dialog, nicht per Systemabfrage.
+
+    `prompt()` sieht auf dem Handy aus wie eine Warnung der Website, ist in
+    manchen eingebetteten Browsern ganz gesperrt, und Chrome unterdrückt es
+    nach mehreren Aufrufen von selbst. Wo es gesperrt ist, bricht die Zusage
+    ab und *nichts* passiert -- ein Knopf, der aussieht wie kaputt.
+
+    Stand vorher zweimal im Quelltext, einmal im Atlas und einmal nirgends:
+    die Personenansicht benutzte noch `prompt()`. Deshalb hier, wo beide
+    hinlangen können. */
+export async function askText({ title, lead, placeholder = "", ok = "Übernehmen", rows = 2,
+                                value = "" }) {
+  const dlg = openModal({
+    title, lead,
+    body: `<textarea class="pv-text" id="pv-text" rows="${rows}"
+            placeholder="${placeholder}" spellcheck="false"></textarea>`,
+    buttons: [
+      { id: "cancel", label: "Abbrechen" },
+      { id: "ok", label: ok, kind: "primary" },
+    ],
+  });
+  const field = dlg.root.querySelector("#pv-text");
+  field.value = value;
+  field.focus();
+  field.select();
+  field.onkeydown = (e) => {
+    // Eingabetaste bestätigt, Umschalt+Eingabe macht einen Absatz.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      dlg.root.querySelector('[data-modal="ok"]').click();
+    }
+  };
+  const answer = await dlg.wait();
+  const text = (answer === "ok" ? field.value : "").trim();
+  return text || null;
+}

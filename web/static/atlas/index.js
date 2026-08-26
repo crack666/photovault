@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=22";
-import { api, thumbUrl } from "../core/api.js?v=22";
-import { openModal } from "../core/modal.js?v=22";
-import { createPathPick } from "../core/pathpick.js?v=22";
-import { feature, gate } from "../core/capabilities.js?v=22";
+import { $, escapeHtml, num } from "../core/dom.js?v=23";
+import { api, thumbUrl } from "../core/api.js?v=23";
+import { askText, openModal } from "../core/modal.js?v=23";
+import { createPathPick } from "../core/pathpick.js?v=23";
+import { feature, gate } from "../core/capabilities.js?v=23";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=22";
-import { createScene } from "./scene.js?v=22";
+} from "./model.js?v=23";
+import { createScene } from "./scene.js?v=23";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -1131,34 +1131,6 @@ async function moveToFolder() {
   } catch (e) {
     msg.textContent = `Verschieben fehlgeschlagen: ${e.message}`;
   }
-}
-
-/** Einen Text erfragen -- im eigenen Dialog, nicht per Systemabfrage.
-
-    `prompt()` sieht auf dem Handy aus wie eine Warnung der Website und ist in
-    manchen eingebetteten Browsern ganz gesperrt. */
-async function askText({ title, lead, placeholder, ok, rows = 2 }) {
-  const dlg = openModal({
-    title, lead,
-    body: `<textarea class="pv-text" id="pv-text" rows="${rows}"
-            placeholder="${placeholder}" spellcheck="false"></textarea>`,
-    buttons: [
-      { id: "cancel", label: "Abbrechen" },
-      { id: "ok", label: ok, kind: "primary" },
-    ],
-  });
-  const field = $("pv-text");
-  field.focus();
-  field.onkeydown = (e) => {
-    // Eingabetaste bestätigt, Umschalt+Eingabe macht einen Absatz.
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      dlg.root.querySelector('[data-modal="ok"]').click();
-    }
-  };
-  const answer = await dlg.wait();
-  const text = (answer === "ok" ? field.value : "").trim();
-  return text || null;
 }
 
 async function addNote() {

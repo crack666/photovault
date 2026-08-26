@@ -1,8 +1,9 @@
-import { $, escapeHtml, num } from "./core/dom.js?v=22";
-import { api, cropUrl } from "./core/api.js?v=22";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=22";
-import { gate } from "./core/capabilities.js?v=22";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=22";
+import { $, escapeHtml, num } from "./core/dom.js?v=23";
+import { api, cropUrl } from "./core/api.js?v=23";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=23";
+import { gate } from "./core/capabilities.js?v=23";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=23";
+import { askText } from "./core/modal.js?v=23";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -28,13 +29,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=22");
+  const { initAtlas } = await import("./atlas/index.js?v=23");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=22");
+  const mod = await import("./trash/index.js?v=23");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -1175,24 +1176,61 @@ function updatePhotoSel() {
 
 $("pp-clear").addEventListener("click", () => { clearPhotoSel(); updatePhotoSel(); });
 
-async function annotateSelection(mode) {
-  const n = photoSel.size;
-  if (!n) return;
-  const verb = mode === "remove" ? "entfernen von" : "vergeben an";
-  const note = prompt(`Notiz ${verb} ${n} Foto${n === 1 ? "" : "s"}:\n(mehrere mit Komma trennen)`);
-  if (!note || !note.trim()) return;
-  const res = await api("/api/photos/annotate", {
-    method: "POST",
-    body: JSON.stringify({
-      photo_ids: [...photoSel],
-      annotations: note.split(",").map((s) => s.trim()).filter(Boolean),
-      mode,
-      reembed: true,
-    }),
-  });
-  alert(`${res.changed} Fotos geändert, ${res.reembedded} neu eingebettet.`);
+/* Die drei Handlungen der Fotoauswahl.
+
+   Sie liefen ueber `prompt()` und `alert()`. Wo `prompt()` gesperrt ist --
+   eingebettete Browser, oder Chrome nach mehreren Aufrufen -- bricht die
+   Zusage ab und *nichts* passiert: drei Knoepfe, die aussehen wie kaputt,
+   ohne eine Zeile Erklaerung. Genau so ist es gemeldet worden.
+
+   Jetzt derselbe Dialog wie im Atlas, und das Ergebnis steht in der Leiste
+   statt in einem Systemfenster -- samt Fehlern, die vorher gar nicht
+   ankamen. */
+function selNote(text) {
+  const el = $("pp-sel-note");
+  if (el) el.textContent = text;
+}
+
+async function runOnSelection(path, body, done) {
+  // Die Notiz allein waere sofort da; das Neurechnen der Textvektoren dauert
+  // rund 130 ms je Foto. Bei fuenfzig Fotos sind das sieben Sekunden, in
+  // denen sonst nur "läuft" stünde und man das Schlimmste annimmt.
+  const n = (body.photo_ids || []).length;
+  selNote(`läuft … ${n === 1 ? "ein Foto" : `${n} Fotos`}, Textvektoren `
+        + "werden mitgerechnet");
+  try {
+    const res = await api(path, { method: "POST", body: JSON.stringify(body) });
+    selNote(done(res));
+  } catch (e) {
+    selNote(`Fehlgeschlagen: ${String(e.message || e).slice(0, 160)}`);
+    return;
+  }
   clearPhotoSel();
   updatePhotoSel();
+}
+
+async function annotateSelection(mode) {
+  const n = photoSel.size;
+  if (!n) { selNote("Erst Fotos anhaken."); return; }
+  const ids = [...photoSel];
+  const weg = mode === "remove";
+  const text = await askText({
+    title: `Notiz ${weg ? "entfernen von" : "für"} ${n} Foto${n === 1 ? "" : "s"}`,
+    lead: weg
+      ? "Wird von diesen Fotos gelöst. Mehrere mit Komma trennen."
+      : "Wird als Schlagwort gespeichert und ist danach exakt filterbar. "
+        + "Mehrere mit Komma trennen.",
+    placeholder: "z. B. Omas Garten, Umzug",
+    ok: weg ? "Entfernen" : "Anhängen",
+  });
+  if (!text) return;
+  await runOnSelection("/api/photos/annotate", {
+    photo_ids: ids,
+    annotations: text.split(",").map((s) => s.trim()).filter(Boolean),
+    mode,
+    reembed: true,
+  }, (r) => `${r.changed} ${r.changed === 1 ? "Foto" : "Fotos"} geändert`
+        + (r.reembedded ? `, ${r.reembedded} neu eingebettet` : "") + ".");
 }
 
 $("pp-tag").addEventListener("click", () => annotateSelection("add"));
@@ -1200,16 +1238,20 @@ $("pp-untag").addEventListener("click", () => annotateSelection("remove"));
 
 $("pp-cap").addEventListener("click", async () => {
   const n = photoSel.size;
-  if (!n) return;
-  const text = prompt(`Beschreibung für ${n} Foto${n === 1 ? "" : "s"}:\n(überschreibt vorhandene und wird gegen neue Vision-Läufe gesperrt)`);
-  if (!text || !text.trim()) return;
-  const res = await api("/api/photos/caption/bulk", {
-    method: "POST",
-    body: JSON.stringify({ photo_ids: [...photoSel], caption_de: text.trim(), lock: true }),
+  if (!n) { selNote("Erst Fotos anhaken."); return; }
+  const ids = [...photoSel];
+  const text = await askText({
+    title: `Beschreibung für ${n} Foto${n === 1 ? "" : "s"}`,
+    lead: "Überschreibt vorhandene und wird gegen neue Vision-Läufe gesperrt.",
+    placeholder: "Ein Satz, der beschreibt was zu sehen ist",
+    ok: "Setzen",
+    rows: 3,
   });
-  alert(`${res.updated} Fotos beschriftet, ${res.reembedded} neu eingebettet.`);
-  clearPhotoSel();
-  updatePhotoSel();
+  if (!text) return;
+  await runOnSelection("/api/photos/caption/bulk",
+    { photo_ids: ids, caption_de: text, lock: true },
+    (r) => `${r.updated} ${r.updated === 1 ? "Foto" : "Fotos"} beschriftet`
+         + (r.reembedded ? `, ${r.reembedded} neu eingebettet` : "") + ".");
 });
 
 function lbInfoOpen() {
