@@ -1,8 +1,8 @@
-import { $, escapeHtml, num } from "./core/dom.js?v=18";
-import { api, cropUrl } from "./core/api.js?v=18";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=18";
-import { gate } from "./core/capabilities.js?v=18";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=18";
+import { $, escapeHtml, num } from "./core/dom.js?v=19";
+import { api, cropUrl } from "./core/api.js?v=19";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=19";
+import { gate } from "./core/capabilities.js?v=19";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=19";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -28,13 +28,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=18");
+  const { initAtlas } = await import("./atlas/index.js?v=19");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=18");
+  const mod = await import("./trash/index.js?v=19");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -1042,24 +1042,34 @@ function renderChannelBar(host, data, redraw) {
   }));
 }
 
-function fillGallery(timelineEl, streamEl, data, { selectable, meta } = {}) {
-  lastGallery = { timelineEl, streamEl, data, selectable };
+function fillGallery(timelineEl, streamEl, full, { selectable, meta } = {}) {
+  /* `full` ist der ungefilterte Bestand und bleibt es.
+
+     Vorher hiess der Parameter `data` und wurde eine Zeile spaeter mit dem
+     gefilterten Ergebnis ueberschrieben. Der Rueckruf der Filterleiste
+     schliesst aber ueber *dieselbe Variable*, nicht ueber ihren damaligen
+     Wert -- beim naechsten Klick bekam er also die bereits gefilterten
+     Daten. Damit filterte jeder Klick auf dem Ergebnis des vorigen weiter:
+     erst "Alle" 51, dann "Eigene Aufnahmen" 17, und danach zeigte auch
+     "Alle" nur noch diese 17, bis man die Seite neu lud. */
+  lastGallery = { timelineEl, streamEl, data: full, selectable };
   const bar = streamEl.previousElementSibling?.classList.contains("chanbar")
     ? streamEl.previousElementSibling
     : Object.assign(document.createElement("div"), { className: "chanbar" });
   if (!bar.parentNode) streamEl.parentNode.insertBefore(bar, streamEl);
-  renderChannelBar(bar, data, () =>
-    fillGallery(timelineEl, streamEl, data, { selectable, meta }));
+  // Die Zahlen in der Leiste kommen ebenfalls aus dem vollen Bestand --
+  // sonst schrumpfen sie bei jedem Umschalten mit.
+  renderChannelBar(bar, full, () =>
+    fillGallery(timelineEl, streamEl, full, { selectable, meta }));
 
-  const ganz = data.total;
-  data = filterByChannel(data, channelFilter);
+  const data = filterByChannel(full, channelFilter);
   // Die Zahl in der Ueberschrift muss zu dem passen, was darunter steht.
   // Sonst sieht ein aktiver Filter aus wie fehlende Fotos.
   if (meta) {
     const name = (CHANNEL_FILTERS.find((f) => f.key === channelFilter) || {}).label;
     const span = data.span ? ` · ${data.span.from.slice(0, 4)}–${data.span.to.slice(0, 4)}` : "";
     meta.textContent = channelFilter
-      ? `${data.total} von ${ganz} Fotos — nur ${name}${span} · ${data.years.length} Jahre`
+      ? `${data.total} von ${full.total} Fotos — nur ${name}${span} · ${data.years.length} Jahre`
       : `${data.total} Foto${data.total === 1 ? "" : "s"}${span} · ${data.years.length} Jahre`;
   }
   const years = data.years || [];

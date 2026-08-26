@@ -9,9 +9,9 @@
    benannter Mensch ist. Das ist die Arbeit, die mitverloren geht — und man
    soll es vorher wissen, nicht hinterher. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=18";
-import { api, thumbUrl } from "../core/api.js?v=18";
-import { openModal } from "../core/modal.js?v=18";
+import { $, escapeHtml, num } from "../core/dom.js?v=19";
+import { api, thumbUrl } from "../core/api.js?v=19";
+import { openModal } from "../core/modal.js?v=19";
 
 const PAGE = 60;
 
