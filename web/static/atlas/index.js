@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=19";
-import { api, thumbUrl } from "../core/api.js?v=19";
-import { openModal } from "../core/modal.js?v=19";
-import { createPathPick } from "../core/pathpick.js?v=19";
-import { feature, gate } from "../core/capabilities.js?v=19";
+import { $, escapeHtml, num } from "../core/dom.js?v=20";
+import { api, thumbUrl } from "../core/api.js?v=20";
+import { openModal } from "../core/modal.js?v=20";
+import { createPathPick } from "../core/pathpick.js?v=20";
+import { feature, gate } from "../core/capabilities.js?v=20";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=19";
-import { createScene } from "./scene.js?v=19";
+} from "./model.js?v=20";
+import { createScene } from "./scene.js?v=20";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -147,8 +147,91 @@ ${escapeHtml(build.why)}`}</pre>`;
   scene.setThumbMode(thumbMode);
   applyFilters();
   paintLegend();
-  paintBriefing();
+  watchBarHeight();
+  makeDraggable($("atlas-brief"), "h2");
+  makeDraggable($("atlas-sel"), "header");
+  // Beim Aufschlagen nur zeigen, wenn es etwas zu tun gibt. Ein Kasten, der
+  // "nichts offen" meldet und dabei die Werkzeugleiste verdeckt, ist keine
+  // Hilfe -- ueber das Werkzeug "Aufgaben" ist er jederzeit erreichbar.
+  paintBriefing({ onlyIfWork: true });
   document.addEventListener("keydown", onKey);
+}
+
+/* ---- Panels verschieben ------------------------------------------------
+   Zwei Kaesten liegen ueber der Karte, und wo sie stehen ist manchmal genau
+   dort, wo man hinsehen will. Angefasst wird an der Ueberschrift -- ein
+   Klick auf einen Knopf darin soll nicht ziehen. Die Lage bleibt erhalten,
+   sonst muesste man sie nach jedem Oeffnen neu wegschieben. */
+
+const DRAG_KEY = "pv-atlas-panel-";
+
+function panelOffset(id) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DRAG_KEY + id) || "null");
+    if (raw && Number.isFinite(raw.x) && Number.isFinite(raw.y)) return raw;
+  } catch { /* privater Modus */ }
+  return { x: 0, y: 0 };
+}
+
+function placePanel(el) {
+  const { x, y } = panelOffset(el.id);
+  el.style.transform = x || y ? `translate(${x}px, ${y}px)` : "";
+}
+
+function makeDraggable(el, handleSel) {
+  if (!el || el.dataset.dragReady) return;
+  el.dataset.dragReady = "1";
+  placePanel(el);
+  el.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest(handleSel);
+    if (!handle || !el.contains(handle)) return;
+    // Knoepfe in der Ueberschrift bleiben Knoepfe.
+    if (e.target.closest("button, a, input, select")) return;
+    e.preventDefault();
+    const start = panelOffset(el.id);
+    const x0 = e.clientX, y0 = e.clientY;
+    el.classList.add("dragging");
+    el.setPointerCapture(e.pointerId);
+
+    const move = (ev) => {
+      const box = el.getBoundingClientRect();
+      const wrap = el.parentElement.getBoundingClientRect();
+      let x = start.x + (ev.clientX - x0);
+      let y = start.y + (ev.clientY - y0);
+      // Nicht aus dem Fenster schieben koennen -- ein Kasten, den man nicht
+      // mehr sieht, laesst sich auch nicht zurueckholen.
+      const minX = wrap.left - box.left + start.x + 20 - box.width;
+      const maxX = wrap.right - box.left + start.x - 20;
+      const minY = wrap.top - box.top + start.y;
+      const maxY = wrap.bottom - box.top + start.y - 36;
+      x = Math.max(minX, Math.min(maxX, x));
+      y = Math.max(minY, Math.min(maxY, y));
+      el.style.transform = `translate(${x}px, ${y}px)`;
+      el._drag = { x, y };
+    };
+    const up = () => {
+      el.classList.remove("dragging");
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      if (el._drag) {
+        try { localStorage.setItem(DRAG_KEY + el.id, JSON.stringify(el._drag)); }
+        catch { /* privater Modus */ }
+      }
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  });
+}
+
+/** Die Werkzeugleiste bricht um; die Panels muessen wissen, wie hoch sie ist. */
+function watchBarHeight() {
+  const bar = $("atlas-bar");
+  const wrap = bar?.parentElement;
+  if (!bar || !wrap) return;
+  const apply = () =>
+    wrap.style.setProperty("--atlas-bar-h", `${Math.round(bar.getBoundingClientRect().height)}px`);
+  new ResizeObserver(apply).observe(bar);
+  apply();
 }
 
 /* ---- Werkzeugleiste ---------------------------------------------------- */
@@ -459,41 +542,98 @@ function paintLegend() {
    Hier steht dieselbe Art Satz -- gerechnet aus dem, was die Karte ohnehin
    weiss. */
 
+/* Was ist hier noch offen?
+
+   Die Karte weiss es und soll es sagen. Frueher stand hier nur eine Zahl --
+   "N Fotos noch unberuehrt" -- und darunter die Kontinente mit den meisten
+   davon. Nach dem Caption-Lauf sind es drei, und der Kasten meldete
+   dreimal nichts und verdeckte dabei die Werkzeugleiste.
+
+   Die Arbeit ist ja nicht weg, sie hat nur die Form gewechselt: 3.000 Fotos
+   zeigen Gesichter ohne Namen, Tausende haben ein geratenes Datum. Also
+   werden mehrere Sorten gezaehlt und die groesste zuerst genannt -- jede
+   mit einem Knopf, der genau diese Fotos auf der Karte auswaehlt. */
+
+const JOBS = [
+  {
+    id: "unberuehrt", label: "ganz unberührt",
+    hint: "ohne Person, ohne Beschreibung, ohne Serie, Datum geraten",
+    pick: (i) => tidiness(model.fl[i]) === 0,
+  },
+  {
+    id: "gesichter", label: "Gesichter ohne Namen",
+    hint: "jemand ist drauf, aber niemand weiß wer",
+    pick: (i) => model.fl[i] & FLAG.FACES_UNNAMED,
+  },
+  {
+    id: "beschreibung", label: "ohne Beschreibung",
+    hint: "kein Satz, der sie in der Suche findbar macht",
+    pick: (i) => !(model.fl[i] & FLAG.CAPTION),
+  },
+  {
+    id: "datum", label: "Datum nicht aus der Kamera",
+    hint: "geschätzt aus Dateiname, Ordner oder Nachbarn — oft trotzdem richtig",
+    pick: (i) => !(model.fl[i] & FLAG.EXIF_DATE),
+  },
+  {
+    // Die Flagge steht fuer *benannt*, nicht fuer *vorhanden*. Fast jedes
+    // Foto gehoert zu einer Serie; die wenigsten Serien haben einen Namen.
+    id: "serie", label: "in keiner benannten Serie",
+    hint: "gehören zu einer Gelegenheit, die noch keinen Namen hat",
+    pick: (i) => !(model.fl[i] & FLAG.EVENT),
+  },
+];
+
 //: Unter so vielen offenen Fotos lohnt der Weg nicht.
 const WORTH_A_TRIP = 25;
 
-function paintBriefing() {
+function briefingJobs() {
+  const m = mask();
+  const found = JOBS.map((j) => ({ ...j, ids: [] }));
+  for (let i = 0; i < model.n; i++) {
+    if (!m[i]) continue;
+    for (const j of found) if (j.pick(i)) j.ids.push(i);
+  }
+  return found.filter((j) => j.ids.length).sort((a, b) => b.ids.length - a.ids.length);
+}
+
+function paintBriefing({ onlyIfWork = false } = {}) {
   const box = $("atlas-brief");
-  const untouched = [];
-  for (let i = 0; i < model.n; i++) if (tidiness(model.fl[i]) === 0) untouched.push(i);
+  const jobs = briefingJobs();
+  if (onlyIfWork && !jobs.length) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
 
+  // Die groesste Sorte bekommt zusaetzlich die Kontinente mit den meisten
+  // davon -- dort anzufangen spart den Weg.
+  const top = jobs[0];
   const perCluster = new Map();
-  for (const i of untouched) perCluster.set(model.cl[i], (perCluster.get(model.cl[i]) || 0) + 1);
-
-  // Nach *Anzahl* sortieren, nicht nach Anteil. Ein Anteilsschwellwert lieferte
-  // nach dem Caption-Lauf gar keinen Vorschlag mehr -- die Karte nannte eine
-  // Zahl und liess einen stehen. Wo am meisten liegt, lohnt der Weg.
-  const offen = model.clusters
-    .filter((c) => (perCluster.get(c.i) || 0) >= WORTH_A_TRIP)
-    .sort((a, b) => (perCluster.get(b.i) || 0) - (perCluster.get(a.i) || 0))
-    .slice(0, 5);
-
-  const faces = [];
-  for (let i = 0; i < model.n; i++) if (model.fl[i] & FLAG.FACES_UNNAMED) faces.push(i);
+  if (top) for (const i of top.ids) perCluster.set(model.cl[i], (perCluster.get(model.cl[i]) || 0) + 1);
+  const orte = top
+    ? model.clusters
+        .filter((c) => (perCluster.get(c.i) || 0) >= WORTH_A_TRIP)
+        .sort((a, b) => (perCluster.get(b.i) || 0) - (perCluster.get(a.i) || 0))
+        .slice(0, 4)
+    : [];
 
   box.innerHTML = `
-    <h2>${num(untouched.length)} Fotos noch unberührt</h2>
-    <p class="muted">ohne Person, ohne Beschreibung, ohne Serie, Datum geraten.</p>
-    ${offen.length ? `<ul>${offen.map((c) => `
-      <li><button data-go="${c.i}">
-        <img src="${thumbUrl(c.cover, 160)}" alt="">
-        <span><b>${escapeHtml(model.clusterLabel[c.i])}</b>
-        <em>${num(perCluster.get(c.i) || 0)} von ${num(c.n)} offen</em></span>
-      </button></li>`).join("")}</ul>`
-      : `<p class="muted">Kein Kontinent mit mehr als ${WORTH_A_TRIP} offenen Fotos —
-         was übrig ist, liegt verstreut.</p>`}
-    ${faces.length ? `<p class="brief-next">
-      <button data-faces="1">${num(faces.length)} Fotos zeigen Gesichter ohne Namen →</button></p>` : ""}
+    <h2>Was ist noch offen?</h2>
+    ${jobs.length ? `
+      <ul class="brief-jobs">${jobs.map((j) => `
+        <li><button data-job="${j.id}" title="${escapeHtml(j.hint)}">
+          <b>${num(j.ids.length)}</b> <span>${escapeHtml(j.label)}</span>
+        </button></li>`).join("")}</ul>
+      ${orte.length ? `
+        <p class="muted brief-where">Am meisten ${escapeHtml(top.label)} liegt hier:</p>
+        <ul>${orte.map((c) => `
+          <li><button data-go="${c.i}">
+            <img src="${thumbUrl(c.cover, 160)}" alt="">
+            <span><b>${escapeHtml(model.clusterLabel[c.i])}</b>
+            <em>${num(perCluster.get(c.i) || 0)} von ${num(c.n)}</em></span>
+          </button></li>`).join("")}</ul>`
+        : `<p class="muted">Kein Kontinent mit mehr als ${WORTH_A_TRIP} davon —
+           was übrig ist, liegt verstreut.</p>`}`
+      : `<p class="muted">Nichts offen: jedes sichtbare Foto hat Person,
+         Beschreibung, Serie und ein Datum aus der Kamera.</p>`}
     <footer>
       <button class="chip" id="atlas-brief-close">schließen</button>
       <span class="muted">Strg+Klick auf ein Foto: mehr davon</span>
@@ -501,28 +641,27 @@ function paintBriefing() {
 
   box.onclick = (e) => {
     if (e.target.id === "atlas-brief-close") { box.classList.add("hidden"); return; }
-    if (e.target.closest("[data-faces]")) {
-      // Die naechste Arbeit liegt woanders -- dann soll die Karte dorthin
-      // zeigen und nicht selbst so tun, als koennte sie Gesichter benennen.
-      const m = mask();
-      selection = new Set(faces.filter((i) => m[i]));
+
+    const jb = e.target.closest("[data-job]");
+    if (jb) {
+      const j = jobs.find((x) => x.id === jb.dataset.job);
+      if (!j) return;
+      selection = new Set(j.ids);
       scene.setSelection(selection);
       scene.focusSet([...selection]);
       paintSelection();
-      box.classList.add("hidden");
       return;
     }
+
     const b = e.target.closest("[data-go]");
-    if (!b) return;
+    if (!b || !top) return;
     const c = model.clusters[Number(b.dataset.go)];
-    const m = mask();
-    selection = new Set(untouched.filter((i) => model.cl[i] === c.i && m[i]));
+    selection = new Set(top.ids.filter((i) => model.cl[i] === c.i));
     scene.setSelection(selection);
     scene.focusCluster(c);
     paintSelection();
     box.classList.add("hidden");
   };
-  box.classList.remove("hidden");
 }
 
 /* ---- Schweben ---------------------------------------------------------- */

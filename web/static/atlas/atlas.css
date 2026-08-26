@@ -196,7 +196,10 @@
 
 .atlas-sel {
   position: absolute;
-  top: 68px; right: 14px;
+  /* Unter die Werkzeugleiste, und zwar unter die *gemessene*: sie bricht bei
+     schmalem Fenster auf zwei oder drei Reihen um, und ein fester Wert liess
+     die Panels dann darueberlappen. `--atlas-bar-h` setzt die Karte selbst. */
+  top: calc(var(--atlas-bar-h, 56px) + 24px); right: 14px;
   width: 288px;
   max-height: calc(100% - 96px);
   overflow-y: auto;
@@ -347,7 +350,7 @@
 
 .atlas-brief {
   position: absolute;
-  top: 68px; left: 14px;
+  top: calc(var(--atlas-bar-h, 56px) + 24px); left: 14px;
   width: 320px;
   padding: 16px 16px 12px;
   border-radius: 16px;
@@ -355,6 +358,22 @@
   border: 1px solid #2a3140;
   box-shadow: 0 16px 44px #0009;
 }
+/* ---- Verschiebbar ------------------------------------------------------
+   Beide Panels stehen dort, wo gerade Platz ist -- und wenn nicht, schiebt
+   man sie weg. Angefasst wird an der Ueberschrift, damit ein Klick auf einen
+   Knopf darin nicht versehentlich zieht. */
+
+.atlas-brief h2, .atlas-sel header { cursor: grab; user-select: none; }
+.atlas-brief.dragging, .atlas-sel.dragging { cursor: grabbing; }
+.atlas-brief.dragging h2, .atlas-sel.dragging header { cursor: grabbing; }
+.atlas-brief h2::before, .atlas-sel header::before {
+  content: "⠿";
+  color: #5d6773;
+  margin-right: 7px;
+  font-size: .8em;
+  vertical-align: 1px;
+}
+
 .atlas-brief h2 { margin: 0 0 4px; font-size: 1.05rem; }
 .atlas-brief > p { margin: 0 0 12px; font-size: .8rem; }
 .atlas-brief ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -427,3 +446,25 @@
   max-width: calc(100% - 24px);
 }
 .atlas-stats b { color: #f2f4f8; }
+
+/* Die offenen Arbeiten als Liste: Zahl vorn, damit man sie ueberfliegen
+   kann, und die groesste zuerst. */
+.brief-jobs { margin: 0 0 12px !important; gap: 3px !important; }
+.brief-jobs button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: #1d222c;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.brief-jobs button:hover { background: #262c38; border-color: var(--accent); }
+.brief-jobs b { font-variant-numeric: tabular-nums; min-width: 3.4em; text-align: right; }
+.brief-jobs span { color: var(--muted); font-size: .85rem; }
+.brief-where { margin: 0 0 6px !important; font-size: .78rem; }
