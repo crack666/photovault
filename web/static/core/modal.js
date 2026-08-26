@@ -132,3 +132,55 @@ export async function askText({ title, lead, placeholder = "", ok = "Übernehmen
   const text = (answer === "ok" ? field.value : "").trim();
   return text || null;
 }
+
+
+/** Eine Ja/Nein-Frage stellen -- die Entsprechung zu `askText`.
+
+    `confirm()` hat dieselben zwei Probleme wie `prompt()`: es sieht aus wie
+    eine Warnung der Website, und wo es gesperrt ist, bricht die Zusage ab.
+    Bei einer Frage heisst das: die Handlung passiert nie, und niemand sagt
+    warum. Bei „Ordner umbenennen" oder „Gesichter dauerhaft ignorieren" ist
+    das ein Knopf, der aussieht wie kaputt.
+
+    `danger` faerbt den Bestaetigen-Knopf -- fuer alles, was nicht durch einen
+    zweiten Klick zurueckzuholen ist. */
+export async function askConfirm({ title, lead = "", ok = "Ja", danger = false }) {
+  const dlg = openModal({
+    title, lead,
+    buttons: [
+      { id: "cancel", label: "Abbrechen" },
+      { id: "ok", label: ok, kind: danger ? "danger" : "primary" },
+    ],
+  });
+  return (await dlg.wait()) === "ok";
+}
+
+/* ---- Kurznachricht ------------------------------------------------------
+   Der Ersatz fuer `alert()`.
+
+   `alert()` haelt die Seite an, verlangt einen Klick fuer eine Information,
+   die man nur zur Kenntnis nimmt -- und wo es gesperrt ist, wirft es. Das ist
+   schlimmer als es klingt: der Aufruf steht meist *nach* der erfolgreichen
+   Handlung, und alles danach (Auswahl leeren, Liste neu laden) faellt dann
+   aus. Die Handlung hat gewirkt, die Oberflaeche zeigt das Gegenteil.
+
+   Also eine Zeile am unteren Rand, die von selbst geht. Fehler bleiben
+   laenger stehen als Erfolge, weil man sie lesen will. */
+
+let noteBox = null;
+let noteTimer = null;
+
+export function notify(text, { kind = "ok", ms } = {}) {
+  if (!noteBox) {
+    noteBox = document.createElement("div");
+    noteBox.className = "pv-note hidden";
+    noteBox.setAttribute("role", "status");
+    noteBox.addEventListener("click", () => noteBox.classList.add("hidden"));
+    document.body.appendChild(noteBox);
+  }
+  noteBox.textContent = text;
+  noteBox.className = `pv-note ${kind === "error" ? "bad" : ""}`;
+  clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => noteBox.classList.add("hidden"),
+                         ms ?? (kind === "error" ? 12000 : 5000));
+}

@@ -1,9 +1,9 @@
-import { $, escapeHtml, num } from "./core/dom.js?v=24";
-import { api, cropUrl } from "./core/api.js?v=24";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=24";
-import { gate } from "./core/capabilities.js?v=24";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=24";
-import { askText } from "./core/modal.js?v=24";
+import { $, escapeHtml, num } from "./core/dom.js?v=25";
+import { api, cropUrl } from "./core/api.js?v=25";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=25";
+import { gate } from "./core/capabilities.js?v=25";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=25";
+import { askConfirm, askText, notify } from "./core/modal.js?v=25";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -29,13 +29,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=24");
+  const { initAtlas } = await import("./atlas/index.js?v=25");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=24");
+  const mod = await import("./trash/index.js?v=25");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -209,7 +209,12 @@ $("ukd-form").addEventListener("submit", (e) => {
 $("ukd-ignore").addEventListener("click", async () => {
   if (!ukCluster) return;
   const n = ukCluster.face_ids.length;
-  if (!confirm(`${n} Gesicht${n === 1 ? "" : "er"} dieser Gruppe dauerhaft ignorieren?`)) return;
+  if (!await askConfirm({
+    title: `${n} Gesicht${n === 1 ? "" : "er"} dauerhaft ignorieren`,
+    lead: "Sie verschwinden aus „Wer ist das?“ und tauchen nicht wieder auf. "
+        + "Die Fotos bleiben, nur diese Gesichter werden nicht mehr gefragt.",
+    ok: "Ignorieren", danger: true,
+  })) return;
   await api("/api/persons/ignore", {
     method: "POST", body: JSON.stringify({ face_ids: ukCluster.face_ids }),
   });
@@ -233,23 +238,43 @@ $("uk-none").addEventListener("click", () => {
 
 $("uk-ignore").addEventListener("click", async () => {
   const n = ukSel.size;
-  if (!n || !confirm(`${n} Gesicht${n === 1 ? "" : "er"} dauerhaft ignorieren?\n\nSie verschwinden aus „Wer ist das?“ und tauchen nicht wieder auf.`)) return;
-  const res = await api("/api/persons/ignore", {
-    method: "POST", body: JSON.stringify({ face_ids: [...ukSel] }),
-  });
-  alert(`${res.ignored} ignoriert.`);
+  if (!n) return;
+  if (!await askConfirm({
+    title: `${n} Gesicht${n === 1 ? "" : "er"} dauerhaft ignorieren`,
+    lead: "Sie verschwinden aus „Wer ist das?“ und tauchen nicht wieder auf.",
+    ok: "Ignorieren", danger: true,
+  })) return;
+  try {
+    const res = await api("/api/persons/ignore", {
+      method: "POST", body: JSON.stringify({ face_ids: [...ukSel] }),
+    });
+    notify(`${res.ignored} ignoriert.`);
+  } catch (e) {
+    notify(`Konnte nicht ignorieren: ${e.message || e}`, { kind: "error" });
+    return;
+  }
   loadUnknown(true);
 });
 
 $("uk-name").addEventListener("click", async () => {
   const n = ukSel.size;
   if (!n) return;
-  const name = prompt(`${n} Gesicht${n === 1 ? "" : "er"} welcher Person zuordnen?`);
-  if (!name || !name.trim()) return;
-  const res = await api("/api/persons/faces/move", {
-    method: "POST", body: JSON.stringify({ face_ids: [...ukSel], name: name.trim() }),
+  const name = await askText({
+    title: `${n} Gesicht${n === 1 ? "" : "er"} zuordnen`,
+    lead: "Bestehender oder neuer Name. Ein Vorname genügt, wenn er eindeutig ist.",
+    placeholder: "Name",
+    ok: "Zuordnen",
   });
-  alert(`${res.moved} zugeordnet zu „${res.to.name}“.`);
+  if (!name) return;
+  try {
+    const res = await api("/api/persons/faces/move", {
+      method: "POST", body: JSON.stringify({ face_ids: [...ukSel], name }),
+    });
+    notify(`${res.moved} zugeordnet zu „${res.to.name}“.`);
+  } catch (e) {
+    notify(`Konnte nicht zuordnen: ${e.message || e}`, { kind: "error" });
+    return;
+  }
   loadUnknown(true);
 });
 
@@ -1653,25 +1678,45 @@ function updateFaceSelection() {
 
 $("btn-unassign").addEventListener("click", async () => {
   const n = selectedFaces.size;
-  if (!n || !confirm(`${n} Gesicht${n === 1 ? "" : "er"} aus dieser Person entfernen?\n\nSie wandern zurück in „Wer ist das?“.`)) return;
-  const res = await api("/api/persons/faces/unassign", {
-    method: "POST",
-    body: JSON.stringify({ face_ids: [...selectedFaces] }),
-  });
-  alert(`${res.freed} entfernt, ${res.photos_updated} Fotos aktualisiert.`);
+  if (!n) return;
+  if (!await askConfirm({
+    title: `${n} Gesicht${n === 1 ? "" : "er"} aus dieser Person entfernen`,
+    lead: "Sie wandern zurück in „Wer ist das?“ und können dort neu zugeordnet werden.",
+    ok: "Entfernen",
+  })) return;
+  try {
+    const res = await api("/api/persons/faces/unassign", {
+      method: "POST",
+      body: JSON.stringify({ face_ids: [...selectedFaces] }),
+    });
+    notify(`${res.freed} entfernt, ${res.photos_updated} Fotos aktualisiert.`);
+  } catch (e) {
+    notify(`Konnte nicht entfernen: ${e.message || e}`, { kind: "error" });
+    return;
+  }
   reopenCurrentPerson();
 });
 
 $("btn-move").addEventListener("click", async () => {
   const n = selectedFaces.size;
   if (!n) return;
-  const name = prompt(`${n} Gesicht${n === 1 ? "" : "er"} welcher Person zuordnen?\n(bestehender oder neuer Name)`);
-  if (!name || !name.trim()) return;
-  const res = await api("/api/persons/faces/move", {
-    method: "POST",
-    body: JSON.stringify({ face_ids: [...selectedFaces], name: name.trim() }),
+  const name = await askText({
+    title: `${n} Gesicht${n === 1 ? "" : "er"} zuordnen`,
+    lead: "Bestehender oder neuer Name.",
+    placeholder: "Name",
+    ok: "Zuordnen",
   });
-  alert(`${res.moved} verschoben zu „${res.to.name}“, ${res.photos_updated} Fotos aktualisiert.`);
+  if (!name) return;
+  try {
+    const res = await api("/api/persons/faces/move", {
+      method: "POST",
+      body: JSON.stringify({ face_ids: [...selectedFaces], name }),
+    });
+    notify(`${res.moved} verschoben zu „${res.to.name}“, ${res.photos_updated} Fotos aktualisiert.`);
+  } catch (e) {
+    notify(`Konnte nicht verschieben: ${e.message || e}`, { kind: "error" });
+    return;
+  }
   reopenCurrentPerson();
 });
 
@@ -1684,13 +1729,24 @@ async function reopenCurrentPerson() {
 }
 
 async function renamePerson(p) {
-  const name = prompt(`Neuer Name für „${p.name}“`, p.name);
-  if (!name || name.trim() === p.name) return;
-  const res = await api(`/api/persons/${encodeURIComponent(p.id)}/rename`, {
-    method: "POST",
-    body: JSON.stringify({ name: name.trim() }),
+  const name = await askText({
+    title: `„${p.name}“ umbenennen`,
+    lead: "Gilt für alle Gesichter und Fotos dieser Person.",
+    placeholder: "Neuer Name",
+    ok: "Umbenennen",
+    value: p.name,
   });
-  alert(`Umbenannt: ${res.faces} Gesichter, ${res.photos} Fotos aktualisiert.`);
+  if (!name || name === p.name) return;
+  try {
+    const res = await api(`/api/persons/${encodeURIComponent(p.id)}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    notify(`Umbenannt: ${res.faces} Gesichter, ${res.photos} Fotos aktualisiert.`);
+  } catch (e) {
+    notify(`Konnte nicht umbenennen: ${e.message || e}`, { kind: "error" });
+    return;
+  }
   loadPeople();
 }
 
@@ -1698,31 +1754,48 @@ async function renamePerson(p) {
    saubere Eintrag, „Karo“ findet trotzdem „Annika Wolf“. */
 async function editAliases(p) {
   const current = (p.aliases || []).join(", ");
-  const input = prompt(
-    `Spitznamen für „${p.name}“\n(mit Komma trennen, leer lassen zum Entfernen)\n\n` +
-    `Damit findet die Suche die Person auch unter diesen Namen.`,
-    current
-  );
-  if (input === null) return;
-  const res = await api(`/api/persons/${encodeURIComponent(p.id)}/aliases`, {
-    method: "POST",
-    body: JSON.stringify({ aliases: input.split(",").map((s) => s.trim()).filter(Boolean) }),
+  // Leer bedeutet hier „alle entfernen" und ist damit eine gueltige Antwort.
+  // `askText` gibt fuer leeren Text `null` zurueck, also wird das Abbrechen
+  // hier nicht am Inhalt erkannt, sondern eigens gefragt.
+  const input = await askText({
+    title: `Spitznamen für „${p.name}“`,
+    lead: "Mit Komma trennen. Damit findet die Suche die Person auch unter diesen Namen. "
+        + "Leer lassen und übernehmen entfernt alle.",
+    placeholder: "Karo, Kari",
+    ok: "Speichern",
+    value: current,
   });
-  peopleCache = [];  // Picker im Suchtab neu laden
-  alert(res.aliases.length
-    ? `Gespeichert: „${res.aliases.join("“, „")}“`
-    : "Spitznamen entfernt.");
+  if (input === null && current === "") return;
+  try {
+    const res = await api(`/api/persons/${encodeURIComponent(p.id)}/aliases`, {
+      method: "POST",
+      body: JSON.stringify({ aliases: (input || "").split(",").map((s) => s.trim()).filter(Boolean) }),
+    });
+    peopleCache = [];  // Picker im Suchtab neu laden
+    notify(res.aliases.length
+      ? `Gespeichert: „${res.aliases.join("“, „")}“`
+      : "Spitznamen entfernt.");
+  } catch (e) {
+    notify(`Konnte Spitznamen nicht speichern: ${e.message || e}`, { kind: "error" });
+    return;
+  }
   loadPeople();
 }
 
 async function unassignPerson(p) {
-  if (!confirm(
-    `Zuordnung von „${p.name}“ auflösen?\n\n` +
-    `${p.face_count} Gesichter wandern zurück in „Wer ist das?“. ` +
-    `Die Fotos bleiben, nur der Name wird entfernt.`
-  )) return;
-  const res = await api(`/api/persons/${encodeURIComponent(p.id)}`, { method: "DELETE" });
-  alert(`Gelöst: ${res.faces_freed} Gesichter zurück in die Queue, ${res.photos} Fotos bereinigt.`);
+  if (!await askConfirm({
+    title: `Zuordnung von „${p.name}“ auflösen`,
+    lead: `${p.face_count} Gesichter wandern zurück in „Wer ist das?“. `
+        + "Die Fotos bleiben, nur der Name wird entfernt.",
+    ok: "Auflösen", danger: true,
+  })) return;
+  try {
+    const res = await api(`/api/persons/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+    notify(`Gelöst: ${res.faces_freed} Gesichter zurück in die Queue, ${res.photos} Fotos bereinigt.`);
+  } catch (e) {
+    notify(`Konnte nicht auflösen: ${e.message || e}`, { kind: "error" });
+    return;
+  }
   loadPeople();
 }
 
@@ -2003,7 +2076,7 @@ async function loadEvents() {
         loadEventTab();
       } catch (err) {
         input.disabled = false;
-        alert(`Konnte nicht gespeichert werden: ${err.message || err}`);
+        notify(`Konnte nicht gespeichert werden: ${err.message || err}`, { kind: "error" });
       }
     });
   });
@@ -2072,7 +2145,7 @@ async function loadNamed() {
             photo_ids: [id],
             name: isOut ? null : ev.name,
           }),
-        }).catch((err) => alert(`Konnte Serie nicht anpassen: ${err.message || err}`));
+        }).catch((err) => notify(`Konnte Serie nicht anpassen: ${err.message || err}`, { kind: "error" }));
         const kept = (ev.photo_ids || []).filter((x) => !ev.excluded.has(x)).length;
         const dest = el.querySelector(".nm-dest");
         if (dest && ev.dest) {
@@ -2091,7 +2164,11 @@ async function loadNamed() {
 }
 
 async function forgetSeries(ev, el) {
-  if (!confirm(`Namen „${ev.name}“ löschen? Die Dateien bleiben wo sie sind.`)) return;
+  if (!await askConfirm({
+    title: `Namen „${ev.name}“ löschen`,
+    lead: "Die Dateien bleiben wo sie sind — nur der Name der Serie verschwindet.",
+    ok: "Namen löschen", danger: true,
+  })) return;
   try {
     await api("/api/events/forget", {
       method: "POST",
@@ -2103,7 +2180,7 @@ async function forgetSeries(ev, el) {
     el.remove();
     refreshEventNames();
   } catch (err) {
-    alert(`Konnte Namen nicht löschen: ${err.message || err}`);
+    notify(`Konnte Namen nicht löschen: ${err.message || err}`, { kind: "error" });
   }
 }
 
@@ -2122,7 +2199,7 @@ async function renameSeries(ev, el) {
     el.querySelector(".serie-head strong").textContent = name;
     refreshEventNames();
   } catch (err) {
-    alert(`Konnte nicht umbenennen: ${err.message || err}`);
+    notify(`Konnte nicht umbenennen: ${err.message || err}`, { kind: "error" });
   }
 }
 
@@ -2130,14 +2207,16 @@ async function shelveSeries(ev, btn) {
   const kept = (ev.photo_ids || []).filter((id) => !(ev.excluded && ev.excluded.has(id)));
   const n = kept.length;
   if (!n) {
-    alert("Keine Fotos übrig — zuerst mit ✕ nichts mehr übrig gelassen.");
+    notify("Keine Fotos übrig — zuerst mit ✕ nichts mehr übrig gelassen.", { kind: "error" });
     return;
   }
   const dest = ev.dest || "einen neuen Ordner";
-  if (!confirm(
-    `${n} Foto${n === 1 ? "" : "s"} nach\n${dest}\nlegen?\n\n` +
-    `Nur diese Dateien (Move), ohne die mit ✕. ${(ev.folders || []).join(", ") || "Der Dump"} bleibt sonst unangetastet.`
-  )) return;
+  if (!await askConfirm({
+    title: `${n} Foto${n === 1 ? "" : "s"} ablegen`,
+    lead: `Nach <b>${escapeHtml(dest)}</b> verschieben — nur diese Dateien, ohne die mit ✕. `
+        + `${escapeHtml((ev.folders || []).join(", ") || "Der Dump")} bleibt sonst unangetastet.`,
+    ok: "Verschieben",
+  })) return;
   btn.disabled = true;
   btn.textContent = "verschiebt …";
   try {
@@ -2146,13 +2225,13 @@ async function shelveSeries(ev, btn) {
       body: JSON.stringify({ name: ev.name, photo_ids: kept, dry_run: false }),
     });
     if (res.failed && res.failed.length) {
-      alert(`Abgelegt, aber ${res.failed.length} Fehler.`);
+      notify(`Abgelegt, aber ${res.failed.length} Fehler.`, { kind: "error" });
     }
     loadNamed();
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "Fotos dorthin legen";
-    alert(`Konnte nicht ablegen: ${err.message || err}`);
+    notify(`Konnte nicht ablegen: ${err.message || err}`, { kind: "error" });
   }
 }
 
@@ -2443,13 +2522,15 @@ function renderSuggestion(s, i) {
   </div>`;
 }
 
-function confirmMove(name, destParent, ids) {
+async function confirmMove(name, destParent, ids) {
   if (!destParent || !ids.length) return true;
   const dest = joinDest(destParent, name);
-  return confirm(
-    `${ids.length} Foto${ids.length === 1 ? "" : "s"} nach\n${dest}\nlegen (Move)?\n\n` +
-    `Abgewählte Ordner bleiben. Gleichnamige Dateien bekommen -2.`
-  );
+  return askConfirm({
+    title: `${ids.length} Foto${ids.length === 1 ? "" : "s"} verschieben`,
+    lead: `Nach <b>${escapeHtml(dest)}</b>. Abgewählte Ordner bleiben, `
+        + "gleichnamige Dateien bekommen -2.",
+    ok: "Verschieben",
+  });
 }
 
 async function shelveChecked(name, destParent, ids) {
@@ -2467,10 +2548,10 @@ async function acceptSuggestion(s, el) {
     if (!name) return;
     const ids = selectedMergeIds(s, el._sgDropped);
     if (!ids.length) {
-      alert("Keine Ordner übrig — mindestens einen Haken setzen.");
+      notify("Keine Ordner übrig — mindestens einen Haken setzen.", { kind: "error" });
       return;
     }
-    if (!confirmMove(name, s.dest_parent, ids)) return;
+    if (!await confirmMove(name, s.dest_parent, ids)) return;
     btn.disabled = true;
     try {
       await api("/api/events/merge", {
@@ -2485,13 +2566,13 @@ async function acceptSuggestion(s, el) {
       });
       const moved = await shelveChecked(name, s.dest_parent, ids);
       if (moved && moved.failed && moved.failed.length) {
-        alert(`Zusammengelegt, aber ${moved.failed.length} Dateien nicht verschoben.`);
+        notify(`Zusammengelegt, aber ${moved.failed.length} Dateien nicht verschoben.`, { kind: "error" });
       }
       suggestionGone(el);
       refreshEventNames();
     } catch (err) {
       btn.disabled = false;
-      alert(err.message || err);
+      notify(err.message || err);
     }
     return;
   }
@@ -2499,10 +2580,10 @@ async function acceptSuggestion(s, el) {
     if (!name) return;
     const ids = selectedMergeIds(s, el._sgDropped);
     if (!ids.length) {
-      alert("Keine Ordner übrig — mindestens einen Haken setzen.");
+      notify("Keine Ordner übrig — mindestens einen Haken setzen.", { kind: "error" });
       return;
     }
-    if (!confirmMove(name, s.dest_parent, ids)) return;
+    if (!await confirmMove(name, s.dest_parent, ids)) return;
     btn.disabled = true;
     try {
       await api("/api/events/name", {
@@ -2514,13 +2595,13 @@ async function acceptSuggestion(s, el) {
       });
       const moved = await shelveChecked(name, s.dest_parent, ids);
       if (moved && moved.failed && moved.failed.length) {
-        alert(`Name gesetzt, aber ${moved.failed.length} Dateien nicht verschoben.`);
+        notify(`Name gesetzt, aber ${moved.failed.length} Dateien nicht verschoben.`, { kind: "error" });
       }
       suggestionGone(el);
       refreshEventNames();
     } catch (err) {
       btn.disabled = false;
-      alert(err.message || err);
+      notify(err.message || err);
     }
     return;
   }
@@ -2541,7 +2622,7 @@ async function acceptSuggestion(s, el) {
     suggestionGone(el);
   } catch (err) {
     btn.disabled = false;
-    alert(err.message || err);
+    notify(err.message || err);
   }
 }
 
@@ -2567,7 +2648,7 @@ async function rejectSuggestion(s, el) {
     });
     suggestionGone(el);
   } catch (err) {
-    alert(err.message || err);
+    notify(err.message || err);
   }
 }
 
@@ -2613,7 +2694,12 @@ async function loadAlbums() {
       const input = el.querySelector("input");
       const newName = input.value.trim();
       if (!newName || newName === a.folder_name) return;
-      if (!confirm(`Ordner „${a.folder_name}“ in „${newName}“ umbenennen?\n\nNur verschieben, nicht kopieren. ${a.photo_count} Fotos im Index.`)) return;
+      if (!await askConfirm({
+        title: `Ordner umbenennen`,
+        lead: `„${escapeHtml(a.folder_name)}“ wird zu „${escapeHtml(newName)}“. `
+            + `Nur verschieben, nicht kopieren — ${a.photo_count} Fotos im Index.`,
+        ok: "Umbenennen",
+      })) return;
       input.disabled = true;
       try {
         const dry = await api("/api/albums/rename", {
@@ -2625,7 +2711,7 @@ async function loadAlbums() {
           body: JSON.stringify({ path: a.path, new_name: newName, dry_run: false }),
         });
         if (res.failed && res.failed.length) {
-          alert(`Umbenannt, aber ${res.failed.length} Index-Fehler.`);
+          notify(`Umbenannt, aber ${res.failed.length} Index-Fehler.`, { kind: "error" });
         }
         el.querySelector("strong").textContent = newName;
         el.querySelector(".muted").textContent =
@@ -2633,7 +2719,7 @@ async function loadAlbums() {
         input.disabled = false;
       } catch (err) {
         input.disabled = false;
-        alert(`Konnte nicht umbenannt werden: ${err.message || err}`);
+        notify(`Konnte nicht umbenannt werden: ${err.message || err}`, { kind: "error" });
       }
     });
   });
@@ -2683,7 +2769,11 @@ async function loadCandidates() {
     el.querySelector(".cand-ok").addEventListener("click", async () => {
       // Bewusst mit Rueckfrage: hier werden bis zu 700 Gesichter auf einmal
       // zugeordnet, und ein Fehler verfaelscht danach jede Suche.
-      if (!confirm(`${b.count} Gesichter als „${b.name}" bestätigen?`)) return;
+      if (!await askConfirm({
+        title: `${b.count} Gesichter bestätigen`,
+        lead: `Alle als „${escapeHtml(b.name)}“ übernehmen.`,
+        ok: "Bestätigen",
+      })) return;
       const btn = el.querySelector(".cand-ok");
       btn.disabled = true;
       btn.textContent = "…";
@@ -2700,7 +2790,7 @@ async function loadCandidates() {
       } catch (err) {
         btn.disabled = false;
         btn.textContent = `Alle ${b.count} bestätigen`;
-        alert(`Konnte nicht zugeordnet werden: ${err.message || err}`);
+        notify(`Konnte nicht zugeordnet werden: ${err.message || err}`, { kind: "error" });
       }
     });
   });

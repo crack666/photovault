@@ -322,3 +322,28 @@ a.tab:hover { background: #2a3140; }
 .lb-danger button.danger { border-color: #5a3238; color: #ffbfc6; }
 .lb-danger button.danger:hover { background: #3a2226; }
 .lb-danger .muted { font-size: 12px; line-height: 1.45; flex: 1 1 140px; }
+
+/* ---- Kurznachricht ----------------------------------------------------
+   Ersetzt `alert()`: sagt Bescheid, ohne die Seite anzuhalten. Unten mittig,
+   damit sie nicht über dem liegt, was man gerade angeklickt hat. Fehler
+   bleiben länger und in Rot -- die will man lesen. */
+
+.pv-note {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(640px, calc(100vw - 32px));
+  padding: 11px 16px;
+  border-radius: 12px;
+  background: #1d2430f5;
+  border: 1px solid #33405a;
+  box-shadow: 0 14px 40px #000a;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.pv-note.bad { border-color: #6a3a3a; background: #2a1e20f5; color: #ffd7d7; }
+.pv-note.hidden { display: none; }
