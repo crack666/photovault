@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=17";
-import { thumbUrl } from "../core/api.js?v=17";
+import { colorFor, spreadPoint } from "./model.js?v=18";
+import { thumbUrl } from "../core/api.js?v=18";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;

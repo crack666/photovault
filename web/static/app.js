@@ -1,8 +1,8 @@
-import { $, escapeHtml, num } from "./core/dom.js?v=17";
-import { api, cropUrl } from "./core/api.js?v=17";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=17";
-import { gate } from "./core/capabilities.js?v=17";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=17";
+import { $, escapeHtml, num } from "./core/dom.js?v=18";
+import { api, cropUrl } from "./core/api.js?v=18";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=18";
+import { gate } from "./core/capabilities.js?v=18";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=18";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -28,13 +28,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=17");
+  const { initAtlas } = await import("./atlas/index.js?v=18");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=17");
+  const mod = await import("./trash/index.js?v=18");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -958,13 +958,21 @@ function peopleLine(ev) {
 // Empfangenes bleibt erreichbar, draengt sich aber nicht auf. Als
 // Gliederungsebene taugt der Kanal nicht -- niemand sucht "alle Screenshots
 // aus 2019" -- als Filter beantwortet er die Frage, die man wirklich hat.
+/* Herkunftsfilter fuer eine Galerie.
+
+   "Alle" steht vorn und ist die Voreinstellung. Vorher stand dort "Eigene
+   Aufnahmen": wer auf eine Person klickte, sah nur ihre Kamerafotos, waehrend
+   die Ueberschrift die volle Zahl nannte. Bei einem Archiv, das zu neun
+   Zehnteln aus Handy-Ordnern besteht, fehlte damit fast alles -- und nichts
+   sagte, dass gefiltert wird. Wer eine Person anklickt, will erst einmal
+   alles von ihr sehen; einschraenken kann man danach. */
 const CHANNEL_FILTERS = [
+  { key: "", label: "Alle" },
   { key: "camera", label: "Eigene Aufnahmen" },
   { key: "whatsapp", label: "Empfangen" },
   { key: "whatsapp-sent", label: "Verschickt" },
-  { key: "", label: "Alle" },
 ];
-let channelFilter = "camera";
+let channelFilter = "";
 let lastGallery = null;
 
 let lbPhotos = [], lbIndex = 0;
@@ -979,9 +987,8 @@ async function openPersonPhotos(p) {
   $("btn-check-faces").onclick = () => openPersonFaces(p);
 
   const data = await api(`/api/persons/${encodeURIComponent(p.id)}/photos`);
-  const span = data.span ? ` · ${data.span.from.slice(0, 4)}–${data.span.to.slice(0, 4)}` : "";
-  $("pp-meta").textContent = `${data.total} Foto${data.total === 1 ? "" : "s"}${span} · ${data.years.length} Jahre`;
-  fillGallery($("pp-timeline"), $("pp-stream"), data, { selectable: true });
+  fillGallery($("pp-timeline"), $("pp-stream"), data,
+              { selectable: true, meta: $("pp-meta") });
 }
 
 // Der Balken zeigt nicht nur wie viel, sondern woraus: ein Jahr aus 400
@@ -1035,16 +1042,26 @@ function renderChannelBar(host, data, redraw) {
   }));
 }
 
-function fillGallery(timelineEl, streamEl, data, { selectable } = {}) {
+function fillGallery(timelineEl, streamEl, data, { selectable, meta } = {}) {
   lastGallery = { timelineEl, streamEl, data, selectable };
   const bar = streamEl.previousElementSibling?.classList.contains("chanbar")
     ? streamEl.previousElementSibling
     : Object.assign(document.createElement("div"), { className: "chanbar" });
   if (!bar.parentNode) streamEl.parentNode.insertBefore(bar, streamEl);
   renderChannelBar(bar, data, () =>
-    fillGallery(timelineEl, streamEl, data, { selectable }));
+    fillGallery(timelineEl, streamEl, data, { selectable, meta }));
 
+  const ganz = data.total;
   data = filterByChannel(data, channelFilter);
+  // Die Zahl in der Ueberschrift muss zu dem passen, was darunter steht.
+  // Sonst sieht ein aktiver Filter aus wie fehlende Fotos.
+  if (meta) {
+    const name = (CHANNEL_FILTERS.find((f) => f.key === channelFilter) || {}).label;
+    const span = data.span ? ` · ${data.span.from.slice(0, 4)}–${data.span.to.slice(0, 4)}` : "";
+    meta.textContent = channelFilter
+      ? `${data.total} von ${ganz} Fotos — nur ${name}${span} · ${data.years.length} Jahre`
+      : `${data.total} Foto${data.total === 1 ? "" : "s"}${span} · ${data.years.length} Jahre`;
+  }
   const years = data.years || [];
   const peak = Math.max(1, ...years.map((y) => y.count));
   timelineEl.innerHTML = years.map((y) => `
