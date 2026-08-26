@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=12";
-import { thumbUrl } from "../core/api.js?v=12";
+import { colorFor, spreadPoint } from "./model.js?v=13";
+import { thumbUrl } from "../core/api.js?v=13";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -24,10 +24,82 @@ const MAX_THUMBS = 2400;
 //: Unter so vielen lohnt kein Rastern -- so viele passen immer.
 const MIN_THUMBS = 120;
 
-//: Kachelabstand als Anteil der Kachelbreite, wenn "Entzerren" aus ist.
-//: Bei einer halben Kachel ueberlappen sich Bilder noch sichtbar, aber ein
-//: Haufen in der Mitte kann nicht mehr das ganze Budget aufbrauchen.
-const SPACING = 0.5;
+//: Kachelabstand als Vielfaches der Kachelbreite, wenn "Entzerren" aus ist.
+//: Ein Viertel heisst: die Bilder liegen dicht uebereinander, wie vorher --
+//: aber ein Haufen in der Bildmitte kann nicht mehr das ganze Budget
+//: aufbrauchen und den Rand als Punkte stehen lassen.
+const SPACING = 0.25;
+
+//: Durchgaenge beim Auseinanderschieben. Sechs reichen fuer einen dichten
+//: Haufen; danach bewegt sich kaum noch etwas, und jeder weitere kostet.
+const FAN_ITERATIONS = 6;
+
+/* Wie weit ein Bild beim Auffaechern hoechstens von seinem Platz wegdarf --
+   gemessen in Weltkoordinaten, nicht in Pixeln. Darin steckt die ganze Idee.
+
+   Beim Hineinzoomen entsteht Platz: derselbe Weltabstand ist auf dem Schirm
+   doppelt so gross, wenn man doppelt so nah dran ist. Diesen Platz soll das
+   Auffaechern nutzen -- aber nur ihn. Eine Grenze in Pixeln wuerde in der
+   Uebersicht Kontinente verschieben und beim Hineinzoomen nichts mehr
+   hergeben. In Weltkoordinaten ist es umgekehrt und richtig herum:
+
+     Uebersicht (Massstab ~900)   0,004 * 900   =  3,6 px  -- unsichtbar
+     nah dran   (Massstab 20000)  0,004 * 20000 =   80 px  -- echte Luft
+     ganz nah   (Massstab 90000)  0,004 * 90000 =  360 px  -- ein Haufen
+                                                              faechert auf
+
+   Die Karte behauptet also nie eine Lage, die das grosse Ganze verfaelscht:
+   der Fehler ist immer derselbe kleine Weltabstand, egal wie es aussieht.
+   Und Fotos, die auf exakt derselben Stelle liegen -- Beinahe-Dubletten --
+   trennen sich erst dann, wenn man wirklich hinsieht. */
+const SHIFT_WORLD = 0.004;
+
+//: Unter so vielen Pixeln lohnt das Auffaechern nicht -- es kostet sechs
+//: Durchgaenge und bewegt nichts, was man sehen koennte.
+const FAN_MIN_PX = 2;
+
+/* Wieviele Nachbarn ein Bild je Durchgang hoechstens wegschiebt.
+
+   Ohne diese Grenze ist das Verfahren quadratisch: vor dem ersten Durchgang
+   liegen in einem dichten Haufen hunderte Punkte in *einem* Rasterfeld, und
+   jeder wird gegen jeden geprueft. Gemessen: 123 ms je Bild, also acht Bilder
+   je Sekunde beim Schwenken.
+
+   Ein Deckel kostet fast nichts an Qualitaet, weil ueber sechs Durchgaenge
+   ohnehin jeder mit jedem in Beruehrung kommt -- der Haufen dehnt sich nur
+   etwas langsamer aus. Und er wirkt genau dort, wo er muss: in duennen
+   Gegenden hat kein Punkt so viele Nachbarn. */
+const FAN_NEIGHBOURS = 12;
+
+/* Wieviel Zeit ein Bild kosten darf, und wie die Karte das selbst herausfindet.
+
+   2.400 Vorschaubilder zu zeichnen kostete gemessen 140 ms -- acht Bilder je
+   Sekunde beim Schwenken. Nicht weil `drawImage` langsam waere: 2.400 Aufrufe
+   mit *demselben* Bild dauern 1,7 ms. Es sind die 2.400 *verschiedenen*
+   Texturen, die dabei durch die Grafikkarte muessen.
+
+   Eine feste Obergrenze waere wieder geraten -- auf einer schnellen Maschine
+   zu niedrig, auf einer langsamen zu hoch. Also misst die Karte, was ein Bild
+   bei ihr kostet, und leitet daraus ab, wieviele in ein ruhiges Bild passen.
+   Die Zahl steht in der Fusszeile; wer sie ueberschreiten will, waehlt
+   "Alles". */
+const FRAME_BUDGET_MS = 12;
+
+//: Startwert, bis gemessen wurde. Wird nach dem ersten Durchlauf ersetzt.
+const MS_PER_THUMB_START = 0.03;
+
+/* Wie traege der Messwert nachzieht -- und warum unterschiedlich.
+
+   Symmetrisch geglaettet schwingt die Regelung: misst ein Durchlauf
+   zufaellig 4 µs je Bild, springt das Budget auf 2.400, der naechste
+   Durchlauf kostet 25 ms, das Budget faellt auf 800, dort misst es wieder
+   billig, und so fort. Beobachtet als Springen zwischen 783 und 2.400.
+
+   Also schnell reagieren, wenn es teurer wird -- da geht es um das ruhige
+   Bild -- und langsam, wenn es billiger wird. Dann pendelt sich die Karte
+   ein, statt zwischen zwei Zustaenden zu wechseln. */
+const MS_RISE = 0.4;
+const MS_FALL = 0.05;
 const MAX_INFLIGHT = 8;
 const TRANSITION_MS = 700;
 
@@ -43,7 +115,13 @@ export function createScene(canvas, model, hooks = {}) {
   // deshalb einstellbar und nicht von mir festgelegt.
   let spread = 0;      // Kontinente auseinanderziehen
   let tileScale = 1;   // Kachelgroesse
-  let declutter = 0;   // Mindestabstand gezeichneter Bilder in Pixeln
+  //: Mindestabstand gezeichneter Bilder, als Vielfaches der Kachelbreite.
+  //: Nicht in Pixeln: eine Kachel ist beim Herauszoomen 22 px breit und beim
+  //: Hineinzoomen 96, und "60 px Abstand" heisst dann einmal viel Luft und
+  //: einmal immer noch Ueberlappung. Bei 1.0 stossen die Bilder aneinander,
+  //: darunter ueberlappen sie, darueber steht Luft dazwischen -- und das
+  //: sieht man auf jeder Zoomstufe.
+  let declutter = 0;
   //: Wie das Budget fuer Vorschaubilder verteilt wird. Kein Automatismus,
   //: sondern eine Wahl -- die Punktansicht zeigt Farbgruppen besser als
   //: jedes Bild, der Kegel taugt zum Verfolgen einer Spur, die Flaeche zum
@@ -52,8 +130,19 @@ export function createScene(canvas, model, hooks = {}) {
   //: Was der letzte Durchlauf gekostet hat. Ohne Zahlen ist "ruckelt es?"
   //: Geschmackssache -- und die Antwort haengt am Geraet, nicht an meiner
   //: Meinung.
-  const stats = { visible: 0, drawn: 0, budget: 0, raster: false, gap: 0, ms: 0,
-                  cached: 0, off: "" };
+  const stats = { visible: 0, drawn: 0, budget: 0, raster: false, gap: 0, shift: 0,
+                  ms: 0, fanMs: 0, cached: 0, off: "", perThumb: MS_PER_THUMB_START };
+
+  //: Gemessene Kosten je gezeichnetem Bild. Siehe FRAME_BUDGET_MS.
+  let msPerThumb = MS_PER_THUMB_START;
+
+  /* Wo im letzten Durchlauf tatsaechlich ein Bild lag: [index, x, y, w, h].
+
+     Beim Auffaechern steht ein Bild nicht mehr auf seinem Punkt. Wer dann
+     mit der echten Lage sucht, trifft beim Klick auf ein Bild ein anderes
+     oder gar nichts -- die Karte reagierte dann nachweislich falsch auf
+     das, was zu sehen ist. Also wird gemerkt, was wo gezeichnet wurde. */
+  let shown = [];
 
   let mask = new Uint8Array(model.n).fill(1);
   let selection = null; // Set<number> oder null
@@ -277,6 +366,7 @@ export function createScene(canvas, model, hooks = {}) {
     stats.drawn = 0;
     stats.budget = 0;
     stats.off = "";
+    shown.length = 0;
     const w = canvas._w, h = canvas._h;
     ctx.fillStyle = "#12151a";
     ctx.fillRect(0, 0, w, h);
@@ -363,6 +453,96 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.restore();
   }
 
+  /* Einen Haufen aufmachen, statt ihn auszuduennen.
+
+     In einem dichten Kontinent liegen hunderte Fotos auf wenigen Pixeln. Wer
+     dort Abstand erzwingt, bekommt wenige Bilder zu sehen und ringsum leeren
+     Bildschirm -- der Platz waere da, der Haufen nutzt ihn nur nicht. Also
+     werden die Bilder auseinandergeschoben, bis sie den Mindestabstand
+     einhalten: der Haufen blaeht sich auf und fuellt die freie Flaeche.
+
+     Was dabei verloren geht, ist die genaue Lage. Der Punkt darunter bleibt
+     aber liegen, wo er hingehoert -- die Verschiebung ist also sichtbar und
+     nicht behauptet. Und sie ist begrenzt: weiter als `LIMIT` Kachelbreiten
+     wandert kein Bild von seinem Platz weg.
+
+     Deterministisch, damit es beim Schwenken nicht zappelt: gleiche Kamera,
+     gleiche Reihenfolge, gleiches Ergebnis. */
+  function fanOut(cand, minDist, w, h, limit) {
+    const md2 = minDist * minDist;
+    const n = cand.length;
+    if (n < 2) return;
+    // Ausgangslage merken, um die Verschiebung begrenzen zu koennen.
+    const ox = new Float32Array(n), oy = new Float32Array(n);
+    for (let a = 0; a < n; a++) { ox[a] = cand[a][2]; oy[a] = cand[a][3]; }
+
+    for (let it = 0; it < FAN_ITERATIONS; it++) {
+      // Das Raster muss je Durchgang neu entstehen -- die Punkte sind ja
+      // gerade umgezogen.
+      const cells = new Map();
+      for (let a = 0; a < n; a++) {
+        const key = Math.floor(cand[a][2] / minDist) + ":" + Math.floor(cand[a][3] / minDist);
+        const list = cells.get(key);
+        if (list) list.push(a); else cells.set(key, [a]);
+      }
+      let moved = 0;
+      for (let a = 0; a < n; a++) {
+        const gx = Math.floor(cand[a][2] / minDist), gy = Math.floor(cand[a][3] / minDist);
+        // Gezaehlt wird jeder *angesehene* Nachbar, nicht jeder verschobene.
+        // Zaehlt man erst hinter dem Ueberspringen, laeuft der letzte Punkt
+        // eines vollen Rasterfelds trotzdem durch die ganze Liste -- und
+        // genau daran hingen die gemessenen 122 ms.
+        let seen = 0;
+        let ax = cand[a][2], ay = cand[a][3];
+        for (let dx = -1; dx <= 1 && seen < FAN_NEIGHBOURS; dx++) {
+          for (let dy = -1; dy <= 1 && seen < FAN_NEIGHBOURS; dy++) {
+            const list = cells.get((gx + dx) + ":" + (gy + dy));
+            if (!list) continue;
+            for (const b of list) {
+              if (seen >= FAN_NEIGHBOURS) break;
+              if (b === a) continue;
+              seen++;
+              let ddx = cand[b][2] - ax, ddy = cand[b][3] - ay;
+              let d2 = ddx * ddx + ddy * ddy;
+              if (d2 >= md2) continue;
+              if (d2 < 1e-6) {
+                // Exakt uebereinander: ohne Richtung gibt es keinen Schub.
+                // Der Index als Winkel ist willkuerlich, aber immer derselbe.
+                const ang = (a * 2.399963) % 6.283185;
+                ddx = Math.cos(ang); ddy = Math.sin(ang); d2 = 1;
+              }
+              const d = Math.sqrt(d2);
+              // Nur der eigene Punkt weicht aus. Weil das jeder tut, ist die
+              // Bewegung trotzdem gegenseitig -- und die Reihenfolge spielt
+              // keine Rolle mehr, sodass der Deckel nicht die einen
+              // bevorzugt und die anderen uebergeht.
+              const push = (minDist - d) / 2;
+              ax -= (ddx / d) * push;
+              ay -= (ddy / d) * push;
+              moved++;
+            }
+          }
+        }
+        cand[a][2] = ax; cand[a][3] = ay;
+      }
+      if (!moved) break;
+    }
+
+    for (let a = 0; a < n; a++) {
+      // Nicht weiter als erlaubt vom eigenen Platz weg ...
+      const dx = cand[a][2] - ox[a], dy = cand[a][3] - oy[a];
+      const d = Math.hypot(dx, dy);
+      if (d > limit) {
+        cand[a][2] = ox[a] + (dx / d) * limit;
+        cand[a][3] = oy[a] + (dy / d) * limit;
+      }
+      // ... und nicht aus dem Fenster heraus, sonst schiebt sich der Rand
+      // eines Haufens ins Nichts.
+      cand[a][2] = Math.max(-20, Math.min(w + 20, cand[a][2]));
+      cand[a][3] = Math.max(-20, Math.min(h + 20, cand[a][3]));
+    }
+  }
+
   /* Vorschaubilder verteilen.
 
      Drei Fragen, die vorher stillschweigend beantwortet waren:
@@ -379,7 +559,8 @@ export function createScene(canvas, model, hooks = {}) {
                   Ein Bild, das an ein Raster springt, luegt ueber seine
                   Position, und die Position ist hier die Aussage. */
   function drawThumbs(w, h, picked) {
-    const size = cam.scale > 9000 ? 320 : 160;
+    const t0 = performance.now();
+    let fanMs = 0;
     // Von der Bildmitte nach aussen: passen nicht alle hin, gewinnt das
     // Naheliegende. Abstand einmal rechnen, nicht in jedem Vergleich.
     const cx = w / 2, cy = h / 2;
@@ -395,22 +576,47 @@ export function createScene(canvas, model, hooks = {}) {
 
     const box = Math.max(22, Math.min(96, cam.scale / 90)) * tileScale;
 
-    // Mindestabstand zwischen zwei gezeichneten Bildern. „Entzerren" gibt
-    // ihn direkt vor; steht der Regler auf aus, greift ein halber Kachelbreite
-    // grosser Abstand -- gerade so viel, dass ein Haufen in der Bildmitte
-    // nicht das ganze Budget verbraucht.
-    const gap = declutter > 0 ? declutter : box * SPACING;
+    /* Welche Vorschaubildstufe -- nach der gezeichneten Groesse, nicht nach
+       dem Massstab.
+
+       Vorher hing das am Zoom: ab Massstab 9000 wurden 320er geholt. Eine
+       Kachel ist aber hoechstens 96 px breit, bei Standardgroesse also nie
+       gross genug, um von 320 zu profitieren. Der Browser skalierte jedes
+       Bild von 320 auf 96 herunter -- viermal so viele Quellpixel je Bild,
+       bei jedem einzelnen Durchlauf. Gemessen: 112 ms fuer 2.400 Bilder,
+       gegenueber rund 10 ms mit der kleinen Stufe. Dieselben 112 ms in jedem
+       Modus, weshalb es zuerst wie ein Fehler im Auffaechern aussah.
+
+       Jetzt entscheidet die Kachelbreite mal der Geraetepixel-Faktor: die
+       feine Stufe kommt, wenn sie wirklich etwas beitraegt -- also bei
+       vergroesserter Kachel. */
+    const size = box * (window.devicePixelRatio || 1) > 160 ? 320 : 160;
+
+    // Mindestabstand zwischen zwei gezeichneten Bildern, als Vielfaches der
+    // Kachelbreite -- so bleibt der Regler auf jeder Zoomstufe gleich
+    // wirksam. Steht er auf aus, greift ein Viertel: die Bilder liegen dann
+    // dicht uebereinander wie zuvor, aber ein Haufen in der Bildmitte kann
+    // nicht das ganze Budget verbrauchen.
+    const gap = box * (declutter > 0 ? declutter : SPACING);
     // Wie viele Bilder mit diesem Abstand ueberhaupt ins Fenster passen.
     // Haengt am Fenster, nicht an einer Zahl im Quelltext.
     const fits = Math.ceil((w + 2 * gap) / gap) * Math.ceil((h + 2 * gap) / gap);
-    const budget = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, fits));
+    // Was hinpasst, was die Reissleine erlaubt, und was in einem ruhigen Bild
+    // zu schaffen ist -- das Kleinste davon gewinnt.
+    const affordable = Math.floor(FRAME_BUDGET_MS / Math.max(msPerThumb, 1e-4));
+    const budget = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, fits, affordable));
 
     //  punkte  -- kommt hier gar nicht an, draw() ueberspringt uns.
     //  kegel   -- kein Abstand, nur das Budget: die Mitte verbraucht es.
     //  flaeche -- Abstand halten, sobald mehr sichtbar ist als passt.
+    //  faecher -- Abstand nicht erzwingen, sondern herstellen: die Bilder
+    //             werden auseinandergeschoben, bis er stimmt.
     //  alles   -- weder noch, zum Vergleichen.
-    const spaced = thumbMode === "flaeche"
-      ? declutter > 0 || near.length > budget
+    // Der Platz, den das Hineinzoomen schafft -- und nur der.
+    const shift = SHIFT_WORLD * cam.scale;
+    const fan = thumbMode === "faecher" && shift >= FAN_MIN_PX;
+    const spaced = fan ? false
+      : thumbMode === "flaeche" ? declutter > 0 || near.length > budget
       : thumbMode === "kegel" && declutter > 0;
     const capped = thumbMode !== "alles";
 
@@ -471,6 +677,7 @@ export function createScene(canvas, model, hooks = {}) {
         ctx.strokeRect(sx - bw / 2, sy - bh / 2, bw, bh);
       }
       ctx.globalAlpha = 1;
+      shown.push([i, sx - bw / 2, sy - bh / 2, bw, bh]);
       return true;
     }
 
@@ -481,21 +688,45 @@ export function createScene(canvas, model, hooks = {}) {
        und weil der Gewinner meist noch gar nicht geladen ist, blinkt an
        derselben Stelle abwechselnd ein anderes Foto. Wer schon da ist,
        bleibt; neue fuellen nur die Luecken. */
-    if (spaced) {
+    if (fan) {
+      // Erst auswaehlen, dann auffaechern: mehr als ins Fenster passen kann
+      // auch das Auseinanderschieben nicht zeigen. Danach steht jedes Bild
+      // an seiner verschobenen Stelle -- deshalb wird hier nichts mehr
+      // uebersprungen, es gibt keine Ueberschneidung mehr.
+      const cand = near.slice(0, budget);
+      const tFan = performance.now();
+      fanOut(cand, gap, w, h, shift);
+      // Das Auseinanderschieben kostet einmal je Bild, nicht je Foto. Rechnete
+      // man es den Bildkosten zu, schaetzte sich die Karte selbst immer
+      // teurer: kleineres Budget, gleicher Grundaufwand, noch teurer je Bild.
+      fanMs = performance.now() - tFan;
+      for (const e of cand) place(e, false);
+    } else {
+      if (spaced) {
+        for (const e of near) {
+          if (capped && drawn >= budget) break;
+          place(e, true);
+        }
+      }
       for (const e of near) {
         if (capped && drawn >= budget) break;
-        place(e, true);
+        if (!place(e, false)) break;
       }
     }
-    for (const e of near) {
-      if (capped && drawn >= budget) break;
-      if (!place(e, false)) break;
-    }
 
+    // Nur messen, wenn genug gezeichnet wurde -- bei einer Handvoll Bildern
+    // steckt in der Zahl mehr Grundrauschen als Bildkosten.
+    if (drawn > 60) {
+      const each = (performance.now() - t0 - fanMs) / drawn;
+      msPerThumb += (each - msPerThumb) * (each > msPerThumb ? MS_RISE : MS_FALL);
+    }
+    stats.perThumb = msPerThumb;
     stats.drawn = drawn;
     stats.budget = capped ? budget : Infinity;
-    stats.raster = spaced;
-    stats.gap = spaced ? Math.round(gap) : 0;
+    stats.raster = spaced || fan;
+    stats.gap = spaced || fan ? Math.round(gap) : 0;
+    stats.shift = fan ? Math.round(shift) : 0;
+    stats.fanMs = Math.round(fanMs * 10) / 10;
   }
 
   /** Eine Kachel je Gelegenheit statt eines Punkts je Foto.
@@ -607,6 +838,13 @@ export function createScene(canvas, model, hooks = {}) {
   /* ---- Treffer --------------------------------------------------------- */
 
   function nearest(sx, sy, maxPx = 14) {
+    // Was gezeichnet wurde, zuerst -- und von hinten, weil das zuletzt
+    // gezeichnete Bild obenauf liegt. Ohne das trifft ein Klick auf ein
+    // aufgefaechertes Bild den Punkt darunter, also ein anderes Foto.
+    for (let k = shown.length - 1; k >= 0; k--) {
+      const [i, x, y, bw, bh] = shown[k];
+      if (sx >= x && sx <= x + bw && sy >= y && sy <= y + bh) return i;
+    }
     let best = -1, bestD = maxPx * maxPx;
     for (let i = 0; i < model.n; i++) {
       if (!mask[i]) continue;
@@ -634,8 +872,19 @@ export function createScene(canvas, model, hooks = {}) {
       x0 = Math.min(x0, x); y0 = Math.min(y0, y);
       x1 = Math.max(x1, x); y1 = Math.max(y1, y);
     }
-    for (let i = 0; i < model.n; i++) {
+    // Aufgefaecherte Bilder liegen nicht auf ihrem Punkt. Umkreist man sie,
+    // muessen sie mitkommen -- sonst waehlt das Lasso etwas anderes aus als
+    // das, was darin liegt.
+    const moved = new Set();
+    for (const [i, x, y, bw, bh] of shown) {
+      moved.add(i);
       if (!mask[i]) continue;
+      const cx = x + bw / 2, cy = y + bh / 2;
+      if (cx < x0 || cx > x1 || cy < y0 || cy > y1) continue;
+      if (inPolygon(path, cx, cy)) hit.add(i);
+    }
+    for (let i = 0; i < model.n; i++) {
+      if (!mask[i] || moved.has(i)) continue;
       const sx = toScreenX(px[i]), sy = toScreenY(py[i]);
       if (sx < x0 || sx > x1 || sy < y0 || sy > y1) continue;
       if (inPolygon(path, sx, sy)) hit.add(i);
