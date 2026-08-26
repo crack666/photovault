@@ -347,3 +347,56 @@ a.tab:hover { background: #2a3140; }
 }
 .pv-note.bad { border-color: #6a3a3a; background: #2a1e20f5; color: #ffd7d7; }
 .pv-note.hidden { display: none; }
+
+/* Zurückholen direkt auf der Kachel: über dem Bild, wo die Handlung
+   hingehört -- vorher musste man sich erst in die Detailansicht klicken.
+   Ständig sichtbar und nicht erst beim Überfahren: es ist die häufigere
+   Handlung im Papierkorb als das Löschen. */
+.trash-shot { position: relative; }
+
+.trash-back {
+  position: absolute;
+  right: 6px; top: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid #3d4a5f;
+  background: #131820e8;
+  color: #cfe0f5;
+  font: 500 11px/1.6 inherit;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+.trash-back:hover { background: #223046; border-color: var(--accent); color: #fff; }
+
+/* Zurückgeholt: bleibt liegen, damit die Bildlaufleiste nicht springt und
+   man sieht, was man gerettet hat -- aber es soll keine Sekunde unklar sein,
+   dass es nicht mehr zur Löschung ansteht. */
+.trash-item.restored { border-color: #2f4a3a; cursor: default; }
+.trash-item.restored img { filter: grayscale(1) brightness(.45); }
+.trash-item.restored::after { content: none; }
+/* Als Etikett *ueber* dem Bild, nicht als Zeile in der Beschriftung: eine
+   zusaetzliche Zeile macht die Kachel hoeher, und dann rutscht das Raster
+   unter dem Zeiger weg -- gemessen 39 px. Ueber dem Bild aendert sich nichts
+   an der Groesse. */
+.trash-item .back-note {
+  position: absolute;
+  /* Unten links, weil der Knopf oben rechts sitzt. Auf einer 120 px breiten
+     Kachel passen beide nicht in eine Zeile -- "nicht mehr im Papierkorb"
+     brach um und lief unter den Knopf. Zwei Ecken, kein Streit. */
+  left: 6px; bottom: 6px;
+  white-space: nowrap;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  color: #bdf0d0;
+  font: 600 11px/1.7 inherit;
+  background: #14301fe8;
+  border: 1px solid #2f6b47;
+  border-radius: 999px;
+  padding: 2px 9px;
+  backdrop-filter: blur(4px);
+}
+
+/* Die Meldezeile des Papierkorbs behält ihre Höhe, auch wenn nichts
+   darinsteht. Sonst schiebt jede Meldung das Raster nach unten -- und zwar
+   in dem Moment, in dem man gerade eine Kachel angeklickt hat. */
+#trash-note { min-height: 1.5em; display: block; }
