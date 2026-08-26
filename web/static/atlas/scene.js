@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=20";
-import { thumbUrl } from "../core/api.js?v=20";
+import { colorFor, spreadPoint } from "./model.js?v=21";
+import { thumbUrl } from "../core/api.js?v=21";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -1299,7 +1299,8 @@ export function createScene(canvas, model, hooks = {}) {
   window.addEventListener("mouseup", (e) => {
     if (!drag) return;
     if (drag.kind === "lasso" && lassoPath && lassoPath.length > 2) {
-      hooks.onLasso?.(pickInPath(lassoPath), e.altKey);
+      hooks.onLasso?.(pickInPath(lassoPath),
+                      { subtract: e.altKey, add: e.ctrlKey || e.metaKey });
     } else if (drag.kind === "pan" && !drag.moved) {
       const r = canvas.getBoundingClientRect();
       const sx = e.clientX - r.left, sy = e.clientY - r.top;

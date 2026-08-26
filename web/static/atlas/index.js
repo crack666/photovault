@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=20";
-import { api, thumbUrl } from "../core/api.js?v=20";
-import { openModal } from "../core/modal.js?v=20";
-import { createPathPick } from "../core/pathpick.js?v=20";
-import { feature, gate } from "../core/capabilities.js?v=20";
+import { $, escapeHtml, num } from "../core/dom.js?v=21";
+import { api, thumbUrl } from "../core/api.js?v=21";
+import { openModal } from "../core/modal.js?v=21";
+import { createPathPick } from "../core/pathpick.js?v=21";
+import { feature, gate } from "../core/capabilities.js?v=21";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=20";
-import { createScene } from "./scene.js?v=20";
+} from "./model.js?v=21";
+import { createScene } from "./scene.js?v=21";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -51,8 +51,10 @@ const THUMB_KEY = "pv-atlas-thumbmode";
 const TOOLS = [
   {
     id: "atlas-lasso", glyph: "◌", label: "Lasso",
-    hint: "Auswahl umkreisen (oder Shift halten). Wo Ränder ineinander laufen, "
-        + "trifft ein Klick auf den Kontinentnamen genauer.",
+    hint: "Auswahl umkreisen (oder Shift halten). Der Zug ersetzt die Auswahl; Strg/Cmd nimmt "
+        + "dazu, Alt zieht ab, Strg+Alt grenzt die bestehende Auswahl ein — dann kommen Nachbarn "
+        + "aus anderen Kontinenten nicht mit, auch wenn der Zug sie streift. "
+        + "Wo Ränder ineinander laufen, trifft ein Klick auf den Kontinentnamen genauer.",
     run: (b) => scene.setLassoMode(b.classList.toggle("on")),
   },
   {
@@ -739,9 +741,68 @@ function stateWords(f) {
 
 /* ---- Auswahl ----------------------------------------------------------- */
 
-function applyLasso(hit, subtract) {
-  if (subtract) for (const i of hit) selection.delete(i);
-  else for (const i of hit) selection.add(i);
+/* Was ein Lassozug tut.
+
+   Vorher hat er immer hinzugefuegt. Bei einer bestehenden Auswahl war damit
+   alles im Lasso schon gewaehlt, sichtbar aenderte sich nichts -- es sah aus,
+   als ginge das Lasso nicht.
+
+   Jetzt gilt, was man aus Bildbearbeitung kennt:
+
+     Zug          ersetzt die Auswahl
+     Strg/Cmd     nimmt dazu
+     Alt          zieht ab -- das Negativ-Lasso
+     Strg+Alt     grenzt ein: nur was im Lasso liegt *und* schon gewaehlt
+                  war. Dafuer gibt es keine Entsprechung in Bildprogrammen,
+                  hier aber den Anlass: aus einer Auswahl eine Teilgruppe
+                  herausgreifen, ohne die Nachbarn aus anderen Kontinenten
+                  mitzunehmen, die der Zug streift.
+
+   Jeder Zug sagt hinterher, was er getan hat. Ohne das ist "ersetzen" von
+   "nichts getroffen" nicht zu unterscheiden -- und beides sieht wie ein
+   Fehler aus.
+
+   Eingrenzen und Abziehen koennen eine Auswahl leeren. Das waere ein Zug,
+   der stillschweigend die ganze Arbeit wegwirft; also passiert dann nichts,
+   und der Kasten sagt warum. */
+let lassoHint = "";
+
+function applyLasso(hit, mods = {}) {
+  const { subtract = false, add = false } = mods;
+  const vorher = selection.size;
+
+  if (subtract && add) {
+    const kept = new Set([...hit].filter((i) => selection.has(i)));
+    if (!kept.size) {
+      lassoHint = "Nichts eingegrenzt — im Lasso lag keines der gewählten Fotos.";
+    } else {
+      selection = kept;
+      lassoHint = `Eingegrenzt: ${num(kept.size)} von ${num(vorher)}.`;
+    }
+  } else if (subtract) {
+    for (const i of hit) selection.delete(i);
+    lassoHint = vorher === selection.size
+      ? "Nichts abgezogen — im Lasso lag keines der gewählten Fotos."
+      : `${num(vorher - selection.size)} abgezogen, ${num(selection.size)} übrig.`;
+  } else if (add) {
+    for (const i of hit) selection.add(i);
+    lassoHint = selection.size === vorher
+      ? "Nichts dazugekommen — alles im Lasso war schon gewählt."
+      : `${num(selection.size - vorher)} dazugenommen.`;
+  } else {
+    if (!hit.size) {
+      lassoHint = vorher
+        ? "Im Lasso lag kein Foto — Auswahl unverändert."
+        : "Im Lasso lag kein Foto.";
+    } else {
+      selection = new Set(hit);
+      lassoHint = vorher
+        ? `${num(hit.size)} gewählt (die vorherigen ${num(vorher)} ersetzt). `
+          + "Strg hält die alte Auswahl, Strg+Alt grenzt darin ein."
+        : `${num(hit.size)} gewählt.`;
+    }
+  }
+
   scene.setSelection(selection);
   paintSelection();
 }
@@ -781,6 +842,10 @@ function selectedIds() {
 
 function paintSelection() {
   const panel = $("atlas-sel");
+  // Einmal zeigen, dann vergessen: er gehoert zum letzten Lassozug, nicht
+  // zur Auswahl. Sonst steht er noch da, wenn man laengst weitergeklickt hat.
+  const hinweis = lassoHint;
+  lassoHint = "";
   if (!selection.size) { panel.classList.add("hidden"); return; }
   panel.classList.remove("hidden");
 
@@ -804,6 +869,7 @@ function paintSelection() {
       <b>${num(selection.size)} Fotos</b>
       <button class="link" id="atlas-clear">leeren</button>
     </header>
+    ${hinweis ? `<p class="atlas-lasso-hint">${escapeHtml(hinweis)}</p>` : ""}
     <div class="atlas-strip">
       ${strip.map((i) => `<img src="${thumbUrl(model.ids[i], 160)}" alt="">`).join("")}
       ${selection.size > strip.length ? `<span class="more">+${num(selection.size - strip.length)}</span>` : ""}
