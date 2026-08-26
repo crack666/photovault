@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=15";
-import { api, thumbUrl } from "../core/api.js?v=15";
-import { openModal } from "../core/modal.js?v=15";
-import { createPathPick } from "../core/pathpick.js?v=15";
-import { feature, gate } from "../core/capabilities.js?v=15";
+import { $, escapeHtml, num } from "../core/dom.js?v=16";
+import { api, thumbUrl } from "../core/api.js?v=16";
+import { openModal } from "../core/modal.js?v=16";
+import { createPathPick } from "../core/pathpick.js?v=16";
+import { feature, gate } from "../core/capabilities.js?v=16";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=15";
-import { createScene } from "./scene.js?v=15";
+} from "./model.js?v=16";
+import { createScene } from "./scene.js?v=16";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },

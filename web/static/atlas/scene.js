@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=15";
-import { thumbUrl } from "../core/api.js?v=15";
+import { colorFor, spreadPoint } from "./model.js?v=16";
+import { thumbUrl } from "../core/api.js?v=16";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -177,6 +177,16 @@ export function createScene(canvas, model, hooks = {}) {
      das, was zu sehen ist. Also wird gemerkt, was wo gezeichnet wurde. */
   let shown = [];
 
+  /* Was dieser Durchlauf zeichnen wird: [index, sx, sy, img].
+
+     `covered` merkt sich dieselben Indizes als Flaggen, damit die
+     Punktschleife in einem Schritt entscheiden kann, ob ein Foto schon als
+     Bild zu sehen ist. `touched` sammelt, was zurueckzusetzen ist -- ein
+     Array von 17.000 Bytes je Bild zu leeren waere Verschwendung. */
+  let planned = [];
+  const covered = new Uint8Array(model.n);
+  let touched = [];
+
   let mask = new Uint8Array(model.n).fill(1);
   //: Zaehlt jede Aenderung der Sichtbarkeit mit. Die Platzvergabe haelt nur
   //: so lange still, wie sich am Bestand nichts aendert -- ein neuer Filter
@@ -193,6 +203,7 @@ export function createScene(canvas, model, hooks = {}) {
   let heldKey = "";             // Kamerazustand, zu dem die Zuteilung passt
   let heldGap = 0;              // eingefrorener Abstand dazu
   let heldBudget = 0;           // eingefrorene Bildzahl dazu
+  let tileBox = 22;             // Kachelbreite des letzten Plans
   let selection = null; // Set<number> oder null
   let lassoPath = null;
 
@@ -537,11 +548,29 @@ export function createScene(canvas, model, hooks = {}) {
     }
   }
 
-  function applySpread() {
-    if (!spread) return;
-    const cc = model.layouts[layout].centroids;
+  /** Sicherstellen, dass die Verschiebung zur aktuellen Einstellung passt. */
+  function ensureSpread() {
     const key = `${layout}|${spread}`;
     if (key !== spreadKey) { spreadKey = key; buildSpread(spread); }
+  }
+
+  /* Die Weltlage eines Punktes mit Kontinentverschiebung.
+
+     Auch Beschriftungen und Trefferpruefung muessen hier durch. Sonst
+     zeichnet die Karte die Kontinente an einer Stelle und ihre Namen an
+     einer anderen -- beobachtet als "linke Kontinente ohne Beschriftung",
+     weil deren Namen bei den unverschobenen Mittelpunkten zusammenstanden. */
+  function spreadAt(bx, by, c) {
+    if (!spread) return [bx, by];
+    ensureSpread();
+    return [spreadPoint(bx, model.layouts[layout].centroids[c * 2], spread) + spreadDx[c],
+            spreadPoint(by, model.layouts[layout].centroids[c * 2 + 1], spread) + spreadDy[c]];
+  }
+
+  function applySpread() {
+    if (!spread) return;
+    ensureSpread();
+    const cc = model.layouts[layout].centroids;
     for (let i = 0; i < model.n; i++) {
       const c = model.cl[i];
       px[i] = spreadPoint(px[i], cc[c * 2], spread) + spreadDx[c];
@@ -571,13 +600,22 @@ export function createScene(canvas, model, hooks = {}) {
     // und Zustaende liest man daran besser ab als an Bildern.
     const showThumbs = thumbMode !== "punkte" && cam.scale > THUMB_SCALE && !animating;
 
+    /* Erst planen, dann zeichnen.
+
+       Ein Punkt, unter dem sein eigenes Bild liegt, ist Doppelung -- und
+       beim Abstossen wird daraus ein Widerspruch: das Bild wandert, der
+       Punkt bleibt, und beide zeigen dasselbe Foto. Also muss vor der
+       Punktschleife feststehen, welche Fotos als Bild erscheinen. */
+    if (mode !== "serien" && showThumbs) planThumbs(w, h);
+    else { planned = []; for (const i of touched) covered[i] = 0; touched = []; }
+
     // Punkte
     for (const b of buckets) {
       ctx.fillStyle = dim ? fade(b.color) : b.color;
       const idx = b.idx;
       for (let k = 0; k < idx.length; k++) {
         const i = idx[k];
-        if (!mask[i]) continue;
+        if (!mask[i] || covered[i]) continue;
         if (picked && selection.has(i)) continue;
         const sx = toScreenX(px[i]), sy = toScreenY(py[i]);
         if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
@@ -589,7 +627,7 @@ export function createScene(canvas, model, hooks = {}) {
     if (picked) {
       ctx.fillStyle = "#ffffff";
       for (const i of selection) {
-        if (!mask[i]) continue;
+        if (!mask[i] || covered[i]) continue;
         const sx = toScreenX(px[i]), sy = toScreenY(py[i]);
         if (sx < -8 || sy < -8 || sx > w + 8 || sy > h + 8) continue;
         ctx.fillRect(sx - r - 0.5, sy - r - 0.5, r * 2 + 1, r * 2 + 1);
@@ -601,7 +639,7 @@ export function createScene(canvas, model, hooks = {}) {
       stats.off = "Serien-Ebene";
       stats.visible = 0;
     } else if (showThumbs) {
-      drawThumbs(w, h, picked);
+      paintThumbs(picked);
     } else {
       // Kein Bild gezeichnet ist nicht dasselbe wie kein Bild gefunden --
       // "0 von 1.823" laese sich wie ein Fehler.
@@ -747,7 +785,7 @@ export function createScene(canvas, model, hooks = {}) {
      Wo genau?    Gezeichnet wird an der eigenen Stelle, nie eingerastet.
                   Ein Bild, das an ein Raster springt, luegt ueber seine
                   Position, und die Position ist hier die Aussage. */
-  function drawThumbs(w, h, picked) {
+  function planThumbs(w, h) {
     const t0 = performance.now();
     let fanMs = 0;
     // Von der Bildmitte nach aussen: passen nicht alle hin, gewinnt das
@@ -789,11 +827,14 @@ export function createScene(canvas, model, hooks = {}) {
        Also die Uhr direkt um die drawImage-Aufrufe. Zwei Zeitabfragen je
        Bild kosten Bruchteile einer Mikrosekunde und messen dafuer das,
        worum es geht. */
-    let imgMs = 0;
     // Was noch nicht gestartet ist, gilt fuer dieses Bild neu.
     resetQueue();
+    planned = [];
+    for (const i of touched) covered[i] = 0;
+    touched = [];
 
     const box = Math.max(22, Math.min(96, cam.scale / 90)) * tileScale;
+    tileBox = box;
 
     /* Welche Vorschaubildstufe -- nach der gezeichneten Groesse, nicht nach
        dem Massstab.
@@ -829,9 +870,10 @@ export function createScene(canvas, model, hooks = {}) {
        zu belegen, braucht es die Wurzel aus Flaeche durch N als Abstand. Der
        groessere der beiden Wuensche gewinnt. */
     const affordable = Math.floor(FRAME_BUDGET_MS / Math.max(msPerThumb, 1e-4));
-    const planned = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, affordable));
+    // Nicht `planned` nennen: so heisst die Liste der vorgemerkten Bilder.
+    const wish = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, affordable));
     const wanted = box * (declutter > 0 ? declutter : SPACING);
-    const cover = Math.sqrt(filled / planned);
+    const cover = Math.sqrt(filled / wish);
 
     /* Solange die Kamera steht, bleibt die Zuteilung stehen -- und dazu
        gehoert der Abstand. Er haengt am Budget, das Budget an der Messung,
@@ -851,7 +893,7 @@ export function createScene(canvas, model, hooks = {}) {
       // ansieht: beobachtet als Ruecklauf von 947 auf 666 bei stehender
       // Kamera. Neu geplant wird, sobald sich die Kamera bewegt -- und dann
       // mit einem Messwert, der die tatsaechlichen Kosten kennt.
-      heldBudget = planned;
+      heldBudget = wish;
     }
     const gap = heldGap;
     const budget = heldBudget;
@@ -918,26 +960,23 @@ export function createScene(canvas, model, hooks = {}) {
 
     let drawn = 0;
 
-    function drawTile(i, sx, sy) {
+    /* Nur vormerken, noch nicht zeichnen.
+
+       Der Punkt unter einem Bild ist Doppelung: er steht fuer dasselbe Foto,
+       das daneben schon zu sehen ist -- beim Abstossen faellt das auf, weil
+       das Bild wegwandert und der Punkt liegen bleibt. Um ihn weglassen zu
+       koennen, muss vorher feststehen, welche Bilder wirklich erscheinen.
+       Also erst planen, dann die Punkte zeichnen, dann die Bilder darauf. */
+    function planTile(i, sx, sy) {
       const img = bestImage(i, size);
       // Der Platz bleibt belegt, auch wenn das Bild noch laedt: sonst
-      // uebernimmt bei jedem Ladevorgang ein anderes Foto die Stelle.
+      // uebernimmt bei jedem Ladevorgang ein anderes Foto die Stelle. Der
+      // Punkt bleibt dann sichtbar -- da ist ja noch kein Bild.
       if (!img) return;
       drawn++;
-      const ar = img.naturalWidth / img.naturalHeight || 1;
-      const bw = ar >= 1 ? box : box * ar;
-      const bh = ar >= 1 ? box / ar : box;
-      const tImg = performance.now();
-      ctx.globalAlpha = picked && !selection.has(i) ? 0.28 : 1;
-      ctx.drawImage(img, sx - bw / 2, sy - bh / 2, bw, bh);
-      if (picked && selection.has(i)) {
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(sx - bw / 2, sy - bh / 2, bw, bh);
-      }
-      ctx.globalAlpha = 1;
-      imgMs += performance.now() - tImg;
-      shown.push([i, sx - bw / 2, sy - bh / 2, bw, bh]);
+      planned.push([i, sx, sy, img]);
+      covered[i] = 1;
+      touched.push(i);
     }
 
     if (repel) {
@@ -953,11 +992,11 @@ export function createScene(canvas, model, hooks = {}) {
       const tFan = performance.now();
       fanOut(cand, gap, w, h, shift);
       fanMs = performance.now() - tFan;
-      for (const [, i, sx, sy] of cand) drawTile(i, sx, sy);
+      for (const [, i, sx, sy] of cand) planTile(i, sx, sy);
     } else if (!spaced) {
       for (const [, i, sx, sy] of near) {
         if (capped && drawn >= budget) break;
-        drawTile(i, sx, sy);
+        planTile(i, sx, sy);
       }
     } else {
       /* Platzvergabe rein nach Lage, nicht nach Ladezustand.
@@ -973,7 +1012,7 @@ export function createScene(canvas, model, hooks = {}) {
          steht: dann waechst die Auswahl nur noch, sie ordnet sich nicht um. */
       for (const [i, sx, sy] of held) {
         claim(sx, sy);
-        drawTile(i, sx, sy);
+        planTile(i, sx, sy);
       }
       for (const [, i, sx, sy] of near) {
         if (held.length >= budget) break;
@@ -982,25 +1021,46 @@ export function createScene(canvas, model, hooks = {}) {
         claim(sx, sy);
         held.push([i, sx, sy]);
         heldSet.add(i);
-        drawTile(i, sx, sy);
+        planTile(i, sx, sy);
       }
     }
 
-    // Nur messen, wenn genug gezeichnet wurde -- bei einer Handvoll Bildern
-    // steckt in der Zahl mehr Grundrauschen als Bildkosten.
-    if (drawn > 30) {
-      const each = Math.min(MS_PER_THUMB_MAX, imgMs / drawn);
-      msPerThumb += (each - msPerThumb) * (each > msPerThumb ? MS_RISE : MS_FALL);
-    }
     stats.perThumb = msPerThumb;
     stats.drawn = drawn;
     stats.budget = capped ? budget : Infinity;
-    stats.planned = planned;
+    stats.wish = wish;
     stats.raster = spaced || repel;
     stats.gap = spaced || repel ? Math.round(gap) : 0;
     stats.gapReason = repel ? "abstoßend" : (spaced ? "Fläche" : "");
     stats.shift = repel ? Math.round(shift) : 0;
     stats.fanMs = Math.round(fanMs * 10) / 10;
+  }
+
+  /** Den Plan aufs Bild bringen -- und dabei messen, was es kostet. */
+  function paintThumbs(picked) {
+    let imgMs = 0;
+    for (const [i, sx, sy, img] of planned) {
+      const ar = img.naturalWidth / img.naturalHeight || 1;
+      const bw = ar >= 1 ? tileBox : tileBox * ar;
+      const bh = ar >= 1 ? tileBox / ar : tileBox;
+      const tImg = performance.now();
+      ctx.globalAlpha = picked && !selection.has(i) ? 0.28 : 1;
+      ctx.drawImage(img, sx - bw / 2, sy - bh / 2, bw, bh);
+      if (picked && selection.has(i)) {
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sx - bw / 2, sy - bh / 2, bw, bh);
+      }
+      ctx.globalAlpha = 1;
+      imgMs += performance.now() - tImg;
+      shown.push([i, sx - bw / 2, sy - bh / 2, bw, bh]);
+    }
+    // Nur messen, wenn genug gezeichnet wurde -- bei einer Handvoll Bildern
+    // steckt in der Zahl mehr Grundrauschen als Bildkosten.
+    if (planned.length > 30) {
+      const each = Math.min(MS_PER_THUMB_MAX, imgMs / planned.length);
+      msPerThumb += (each - msPerThumb) * (each > msPerThumb ? MS_RISE : MS_FALL);
+    }
     stats.imgMs = Math.round(imgMs * 10) / 10;
   }
 
@@ -1045,10 +1105,9 @@ export function createScene(canvas, model, hooks = {}) {
   /** Kontinentname unter dem Zeiger -- sein Schwerpunkt traegt die Schrift. */
   function labelAt(sx, sy) {
     if (mode === "serien" || cam.scale > 6000) return -1;
-    const cc = model.layouts[layout].centroids;
     for (const c of model.clusters) {
-      const cx = toScreenX(spread ? spreadPoint(c.x, cc[c.i * 2], spread) : c.x);
-      const cy = toScreenY(spread ? spreadPoint(c.y, cc[c.i * 2 + 1], spread) : c.y);
+      const [wx, wy] = spreadAt(c.x, c.y, c.i);
+      const cx = toScreenX(wx), cy = toScreenY(wy);
       const label = model.clusterLabel[c.i];
       const half = label.length * 3.6 + 8;
       if (Math.abs(sx - cx) <= half && Math.abs(sy - cy) <= 11) return c.i;
@@ -1076,10 +1135,9 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const cc = model.layouts[layout].centroids;
     for (const c of model.clusters) {
-      const sx = toScreenX(spread ? spreadPoint(c.x, cc[c.i * 2], spread) : c.x);
-      const sy = toScreenY(spread ? spreadPoint(c.y, cc[c.i * 2 + 1], spread) : c.y);
+      const [wx, wy] = spreadAt(c.x, c.y, c.i);
+      const sx = toScreenX(wx), sy = toScreenY(wy);
       if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
       const label = model.clusterLabel[c.i];
       const weak = c.cap_share < 0.15;
