@@ -8,13 +8,26 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=11";
-import { thumbUrl } from "../core/api.js?v=11";
+import { colorFor, spreadPoint } from "./model.js?v=12";
+import { thumbUrl } from "../core/api.js?v=12";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
-//: Mehr gleichzeitig sichtbare Bilder bringen nichts -- es passen keine hin.
-const MAX_THUMBS = 420;
+//: Obergrenze fuer gezeichnete Bilder je Bild. Kein Richtwert, sondern eine
+//: Reissleine: was tatsaechlich gezeichnet wird, ergibt sich aus der Flaeche
+//: des Fensters geteilt durch den Kachelabstand. Ein festes Budget war der
+//: Grund, warum bei dichten Gegenden nur ein Kegel um die Bildmitte Bilder
+//: zeigte und der Rand Punkte blieb -- die Liste ist von der Mitte nach
+//: aussen sortiert, und nach 420 geladenen Bildern brach sie ab.
+const MAX_THUMBS = 2400;
+
+//: Unter so vielen lohnt kein Rastern -- so viele passen immer.
+const MIN_THUMBS = 120;
+
+//: Kachelabstand als Anteil der Kachelbreite, wenn "Entzerren" aus ist.
+//: Bei einer halben Kachel ueberlappen sich Bilder noch sichtbar, aber ein
+//: Haufen in der Mitte kann nicht mehr das ganze Budget aufbrauchen.
+const SPACING = 0.5;
 const MAX_INFLIGHT = 8;
 const TRANSITION_MS = 700;
 
@@ -31,6 +44,17 @@ export function createScene(canvas, model, hooks = {}) {
   let spread = 0;      // Kontinente auseinanderziehen
   let tileScale = 1;   // Kachelgroesse
   let declutter = 0;   // Mindestabstand gezeichneter Bilder in Pixeln
+  //: Wie das Budget fuer Vorschaubilder verteilt wird. Kein Automatismus,
+  //: sondern eine Wahl -- die Punktansicht zeigt Farbgruppen besser als
+  //: jedes Bild, der Kegel taugt zum Verfolgen einer Spur, die Flaeche zum
+  //: Ueberblick. Was davon richtig ist, haengt an der Frage, nicht am Code.
+  let thumbMode = "flaeche";
+  //: Was der letzte Durchlauf gekostet hat. Ohne Zahlen ist "ruckelt es?"
+  //: Geschmackssache -- und die Antwort haengt am Geraet, nicht an meiner
+  //: Meinung.
+  const stats = { visible: 0, drawn: 0, budget: 0, raster: false, gap: 0, ms: 0,
+                  cached: 0, off: "" };
+
   let mask = new Uint8Array(model.n).fill(1);
   let selection = null; // Set<number> oder null
   let lassoPath = null;
@@ -148,6 +172,50 @@ export function createScene(canvas, model, hooks = {}) {
 
   const imageFor = (i, size) => imageForId(model.ids[i], size);
 
+  /** Nachsehen, ohne anzufordern.
+
+      Der erste Durchgang beim Verteilen darf keine Ladevorgaenge ausloesen:
+      er soll nur wissen, was schon da ist, damit Geladenes seinen Platz
+      behaelt. Wuerde er anfordern, waere jeder Durchlauf wieder eine Welle
+      von Anfragen -- gemessen 4.809 bei einem einzigen Hineinzoomen. */
+  function peekImage(id, size) {
+    const hit = images.get(`${id}:${size}`);
+    return hit || null;
+  }
+
+  //: Vorschaubildstufen, gross zuerst. Was schon da ist, ist besser als nichts.
+  const SIZES = [320, 160];
+
+  /** Das beste schon geladene Bild, und die gewuenschte Stufe anfordern.
+
+      Beim Hineinzoomen wechselt die Stufe von 160 auf 320 -- und damit der
+      Schluessel im Zwischenspeicher. Ohne Rueckfall war in dem Moment *jedes*
+      sichtbare Bild ungeladen, und die Karte fiel auf Punkte zurueck, bis
+      alles neu geholt war. Genau das sah aus wie "zu nah rangezoomt, Bilder
+      weg". Jetzt bleibt die grobe Stufe stehen und wird scharf, sobald die
+      feine da ist. */
+  function bestImage(i, size) {
+    const id = model.ids[i];
+    const wanted = imageForId(id, size);
+    if (wanted) return wanted;
+    for (const other of SIZES) {
+      if (other === size) continue;
+      const hit = peekImage(id, other);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /** Wie `bestImage`, aber ohne anzufordern -- fuer den ersten Durchgang. */
+  function peekBest(i, size) {
+    const id = model.ids[i];
+    for (const s of [size, ...SIZES.filter((o) => o !== size)]) {
+      const hit = peekImage(id, s);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   function pump() {
     while (inflight < MAX_INFLIGHT && queue.length) {
       // Der Reihe nach, nicht zuletzt-zuerst. Angefragt wird von der
@@ -206,6 +274,9 @@ export function createScene(canvas, model, hooks = {}) {
   function draw() {
     const now = performance.now();
     const animating = positions(now);
+    stats.drawn = 0;
+    stats.budget = 0;
+    stats.off = "";
     const w = canvas._w, h = canvas._h;
     ctx.fillStyle = "#12151a";
     ctx.fillRect(0, 0, w, h);
@@ -217,7 +288,9 @@ export function createScene(canvas, model, hooks = {}) {
     // treten die Punkte trotzdem zurueck -- dort sind sie Untergrund.
     const picked = selection && selection.size > 0;
     const dim = mode === "serien" || picked;
-    const showThumbs = cam.scale > THUMB_SCALE && !animating;
+    // In der Punktansicht bleiben die Farbgruppen unverdeckt -- Kontinente
+    // und Zustaende liest man daran besser ab als an Bildern.
+    const showThumbs = thumbMode !== "punkte" && cam.scale > THUMB_SCALE && !animating;
 
     // Punkte
     for (const b of buckets) {
@@ -244,10 +317,25 @@ export function createScene(canvas, model, hooks = {}) {
       }
     }
 
-    if (mode === "serien") drawEvents(w, h);
-    else if (showThumbs) drawThumbs(w, h, picked);
+    if (mode === "serien") {
+      drawEvents(w, h);
+      stats.off = "Serien-Ebene";
+      stats.visible = 0;
+    } else if (showThumbs) {
+      drawThumbs(w, h, picked);
+    } else {
+      // Kein Bild gezeichnet ist nicht dasselbe wie kein Bild gefunden --
+      // "0 von 1.823" laese sich wie ein Fehler.
+      stats.visible = 0;
+      stats.off = thumbMode === "punkte" ? "Punktansicht"
+                : animating ? "Übergang läuft"
+                : "zu weit weg für Bilder";
+    }
     drawClusterLabels(w, h);
     if (lassoPath) drawLasso();
+    // Nur der eigene Aufwand, ohne das Warten aufs Bild -- was der Browser
+    // danach mit der Leinwand macht, steht hier nicht drin.
+    stats.ms = Math.round((performance.now() - now) * 10) / 10;
     if (animating) schedule();
   }
 
@@ -275,6 +363,21 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.restore();
   }
 
+  /* Vorschaubilder verteilen.
+
+     Drei Fragen, die vorher stillschweigend beantwortet waren:
+
+     Wie viele?   Nicht 420, sondern so viele, wie bei diesem Kachelabstand
+                  ins Fenster passen. Ein fester Wert war auf einem breiten
+                  Monitor zu wenig und auf dem Handy zu viel.
+
+     Welche?      Das entscheidet `thumbMode`. Der Kegel nimmt die von der
+                  Bildmitte nach aussen -- eine Taschenlampe. Die Flaeche
+                  haelt Abstand, damit die Bilder bis an den Rand reichen.
+
+     Wo genau?    Gezeichnet wird an der eigenen Stelle, nie eingerastet.
+                  Ein Bild, das an ein Raster springt, luegt ueber seine
+                  Position, und die Position ist hier die Aussage. */
   function drawThumbs(w, h, picked) {
     const size = cam.scale > 9000 ? 320 : 160;
     // Von der Bildmitte nach aussen: passen nicht alle hin, gewinnt das
@@ -288,34 +391,74 @@ export function createScene(canvas, model, hooks = {}) {
       near.push([(sx - cx) ** 2 + (sy - cy) ** 2, i, sx, sy]);
     }
     near.sort((a, b) => a[0] - b[0]);
+    stats.visible = near.length;
 
     const box = Math.max(22, Math.min(96, cam.scale / 90)) * tileScale;
-    // Entzerren: in dichten Gegenden liegen tausend Bilder aufeinander und
-    // alles wird zu Brei. Wer zu nah an einem schon gezeichneten Bild liegt,
-    // wird uebersprungen -- dann bleibt bei *jeder* Vergroesserung lesbar,
-    // was zu sehen ist, statt erst ganz weit unten.
-    const grid = declutter > 0 ? new Set() : null;
-    const cell = Math.max(1, declutter);
-    // Mehr Bilder als Rasterfelder koennen ohnehin nicht gezeichnet werden --
-    // ohne diese Schranke fragt jeder Durchlauf tausende Vorschaubilder an,
-    // von denen die allermeisten sofort wieder verworfen werden.
-    const maxCells = grid
-      ? (Math.ceil(w / cell) + 2) * (Math.ceil(h / cell) + 2)
-      : Infinity;
-    let drawn = 0;
-    for (const [, i, sx, sy] of near) {
-      if (drawn >= MAX_THUMBS) break;
-      if (grid) {
-        if (grid.size >= maxCells) break;
-        const key = `${Math.round(sx / cell)}:${Math.round(sy / cell)}`;
-        if (grid.has(key)) continue;
-        grid.add(key);
+
+    // Mindestabstand zwischen zwei gezeichneten Bildern. „Entzerren" gibt
+    // ihn direkt vor; steht der Regler auf aus, greift ein halber Kachelbreite
+    // grosser Abstand -- gerade so viel, dass ein Haufen in der Bildmitte
+    // nicht das ganze Budget verbraucht.
+    const gap = declutter > 0 ? declutter : box * SPACING;
+    // Wie viele Bilder mit diesem Abstand ueberhaupt ins Fenster passen.
+    // Haengt am Fenster, nicht an einer Zahl im Quelltext.
+    const fits = Math.ceil((w + 2 * gap) / gap) * Math.ceil((h + 2 * gap) / gap);
+    const budget = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, fits));
+
+    //  punkte  -- kommt hier gar nicht an, draw() ueberspringt uns.
+    //  kegel   -- kein Abstand, nur das Budget: die Mitte verbraucht es.
+    //  flaeche -- Abstand halten, sobald mehr sichtbar ist als passt.
+    //  alles   -- weder noch, zum Vergleichen.
+    const spaced = thumbMode === "flaeche"
+      ? declutter > 0 || near.length > budget
+      : thumbMode === "kegel" && declutter > 0;
+    const capped = thumbMode !== "alles";
+
+    /* Echter Mindestabstand, nicht ein Bild je Rasterfeld.
+
+       Ein Feld allein zu pruefen garantiert keinen Abstand: zwei Punkte
+       beiderseits einer Feldgrenze koennen einen Pixel auseinanderliegen und
+       beide durchkommen. Genau deshalb aenderte der Regler bisher nur, *welche*
+       Bilder erscheinen, und nichts an ihrer Lage. Also die neun Felder ringsum
+       mitpruefen -- das Raster ist nur der Index, der Abstand die Bedingung. */
+    const taken = new Map();
+    const gap2 = gap * gap;
+
+    function free(sx, sy) {
+      const gx = Math.floor(sx / gap), gy = Math.floor(sy / gap);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const list = taken.get((gx + dx) + ":" + (gy + dy));
+          if (!list) continue;
+          for (let k = 0; k < list.length; k += 2) {
+            const ddx = list[k] - sx, ddy = list[k + 1] - sy;
+            if (ddx * ddx + ddy * ddy < gap2) return false;
+          }
+        }
       }
-      const img = imageFor(i, size);
+      return true;
+    }
+
+    function claim(sx, sy) {
+      const key = Math.floor(sx / gap) + ":" + Math.floor(sy / gap);
+      const list = taken.get(key);
+      if (list) list.push(sx, sy);
+      else taken.set(key, [sx, sy]);
+    }
+
+    let drawn = 0;
+
+    function place(entry, onlyLoaded) {
+      const [, i, sx, sy] = entry;
+      if (capped && drawn >= budget) return false;
+      const img = onlyLoaded ? peekBest(i, size) : bestImage(i, size);
+      if (onlyLoaded && !img) return false;
+      if (spaced && !free(sx, sy)) return true;
+      if (spaced) claim(sx, sy);
       // Der Platz bleibt belegt, auch wenn das Bild noch laedt: sonst
       // uebernimmt bei jedem Ladevorgang ein anderes Foto die Stelle und
       // die Karte flackert.
-      if (!img) continue;
+      if (!img) return true;
       drawn++;
       const ar = img.naturalWidth / img.naturalHeight || 1;
       const bw = ar >= 1 ? box : box * ar;
@@ -328,7 +471,31 @@ export function createScene(canvas, model, hooks = {}) {
         ctx.strokeRect(sx - bw / 2, sy - bh / 2, bw, bh);
       }
       ctx.globalAlpha = 1;
+      return true;
     }
+
+    /* Zwei Durchgaenge, und der erste ist der Grund fuer die Ruhe im Bild.
+
+       Geladene Bilder belegen ihre Stelle zuerst. Sonst gewinnt beim
+       Schwenken um wenige Pixel mal dieser, mal jener Nachbar den Platz --
+       und weil der Gewinner meist noch gar nicht geladen ist, blinkt an
+       derselben Stelle abwechselnd ein anderes Foto. Wer schon da ist,
+       bleibt; neue fuellen nur die Luecken. */
+    if (spaced) {
+      for (const e of near) {
+        if (capped && drawn >= budget) break;
+        place(e, true);
+      }
+    }
+    for (const e of near) {
+      if (capped && drawn >= budget) break;
+      if (!place(e, false)) break;
+    }
+
+    stats.drawn = drawn;
+    stats.budget = capped ? budget : Infinity;
+    stats.raster = spaced;
+    stats.gap = spaced ? Math.round(gap) : 0;
   }
 
   /** Eine Kachel je Gelegenheit statt eines Punkts je Foto.
@@ -572,6 +739,8 @@ export function createScene(canvas, model, hooks = {}) {
     setSpread(k) { spread = k; schedule(); },
     setTileScale(k) { tileScale = k; schedule(); },
     setDeclutter(px_) { declutter = px_; schedule(); },
+    setThumbMode(m) { thumbMode = m; schedule(); },
+    stats: () => ({ ...stats, cached: images.size }),
     setMinEventSize(n) { minEventSize = n; schedule(); },
     get mode() { return mode; },
     setLassoMode(on) { lassoMode = on; canvas.classList.toggle("lasso", on); },

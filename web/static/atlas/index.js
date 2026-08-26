@@ -6,22 +6,45 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=11";
-import { api, thumbUrl } from "../core/api.js?v=11";
-import { openModal } from "../core/modal.js?v=11";
-import { createPathPick } from "../core/pathpick.js?v=11";
-import { feature, gate } from "../core/capabilities.js?v=11";
+import { $, escapeHtml, num } from "../core/dom.js?v=12";
+import { api, thumbUrl } from "../core/api.js?v=12";
+import { openModal } from "../core/modal.js?v=12";
+import { createPathPick } from "../core/pathpick.js?v=12";
+import { feature, gate } from "../core/capabilities.js?v=12";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=11";
-import { createScene } from "./scene.js?v=11";
+} from "./model.js?v=12";
+import { createScene } from "./scene.js?v=12";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
   { id: "zeit", label: "Zeit × Bedeutung", hint: "waagerecht die Jahre, senkrecht dieselbe Bedeutungsachse" },
 ];
+
+/* Wie die Vorschaubilder auf das Fenster verteilt werden.
+
+   Es gibt kein richtig. Die Punktansicht zeigt Farbgruppen unverdeckt -- wo
+   ein Kontinent aufhört, liest man daran besser ab als an Bildern. Der Kegel
+   folgt der Bildmitte und lässt den Rand als Punkte stehen: eine Taschenlampe,
+   gut zum Verfolgen einer Spur. Die Fläche verteilt dieselbe Zahl Bilder übers
+   ganze Fenster. „Alles" hat keine Schranke und ist zum Vergleichen da --
+   was es kostet, steht in der Fußzeile. */
+const THUMB_MODES = [
+  { id: "punkte", label: "Punkte",
+    hint: "Keine Bilder. Farbgruppen bleiben unverdeckt — Kontinente und Zustände liest man so am besten." },
+  { id: "kegel", label: "Kegel",
+    hint: "Bilder um die Bildmitte, außen Punkte. Wie eine Taschenlampe: folgt dem, worauf man zielt." },
+  { id: "flaeche", label: "Fläche",
+    hint: "Dieselbe Zahl Bilder, aber übers ganze Fenster verteilt statt in der Mitte gehäuft." },
+  { id: "alles", label: "Alles",
+    hint: "Jedes sichtbare Bild, ohne Schranke. Zum Vergleichen — die Fußzeile zeigt, was es kostet." },
+];
+
+//: Die Wahl bleibt erhalten: wer die Punktansicht mag, will sie nicht bei
+//: jedem Aufruf neu einstellen.
+const THUMB_KEY = "pv-atlas-thumbmode";
 
 /* Werkzeuge -- absichtlich anders gebaut als die Umschalter darüber: sie
    verändern nicht, *was* man sieht, sondern *wie* man arbeitet. */
@@ -43,6 +66,11 @@ const TOOLS = [
     run: () => paintBriefing(),
   },
   {
+    id: "atlas-stats-btn", glyph: "◍", label: "Aufwand",
+    hint: "Wie viele Bilder gezeichnet werden, wie lange es dauert, wie viel im Speicher liegt",
+    run: (b) => { statsOn = b.classList.toggle("on"); pollStats(); paintStats(); },
+  },
+  {
     id: "atlas-reset", glyph: "⊙", label: "Übersicht",
     hint: "Alles zeigen (Taste 0)",
     run: () => { scene.fitAll(); clearSelection(); },
@@ -54,6 +82,8 @@ let scene = null;
 let selection = new Set();
 let filters = { fold: false, open: false, camera: false, spacesOff: new Set() };
 let colorMode = "kontinent";
+let thumbMode = "flaeche";
+let statsOn = false;
 let showLightbox = () => {};
 let booted = false;
 
@@ -114,6 +144,7 @@ ${escapeHtml(build.why)}`}</pre>`;
     onPickCluster: pickCluster,
     onLasso: (hit, subtract) => applyLasso(hit, subtract),
   });
+  scene.setThumbMode(thumbMode);
   applyFilters();
   paintLegend();
   paintBriefing();
@@ -149,6 +180,28 @@ function buildToolbar() {
 
   const min = $("atlas-minsize");
   min.onchange = () => { scene.setMinEventSize(Number(min.value)); updateCount(); };
+
+  // Wie die Vorschaubilder verteilt werden. Vier Antworten auf dieselbe
+  // Frage -- welche taugt, haengt daran, was man gerade sucht, und nicht
+  // daran, was ich fuer richtig halte.
+  // Nur lesen, nicht anwenden: die Leiste entsteht vor der Szene, und
+  // `scene` ist hier noch null.
+  try {
+    const saved = localStorage.getItem(THUMB_KEY);
+    if (THUMB_MODES.some((m) => m.id === saved)) thumbMode = saved;
+  } catch { /* privater Modus */ }
+  $("atlas-thumbs").innerHTML = THUMB_MODES.map((m) =>
+    `<button class="chip${m.id === thumbMode ? " on" : ""}" data-thumb="${m.id}" ` +
+    `title="${escapeHtml(m.hint)}">${m.label}</button>`).join("");
+  $("atlas-thumbs").onclick = (e) => {
+    const b = e.target.closest("[data-thumb]");
+    if (!b) return;
+    $("atlas-thumbs").querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === b));
+    thumbMode = b.dataset.thumb;
+    scene.setThumbMode(thumbMode);
+    try { localStorage.setItem(THUMB_KEY, thumbMode); } catch { /* privater Modus */ }
+    paintStats();
+  };
 
   // Die Gruppenüberschrift kommt aus dem `data-group` im HTML, nicht aus einem
   // eingeschobenen <span> -- sonst sitzt sie in der Reihe statt darüber.
@@ -277,8 +330,9 @@ const KNOBS = [
   },
   {
     id: "declutter", label: "Bilder entzerren", min: 0, max: 90, step: 5, start: 0,
-    hint: "Mindestabstand in Pixeln. Was zu nah an einem schon gezeichneten Bild liegt, bleibt weg — "
-        + "dann ist auch in dichten Gegenden etwas zu erkennen, ohne ganz hineinzuzoomen.",
+    hint: "Mindestabstand in Pixeln zwischen zwei gezeichneten Bildern. Was näher an einem schon "
+        + "gezeichneten liegt, bleibt weg — dann ist auch in dichten Gegenden etwas zu erkennen, "
+        + "ohne ganz hineinzuzoomen. Wirkt nur in der Bilderverteilung „Fläche“ und „Kegel“.",
     apply: (v) => scene.setDeclutter(v), fmt: (v) => (v ? `${v} px` : "aus"),
   },
   {
@@ -338,6 +392,39 @@ function updateCount(m) {
   $("atlas-count").textContent = hidden.size
     ? `${num(shown)} sichtbar · ${num(hidden.size)} weggeräumt`
     : `${num(shown)} sichtbar`;
+}
+
+/* Was der letzte Durchlauf gekostet hat.
+
+   Die Zahl der gezeichneten Bilder gegen die der sichtbaren ist der ganze
+   Unterschied zwischen den Modi -- und die Millisekunden sagen, ob der
+   naechste Schritt noch bezahlbar ist. Der Zwischenspeicher steht daneben,
+   weil er nie geleert wird: ein 160er Vorschaubild belegt entpackt 100 kB,
+   ein 320er 400 kB. Auf dem Rechner egal, auf dem Handy nicht. */
+let statsTimer = null;
+
+function pollStats() {
+  clearInterval(statsTimer);
+  statsTimer = null;
+  // Bewusst neben dem Zeichenlauf und nicht darin: eine Messung, die im
+  // gemessenen Durchlauf steckt, misst sich selbst mit.
+  if (statsOn) statsTimer = setInterval(paintStats, 250);
+}
+
+function paintStats() {
+  const box = $("atlas-stats");
+  if (!box || !scene || !scene.stats) return;
+  const s = scene.stats();
+  const speicher = Math.round(s.cached * 0.1);   // grob, 160 px entpackt
+  box.classList.toggle("hidden", !statsOn);
+  if (!statsOn) return;
+  const budget = s.budget === Infinity ? "ohne Schranke" : `Budget ${num(s.budget)}`;
+  const was = s.off
+    ? `<b>keine Bilder</b> — ${escapeHtml(s.off)}`
+    : `<b>${num(s.drawn)}</b> von ${num(s.visible)} sichtbaren gezeichnet`
+      + ` · ${budget}${s.gap ? ` · ${s.gap} px Abstand` : ""}`;
+  box.innerHTML = `${was} · ${s.ms} ms`
+    + ` · ${num(s.cached)} Bilder im Speicher (~${num(speicher)} MB)`;
 }
 
 function paintLegend() {

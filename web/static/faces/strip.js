@@ -10,8 +10,8 @@
    Regel steht der richtige Name schon als Knopf da und ein Klick genügt.
    Das Textfeld ist der Ausweg, nicht der Weg. */
 
-import { escapeHtml, num } from "../core/dom.js?v=11";
-import { api, cropUrl } from "../core/api.js?v=11";
+import { escapeHtml, num } from "../core/dom.js?v=12";
+import { api, cropUrl } from "../core/api.js?v=12";
 
 /* Ab hier ist ein Vorschlag so stark, dass er hervorgehoben wird -- die
    Prozentangabe hilft nur beim Zweifeln. */

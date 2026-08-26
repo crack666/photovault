@@ -1,8 +1,8 @@
-import { $, escapeHtml, num } from "./core/dom.js?v=11";
-import { api, cropUrl } from "./core/api.js?v=11";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=11";
-import { gate } from "./core/capabilities.js?v=11";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=11";
+import { $, escapeHtml, num } from "./core/dom.js?v=12";
+import { api, cropUrl } from "./core/api.js?v=12";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=12";
+import { gate } from "./core/capabilities.js?v=12";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=12";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -28,13 +28,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=11");
+  const { initAtlas } = await import("./atlas/index.js?v=12");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=11");
+  const mod = await import("./trash/index.js?v=12");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }

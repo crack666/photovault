@@ -6,7 +6,7 @@
   <title>PhotoVault — Wer ist das?</title>
   <link rel="stylesheet" href="/static/styles.css?v=11" />
   <link rel="stylesheet" href="/static/core/ui.css?v=5" />
-  <link rel="stylesheet" href="/static/atlas/atlas.css?v=11" />
+  <link rel="stylesheet" href="/static/atlas/atlas.css?v=12" />
   <link rel="stylesheet" href="/static/faces/strip.css?v=2" />
 </head>
 <body>
@@ -332,6 +332,7 @@
         </select>
         <div class="atlas-seg" data-group="Anordnung" id="atlas-lenses"></div>
         <div class="atlas-seg" data-group="Farbe" id="atlas-colors"></div>
+        <div class="atlas-seg" data-group="Bilder" id="atlas-thumbs"></div>
         <div class="atlas-toggles" data-group="Bereich" id="atlas-spaces"></div>
         <div class="atlas-toggles" data-group="Filter" id="atlas-filters"></div>
         <div class="atlas-picks">
@@ -348,6 +349,9 @@
       <div class="atlas-controls hidden" id="atlas-controls"></div>
       <aside class="atlas-brief hidden" id="atlas-brief"></aside>
       <div class="atlas-legend hidden" id="atlas-legend"></div>
+      <!-- Zeichenaufwand. Sichtbar, weil "ruckelt es?" sonst
+           Geschmackssache bleibt und die Antwort am Geraet haengt. -->
+      <div class="atlas-stats hidden" id="atlas-stats"></div>
       <div class="atlas-hover hidden" id="atlas-hover"></div>
       <aside class="atlas-sel hidden" id="atlas-sel"></aside>
       <div class="atlas-status" id="atlas-status"></div>
@@ -382,7 +386,7 @@
     </p>
   </main>
 
-  <script type="module" src="/static/app.js?v=31"></script>
+  <script type="module" src="/static/app.js?v=32"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

@@ -407,3 +407,23 @@
   .atlas-wrap { height: auto; }
   #atlas-canvas { height: 60vh; }
 }
+
+/* ---- Zeichenaufwand ---------------------------------------------------
+   Bewusst unauffällig und unten: eine Messhilfe, kein Bedienelement. Sie
+   beantwortet „ruckelt es?" mit einer Zahl statt mit einem Gefühl. */
+
+.atlas-stats {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  z-index: 4;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #12151ad8;
+  border: 1px solid #2a3140;
+  color: #9aa3b2;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  pointer-events: none;
+  max-width: calc(100% - 24px);
+}
+.atlas-stats b { color: #f2f4f8; }
