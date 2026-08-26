@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=23";
-import { api, thumbUrl } from "../core/api.js?v=23";
-import { askText, openModal } from "../core/modal.js?v=23";
-import { createPathPick } from "../core/pathpick.js?v=23";
-import { feature, gate } from "../core/capabilities.js?v=23";
+import { $, escapeHtml, num } from "../core/dom.js?v=24";
+import { api, thumbUrl } from "../core/api.js?v=24";
+import { askText, openModal } from "../core/modal.js?v=24";
+import { createPathPick } from "../core/pathpick.js?v=24";
+import { feature, gate } from "../core/capabilities.js?v=24";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=23";
-import { createScene } from "./scene.js?v=23";
+} from "./model.js?v=24";
+import { createScene } from "./scene.js?v=24";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -95,6 +95,36 @@ let booted = false;
 const HIDDEN_KEY = "pv-atlas-hidden";
 let hidden = new Set();
 
+/* Was der Server über die Karte weiß und sie selbst nicht.
+
+   Die Karte ist ein Standbild. Was danach gelöscht oder in den Papierkorb
+   gelegt wurde, stand weiter darauf -- angeklickt kam ein 404 in der
+   Detailspalte, und das Vorschaubild zeigte das Foto sogar noch, weil es im
+   Browser-Zwischenspeicher lag. Das lokale `hidden` half dabei nicht: es
+   lernt nur von Handlungen, die *in der Karte* passiert sind. Wer im Reiter
+   Papierkorb löscht oder von einem anderen Rechner schaut, fällt durch.
+
+   Also wird beim Laden gefragt. Ein Fehlschlag darf nicht als „alles noch
+   da" durchgehen -- dann zeigte die Karte weiter Gelöschtes -- und steht
+   deshalb in der Kopfzeile. */
+let goneDeleted = 0;
+let goneTrashed = 0;
+let goneNote = "";
+
+async function markGone() {
+  goneDeleted = 0;
+  goneTrashed = 0;
+  goneNote = "";
+  try {
+    const g = await api("/api/atlas/gone");
+    for (const id of g.deleted || []) { hidden.add(id); goneDeleted++; }
+    for (const id of g.trashed || []) { hidden.add(id); goneTrashed++; }
+  } catch (e) {
+    goneNote = `Abgleich mit dem Index fehlgeschlagen (${
+      String(e.message || e).slice(0, 80)}) — gelöschte Fotos können noch dastehen.`;
+  }
+}
+
 function loadHidden(builtAt) {
   try {
     const raw = JSON.parse(localStorage.getItem(HIDDEN_KEY) || "null");
@@ -134,6 +164,7 @@ ${escapeHtml(build.why)}`}</pre>`;
   }
   status.textContent = "";
   hidden = loadHidden(model.builtAt);
+  await markGone();
   booted = true;
 
   buildToolbar();
@@ -482,9 +513,16 @@ function updateCount(m) {
     return;
   }
   const shown = countVisible(m || mask());
-  $("atlas-count").textContent = hidden.size
-    ? `${num(shown)} sichtbar · ${num(hidden.size)} weggeräumt`
-    : `${num(shown)} sichtbar`;
+  // Verschoben, gelöscht und vorgemerkt sind drei verschiedene Dinge, auch
+  // wenn sie alle dazu führen, dass ein Punkt verschwindet.
+  const teile = [];
+  const verschoben = hidden.size - goneDeleted - goneTrashed;
+  if (verschoben > 0) teile.push(`${num(verschoben)} weggeräumt`);
+  if (goneDeleted) teile.push(`${num(goneDeleted)} gelöscht`);
+  if (goneTrashed) teile.push(`${num(goneTrashed)} im Papierkorb`);
+  $("atlas-count").textContent = `${num(shown)} sichtbar`
+    + (teile.length ? ` · ${teile.join(" · ")}` : "")
+    + (goneNote ? ` · ${goneNote}` : "");
 }
 
 /* Was der letzte Durchlauf gekostet hat.

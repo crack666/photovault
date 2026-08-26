@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.routes import (
     albums,
+    atlas,
     capabilities,
     events,
     faces,
@@ -52,6 +53,7 @@ app.include_router(albums.router, prefix="/api/albums", tags=["albums"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(capabilities.router, prefix="/api/capabilities", tags=["capabilities"])
 app.include_router(trash.router, prefix="/api/trash", tags=["trash"])
+app.include_router(atlas.router, prefix="/api/atlas", tags=["atlas"])
 
 
 @app.get("/api/health")
