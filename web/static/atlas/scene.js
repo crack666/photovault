@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=25";
-import { thumbUrl } from "../core/api.js?v=25";
+import { colorFor, spreadPoint } from "./model.js?v=31";
+import { thumbUrl } from "../core/api.js?v=31";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -1262,12 +1262,36 @@ export function createScene(canvas, model, hooks = {}) {
   let drag = null;
   let lassoMode = false;
 
+  /* Welche Taste welches Lasso zieht.
+
+     Der Umschalter in der Leiste hatte einen Preis, der ihn fast unbrauchbar
+     machte: solange er an war, zog *jeder* Zug ein Lasso, und schwenken ging
+     nicht mehr. Man musste ihn also fuer jede Auswahl an- und danach wieder
+     ausschalten.
+
+     Jede Variante haengt deshalb an ihrer eigenen Taste. Ohne Taste schwenkt
+     ein Zug immer -- das ist die haeufigste Handlung und braucht keine
+     Vorbereitung.
+
+       Umschalt  neu waehlen (ersetzt)
+       Strg      dazunehmen
+       Alt       abziehen
+       Strg+Alt  eingrenzen: nur was schon gewaehlt war
+
+     Die Bedeutungen sind dieselben wie vorher; neu ist nur, dass sie das
+     Lasso auch *starten*. */
+  const lassoKeys = (e) => e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
+
   canvas.addEventListener("mousedown", (e) => {
     const r = canvas.getBoundingClientRect();
     const sx = e.clientX - r.left, sy = e.clientY - r.top;
-    if (lassoMode || e.shiftKey) {
+    if (lassoMode || lassoKeys(e)) {
+      // Sonst markiert der Zug Text oder zieht das Bild als Objekt mit.
+      e.preventDefault();
       lassoPath = [[sx, sy]];
-      drag = { kind: "lasso" };
+      // Die Tasten beim Anfassen festhalten: laesst man Strg vor der
+      // Maustaste los, waere die Absicht sonst pluetzlich eine andere.
+      drag = { kind: "lasso", mods: { add: e.ctrlKey || e.metaKey, subtract: e.altKey } };
     } else {
       drag = { kind: "pan", sx, sy, tx: cam.tx, ty: cam.ty, moved: false };
     }
@@ -1298,9 +1322,25 @@ export function createScene(canvas, model, hooks = {}) {
 
   window.addEventListener("mouseup", (e) => {
     if (!drag) return;
-    if (drag.kind === "lasso" && lassoPath && lassoPath.length > 2) {
-      hooks.onLasso?.(pickInPath(lassoPath),
-                      { subtract: e.altKey, add: e.ctrlKey || e.metaKey });
+    const kurz = !lassoPath || lassoPath.length <= 2;
+    if (drag.kind === "lasso" && !kurz) {
+      // Beim Anfassen *oder* beim Loslassen gedrueckt zaehlt. Wer mitten im
+      // Zug noch Strg dazunimmt, meint es; wer es vorher losgelassen hat,
+      // meinte es auch.
+      hooks.onLasso?.(pickInPath(lassoPath), {
+        subtract: drag.mods.subtract || e.altKey,
+        add: drag.mods.add || e.ctrlKey || e.metaKey,
+      });
+    } else if (drag.kind === "lasso" && kurz) {
+      /* Ein Lasso ohne Zug ist ein Klick.
+
+         Strg+Klick heisst "mehr davon" -- das darf nicht verschwinden, nur
+         weil Strg jetzt auch ein Lasso startet. Wer nicht gezogen hat, wollte
+         klicken. */
+      const r = canvas.getBoundingClientRect();
+      const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      const i = mode === "serien" ? -1 : nearest(sx, sy);
+      if (i >= 0) (e.ctrlKey || e.metaKey ? hooks.onThread : hooks.onPick)?.(i);
     } else if (drag.kind === "pan" && !drag.moved) {
       const r = canvas.getBoundingClientRect();
       const sx = e.clientX - r.left, sy = e.clientY - r.top;
