@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=16";
-import { api, thumbUrl } from "../core/api.js?v=16";
-import { openModal } from "../core/modal.js?v=16";
-import { createPathPick } from "../core/pathpick.js?v=16";
-import { feature, gate } from "../core/capabilities.js?v=16";
+import { $, escapeHtml, num } from "../core/dom.js?v=17";
+import { api, thumbUrl } from "../core/api.js?v=17";
+import { openModal } from "../core/modal.js?v=17";
+import { createPathPick } from "../core/pathpick.js?v=17";
+import { feature, gate } from "../core/capabilities.js?v=17";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=16";
-import { createScene } from "./scene.js?v=16";
+} from "./model.js?v=17";
+import { createScene } from "./scene.js?v=17";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -342,8 +342,11 @@ const KNOBS = [
   },
   {
     id: "tiles", label: "Kachelgröße", min: 0.4, max: 2.5, step: 0.1, start: 1,
-    hint: "Nur die Darstellung, nicht die Auswahl.",
-    apply: (v) => scene.setTileScale(v), fmt: (v) => `${v.toFixed(1)}×`,
+    hint: "Die Kachelgröße folgt dem Zoom von selbst — beim Herauszoomen kleiner für den Überblick, "
+        + "ganz nah größer zum Ansehen. Dieser Regler korrigiert das nach oben oder unten; "
+        + "1,0 heißt „so wie automatisch“. Nur die Darstellung, nicht die Auswahl.",
+    apply: (v) => scene.setTileScale(v),
+    fmt: (v) => (Math.abs(v - 1) < 0.05 ? "automatisch" : `${v.toFixed(1)}× davon`),
   },
 ];
 
@@ -429,6 +432,7 @@ function paintStats() {
   const was = s.off
     ? `<b>keine Bilder</b> — ${escapeHtml(s.off)}`
     : `<b>${num(s.drawn)}</b> von ${num(s.visible)} sichtbaren gezeichnet`
+      + ` · Kachel ${num(s.tile)} px (${s.tileAuto}× Zoom)`
       + ` · ${budget}${s.gap ? ` · ${s.gap} px Abstand${
             s.gapReason ? ` (${escapeHtml(s.gapReason)})` : ""}` : ""}`
       + (s.shift ? ` · bis ${s.shift} px verschoben` : "");

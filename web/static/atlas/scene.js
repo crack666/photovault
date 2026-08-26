@@ -8,11 +8,33 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=16";
-import { thumbUrl } from "../core/api.js?v=16";
+import { colorFor, spreadPoint } from "./model.js?v=17";
+import { thumbUrl } from "../core/api.js?v=17";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
+
+//: Die Zoomgrenzen. Auch die Kachelgroesse braucht sie -- sie spannen den
+//: Bereich auf, ueber den sie mitwaechst.
+const MIN_SCALE = 120;
+const MAX_SCALE = 90000;
+
+/* Wie gross eine Kachel bei welchem Zoom ist.
+
+   Bisher wuchs sie mit dem Massstab, war aber bei 96 px gedeckelt -- ab
+   Massstab 8640 blieb sie stehen, waehrend alles andere weiter
+   auseinanderging. Ganz nah waren die Bilder dadurch zu klein fuer das, was
+   man dort tut (eines ansehen), und knapp ueber der Bildschwelle zu gross
+   fuer das, was man dort tut (sich einen Ueberblick verschaffen).
+
+   Also folgt sie jetzt dem Zoom ueber die ganze Strecke, logarithmisch --
+   Zoomen ist multiplikativ, ein linearer Verlauf saehe unten wie ein Sprung
+   und oben wie Stillstand aus. Die Endpunkte sind abgelesen, nicht
+   hergeleitet: 0,4 gibt gerade oberhalb der Bildschwelle den besseren
+   Ueberblick, 1,3 passt ganz nah. Der Regler bleibt und multipliziert das --
+   er ist damit eine Korrektur, keine Absolutangabe. */
+const TILE_FAR = 0.4;
+const TILE_NEAR = 1.3;
 //: Obergrenze fuer gezeichnete Bilder je Bild. Kein Richtwert, sondern eine
 //: Reissleine: was tatsaechlich gezeichnet wird, ergibt sich aus der Flaeche
 //: des Fensters geteilt durch den Kachelabstand. Ein festes Budget war der
@@ -164,6 +186,7 @@ export function createScene(canvas, model, hooks = {}) {
   //: Meinung.
   const stats = { visible: 0, drawn: 0, budget: 0, raster: false, gap: 0, shift: 0,
                   ms: 0, fanMs: 0, imgMs: 0, cached: 0, off: "", gapReason: "",
+                  tile: 0, tileAuto: 1,
                   perThumb: MS_PER_THUMB_START };
 
   //: Gemessene Kosten je gezeichnetem Bild. Siehe FRAME_BUDGET_MS.
@@ -258,9 +281,16 @@ export function createScene(canvas, model, hooks = {}) {
   const toWorldX = (sx) => (sx - cam.tx) / cam.scale;
   const toWorldY = (sy) => (sy - cam.ty) / cam.scale;
 
+  /** Der Zoomanteil der Kachelgroesse: 0,4 an der Bildschwelle, 1,3 ganz nah. */
+  function autoTile() {
+    const span = Math.log(MAX_SCALE / THUMB_SCALE);
+    const t = Math.max(0, Math.min(1, Math.log(cam.scale / THUMB_SCALE) / span));
+    return TILE_FAR + (TILE_NEAR - TILE_FAR) * t;
+  }
+
   function zoomAt(sx, sy, factor) {
     const wx = toWorldX(sx), wy = toWorldY(sy);
-    cam.scale = Math.max(120, Math.min(90000, cam.scale * factor));
+    cam.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, cam.scale * factor));
     cam.tx = sx - wx * cam.scale;
     cam.ty = sy - wy * cam.scale;
     draw();
@@ -833,8 +863,10 @@ export function createScene(canvas, model, hooks = {}) {
     for (const i of touched) covered[i] = 0;
     touched = [];
 
-    const box = Math.max(22, Math.min(96, cam.scale / 90)) * tileScale;
+    const box = Math.max(22, Math.min(96, cam.scale / 90)) * autoTile() * tileScale;
     tileBox = box;
+    stats.tile = Math.round(box);
+    stats.tileAuto = Math.round(autoTile() * 100) / 100;
 
     /* Welche Vorschaubildstufe -- nach der gezeichneten Groesse, nicht nach
        dem Massstab.
