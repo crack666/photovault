@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=14";
-import { api, thumbUrl } from "../core/api.js?v=14";
-import { openModal } from "../core/modal.js?v=14";
-import { createPathPick } from "../core/pathpick.js?v=14";
-import { feature, gate } from "../core/capabilities.js?v=14";
+import { $, escapeHtml, num } from "../core/dom.js?v=15";
+import { api, thumbUrl } from "../core/api.js?v=15";
+import { openModal } from "../core/modal.js?v=15";
+import { createPathPick } from "../core/pathpick.js?v=15";
+import { feature, gate } from "../core/capabilities.js?v=15";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=14";
-import { createScene } from "./scene.js?v=14";
+} from "./model.js?v=15";
+import { createScene } from "./scene.js?v=15";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -38,11 +38,6 @@ const THUMB_MODES = [
     hint: "Bilder um die Bildmitte, außen Punkte. Wie eine Taschenlampe: folgt dem, worauf man zielt." },
   { id: "flaeche", label: "Fläche",
     hint: "Dieselbe Zahl Bilder, aber übers ganze Fenster verteilt statt in der Mitte gehäuft." },
-  { id: "faecher", label: "Aufgefächert",
-    hint: "Schiebt Bilder auseinander, statt sie wegzulassen — ein dichter Haufen füllt dann die freie "
-        + "Fläche ringsum. Die Verschiebung ist in Weltkoordinaten begrenzt: in der Übersicht ist sie "
-        + "unsichtbar klein, beim Hineinzoomen wächst sie mit dem Platz, den das Zoomen schafft. "
-        + "Der Punkt bleibt liegen, wo das Foto hingehört." },
   { id: "alles", label: "Alles",
     hint: "Jedes sichtbare Bild, ohne Schranke. Zum Vergleichen — die Fußzeile zeigt, was es kostet." },
 ];
@@ -329,18 +324,21 @@ function buildToolbar() {
 const KNOBS = [
   {
     id: "spread", label: "Kontinente auseinander", min: 0, max: 2, step: 0.05, start: 0,
-    hint: "Schiebt jeden Kontinent vom Zentrum weg und staucht danach alles zurück ins Bild. "
-        + "Innerhalb eines Kontinents bleibt die Anordnung, wie sie ist — nur die Ränder hören auf, ineinander zu sprenkeln.",
+    hint: "Die Kontinente stoßen einander ab, bis sie sich nicht mehr überdecken, und werden dabei "
+        + "kompakter. Innerhalb eines Kontinents bleibt die Anordnung, wie sie ist — nur die Ränder "
+        + "hören auf, ineinander zu sprenkeln. Danach wird alles zurück ins Bild gestaucht.",
     apply: (v) => scene.setSpread(v), fmt: (v) => (v ? `${v.toFixed(2)}×` : "aus"),
   },
   {
-    id: "declutter", label: "Bilder entzerren", min: 0, max: 2.5, step: 0.1, start: 0,
-    hint: "Mindestabstand zwischen zwei Bildern, gemessen in Kacheln. Bei 1,0 stoßen sie "
-        + "aneinander, darunter überlappen sie, darüber steht Luft dazwischen. In Kacheln und "
-        + "nicht in Pixeln, weil eine Kachel je nach Zoom 22 bis 96 px breit ist. "
-        + "Was näher liegt, bleibt weg — es passen dann zwangsläufig weniger Bilder ins Fenster.",
+    id: "declutter", label: "Bilder abstoßen", min: 0, max: 2.5, step: 0.1, start: 0,
+    hint: "Mindestabstand zwischen zwei Bildern, in Kacheln gemessen — bei 1,0 stoßen sie gerade "
+        + "aneinander. Die Bilder schieben einander weg, bis der Abstand steht, wie die Knoten in "
+        + "einem Graphen. Es wird also nichts weggelassen, der Haufen wird aufgemacht. "
+        + "Der Preis ist die genaue Lage: wie weit ein Bild wandern darf, wächst mit dem Zoom — "
+        + "in der Übersicht unsichtbar, ganz nah bis zu einer halben Bildschirmbreite. "
+        + "Der Punkt darunter bleibt liegen, wo das Foto hingehört.",
     apply: (v) => scene.setDeclutter(v),
-    fmt: (v) => (v ? (v < 1 ? `${v.toFixed(1)}× — überlappt` : `${v.toFixed(1)}× Kachel`) : "aus"),
+    fmt: (v) => (v ? (v < 1 ? `${v.toFixed(1)}× — überlappt noch` : `${v.toFixed(1)}× Kachel`) : "aus"),
   },
   {
     id: "tiles", label: "Kachelgröße", min: 0.4, max: 2.5, step: 0.1, start: 1,

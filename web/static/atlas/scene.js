@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=14";
-import { thumbUrl } from "../core/api.js?v=14";
+import { colorFor, spreadPoint } from "./model.js?v=15";
+import { thumbUrl } from "../core/api.js?v=15";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -29,6 +29,14 @@ const MIN_THUMBS = 120;
 //: aber ein Haufen in der Bildmitte kann nicht mehr das ganze Budget
 //: aufbrauchen und den Rand als Punkte stehen lassen.
 const SPACING = 0.25;
+
+//: Durchgaenge beim Auseinanderschieben der Kontinente. Es sind 40
+//: Kreise, also 780 Paare -- das kostet nichts und wird ohnehin nur
+//: gerechnet, wenn sich der Regler bewegt.
+const SPREAD_ITERATIONS = 60;
+
+//: Etwas Luft zwischen zwei Kontinenten, sonst beruehren sie sich nur.
+const SPREAD_AIR = 1.15;
 
 //: Durchgaenge beim Auseinanderschieben. Sechs reichen fuer einen dichten
 //: Haufen; danach bewegt sich kaum noch etwas, und jeder weitere kostet.
@@ -170,6 +178,21 @@ export function createScene(canvas, model, hooks = {}) {
   let shown = [];
 
   let mask = new Uint8Array(model.n).fill(1);
+  //: Zaehlt jede Aenderung der Sichtbarkeit mit. Die Platzvergabe haelt nur
+  //: so lange still, wie sich am Bestand nichts aendert -- ein neuer Filter
+  //: muss sie also verwerfen duerfen.
+  let maskVersion = 0;
+
+  /* Die gehaltene Zuteilung: welches Foto liegt gerade wo.
+
+     Kein Zwischenspeicher fuer Geschwindigkeit, sondern fuer Ruhe im Bild.
+     Solange Kamera, Abstand und Filter gleich bleiben, behaelt jedes Foto
+     seinen Platz, und nachladende Bilder fuellen nur Luecken. */
+  const held = [];              // [index, sx, sy] in Zeichenreihenfolge
+  const heldSet = new Set();    // dieselben Indizes, zum Nachschlagen
+  let heldKey = "";             // Kamerazustand, zu dem die Zuteilung passt
+  let heldGap = 0;              // eingefrorener Abstand dazu
+  let heldBudget = 0;           // eingefrorene Bildzahl dazu
   let selection = null; // Set<number> oder null
   let lassoPath = null;
 
@@ -426,13 +449,103 @@ export function createScene(canvas, model, hooks = {}) {
     return true;
   }
 
+  /* Kontinente wirklich auseinander -- nicht nur zusammenziehen.
+
+     `spreadPoint` zieht jeden Punkt zu seinem Kontinent-Mittelpunkt hin:
+     (base + k*centroid) / (1+k). Die Kontinente werden dadurch kompakter,
+     aber ihre Mittelpunkte bleiben, wo sie sind. Zwei Kontinente, die
+     ineinanderliegen, liegen danach genauso ineinander -- nur dichter. Sie
+     gehen also nicht auseinander, sie fahren durcheinander durch.
+
+     Was fehlt, ist derselbe Gedanke wie bei den Bildern: die Mittelpunkte
+     muessen einander abstossen. Jeder Kontinent bekommt einen Radius, und
+     dann werden die Kreise so lange auseinandergeschoben, bis sie sich nicht
+     mehr ueberdecken. Danach wird alles zurueck ins Bild gestaucht.
+
+     Gerechnet wird das nur, wenn sich Regler oder Anordnung aendern -- nicht
+     je Bild. */
+  let spreadKey = "";
+  let spreadDx = null;
+  let spreadDy = null;
+
+  function clusterRadii(cc) {
+    // Wie weit ein Kontinent reicht: quadratisches Mittel der Abstaende
+    // seiner Fotos vom eigenen Mittelpunkt. Robuster als das Maximum, das
+    // ein einzelner Ausreisser sonst aufblaeht.
+    const k = cc.length / 2;
+    const sum = new Float64Array(k);
+    const cnt = new Float64Array(k);
+    for (let i = 0; i < model.n; i++) {
+      const c = model.cl[i];
+      const dx = toX[i] - cc[c * 2], dy = toY[i] - cc[c * 2 + 1];
+      sum[c] += dx * dx + dy * dy;
+      cnt[c]++;
+    }
+    const r = new Float64Array(k);
+    for (let c = 0; c < k; c++) r[c] = cnt[c] ? Math.sqrt(sum[c] / cnt[c]) : 0;
+    return r;
+  }
+
+  function buildSpread(strength) {
+    const cc = model.layouts[layout].centroids;
+    const k = cc.length / 2;
+    const rad = clusterRadii(cc);
+    // Nach dem Zusammenziehen ist jeder Kontinent um denselben Faktor
+    // kleiner -- die Kreise, die einander ausweichen muessen, also auch.
+    const shrink = 1 / (1 + strength);
+    const x = new Float64Array(k), y = new Float64Array(k);
+    for (let c = 0; c < k; c++) { x[c] = cc[c * 2]; y[c] = cc[c * 2 + 1]; }
+
+    for (let it = 0; it < SPREAD_ITERATIONS; it++) {
+      let moved = 0;
+      for (let a = 0; a < k; a++) {
+        for (let b = a + 1; b < k; b++) {
+          const want = (rad[a] + rad[b]) * shrink * SPREAD_AIR;
+          let dx = x[b] - x[a], dy = y[b] - y[a];
+          let d2 = dx * dx + dy * dy;
+          if (d2 >= want * want) continue;
+          if (d2 < 1e-12) { const ang = a * 2.399963; dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1; }
+          const d = Math.sqrt(d2);
+          // Der kleinere Kontinent weicht mehr aus: sonst schiebt ein
+          // Haeufchen von zwoelf Fotos einen mit dreitausend beiseite.
+          const wa = rad[b] / (rad[a] + rad[b] || 1);
+          const push = (want - d);
+          const ux = dx / d, uy = dy / d;
+          x[a] -= ux * push * wa; y[a] -= uy * push * wa;
+          x[b] += ux * push * (1 - wa); y[b] += uy * push * (1 - wa);
+          moved++;
+        }
+      }
+      if (!moved) break;
+    }
+
+    // Zurueck ins Bild: das Auseinanderschieben macht die Karte groesser,
+    // und niemand will danach erst herauszoomen.
+    let lo = Infinity, hi = -Infinity;
+    for (let c = 0; c < k; c++) {
+      lo = Math.min(lo, x[c] - rad[c] * shrink, y[c] - rad[c] * shrink);
+      hi = Math.max(hi, x[c] + rad[c] * shrink, y[c] + rad[c] * shrink);
+    }
+    const span = Math.max(hi - lo, 1e-6);
+    spreadDx = new Float32Array(k);
+    spreadDy = new Float32Array(k);
+    for (let c = 0; c < k; c++) {
+      // Verschiebung *und* Stauchung in einem: wo der Mittelpunkt nach dem
+      // Zurueckstauchen liegt, minus wo er vorher lag.
+      spreadDx[c] = (x[c] - lo) / span - cc[c * 2];
+      spreadDy[c] = (y[c] - lo) / span - cc[c * 2 + 1];
+    }
+  }
+
   function applySpread() {
     if (!spread) return;
     const cc = model.layouts[layout].centroids;
+    const key = `${layout}|${spread}`;
+    if (key !== spreadKey) { spreadKey = key; buildSpread(spread); }
     for (let i = 0; i < model.n; i++) {
-      const c = model.cl[i] * 2;
-      px[i] = spreadPoint(px[i], cc[c], spread);
-      py[i] = spreadPoint(py[i], cc[c + 1], spread);
+      const c = model.cl[i];
+      px[i] = spreadPoint(px[i], cc[c * 2], spread) + spreadDx[c];
+      py[i] = spreadPoint(py[i], cc[c * 2 + 1], spread) + spreadDy[c];
     }
   }
 
@@ -716,24 +829,54 @@ export function createScene(canvas, model, hooks = {}) {
        zu belegen, braucht es die Wurzel aus Flaeche durch N als Abstand. Der
        groessere der beiden Wuensche gewinnt. */
     const affordable = Math.floor(FRAME_BUDGET_MS / Math.max(msPerThumb, 1e-4));
-    const budget = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, affordable));
+    const planned = Math.max(MIN_THUMBS, Math.min(MAX_THUMBS, affordable));
     const wanted = box * (declutter > 0 ? declutter : SPACING);
-    const cover = Math.sqrt(filled / budget);
-    const gap = Math.max(wanted, cover);
+    const cover = Math.sqrt(filled / planned);
+
+    /* Solange die Kamera steht, bleibt die Zuteilung stehen -- und dazu
+       gehoert der Abstand. Er haengt am Budget, das Budget an der Messung,
+       und die wandert bei jedem Bild ein Stueck. Rechnete man ihn jedes Mal
+       neu, waere die Zuteilung schon deshalb bei jedem Bild hinfaellig, und
+       die Bilder sprangen weiter. */
+    const camKey = [cam.scale, cam.tx, cam.ty, thumbMode, declutter, tileScale,
+                    layout, spread, mix < 1, maskVersion].join("|");
+    if (camKey !== heldKey) {
+      heldKey = camKey;
+      held.length = 0;
+      heldSet.clear();
+      heldGap = Math.max(wanted, cover);
+      // Auch die Zahl friert ein. Sie faellt, waehrend Bilder eintreffen --
+      // mehr geladene Bilder heisst mehr Zeichenaufwand, heisst kleineres
+      // Budget. Rechnete man weiter, verschwaenden Bilder, waehrend man sie
+      // ansieht: beobachtet als Ruecklauf von 947 auf 666 bei stehender
+      // Kamera. Neu geplant wird, sobald sich die Kamera bewegt -- und dann
+      // mit einem Messwert, der die tatsaechlichen Kosten kennt.
+      heldBudget = planned;
+    }
+    const gap = heldGap;
+    const budget = heldBudget;
     const fits = Math.ceil((w + 2 * gap) / gap) * Math.ceil((h + 2 * gap) / gap);
 
+    /* Was mit dem Abstand geschieht -- und das ist der Unterschied, um den
+       es geht.
+
+       Steht "Bilder entzerren" auf aus, bleibt jedes Foto an seiner Stelle.
+       Passen nicht alle hin, wird ausgeduennt: das ist eine Auswahl, keine
+       Entzerrung, und an der Ueberlappung der Uebriggebliebenen aendert sie
+       nichts.
+
+       Steht der Regler auf einem Wert, stossen die Bilder einander ab, bis
+       der Abstand steht -- wie die Knoten in einem Graphen. Erst das ist
+       Entzerren: es zeigt nicht weniger, es macht den Haufen auf.
+
+       Der Platz dafuer kommt vom Hineinzoomen, und nur von dort. */
+    const shift = SHIFT_WORLD * cam.scale;
+    const repel = declutter > 0 && thumbMode !== "alles" && shift >= FAN_MIN_PX;
     //  punkte  -- kommt hier gar nicht an, draw() ueberspringt uns.
     //  kegel   -- kein Abstand, nur das Budget: die Mitte verbraucht es.
-    //  flaeche -- Abstand halten, sobald mehr sichtbar ist als passt.
-    //  faecher -- Abstand nicht erzwingen, sondern herstellen: die Bilder
-    //             werden auseinandergeschoben, bis er stimmt.
+    //  flaeche -- ausduennen, sobald mehr sichtbar ist als passt.
     //  alles   -- weder noch, zum Vergleichen.
-    // Der Platz, den das Hineinzoomen schafft -- und nur der.
-    const shift = SHIFT_WORLD * cam.scale;
-    const fan = thumbMode === "faecher" && shift >= FAN_MIN_PX;
-    const spaced = fan ? false
-      : thumbMode === "flaeche" ? declutter > 0 || near.length > budget
-      : thumbMode === "kegel" && declutter > 0;
+    const spaced = !repel && thumbMode === "flaeche" && near.length > budget;
     const capped = thumbMode !== "alles";
 
     /* Echter Mindestabstand, nicht ein Bild je Rasterfeld.
@@ -775,17 +918,11 @@ export function createScene(canvas, model, hooks = {}) {
 
     let drawn = 0;
 
-    function place(entry, onlyLoaded) {
-      const [, i, sx, sy] = entry;
-      if (capped && drawn >= budget) return false;
-      const img = onlyLoaded ? peekBest(i, size) : bestImage(i, size);
-      if (onlyLoaded && !img) return false;
-      if (spaced && !free(sx, sy)) return true;
-      if (spaced) claim(sx, sy);
+    function drawTile(i, sx, sy) {
+      const img = bestImage(i, size);
       // Der Platz bleibt belegt, auch wenn das Bild noch laedt: sonst
-      // uebernimmt bei jedem Ladevorgang ein anderes Foto die Stelle und
-      // die Karte flackert.
-      if (!img) return true;
+      // uebernimmt bei jedem Ladevorgang ein anderes Foto die Stelle.
+      if (!img) return;
       drawn++;
       const ar = img.naturalWidth / img.naturalHeight || 1;
       const bw = ar >= 1 ? box : box * ar;
@@ -801,39 +938,51 @@ export function createScene(canvas, model, hooks = {}) {
       ctx.globalAlpha = 1;
       imgMs += performance.now() - tImg;
       shown.push([i, sx - bw / 2, sy - bh / 2, bw, bh]);
-      return true;
     }
 
-    /* Zwei Durchgaenge, und der erste ist der Grund fuer die Ruhe im Bild.
+    if (repel) {
+      /* Abstossen statt Weglassen -- wie die Knoten in einem Graphen.
 
-       Geladene Bilder belegen ihre Stelle zuerst. Sonst gewinnt beim
-       Schwenken um wenige Pixel mal dieser, mal jener Nachbar den Platz --
-       und weil der Gewinner meist noch gar nicht geladen ist, blinkt an
-       derselben Stelle abwechselnd ein anderes Foto. Wer schon da ist,
-       bleibt; neue fuellen nur die Luecken. */
-    if (fan) {
-      // Erst auswaehlen, dann auffaechern: mehr als ins Fenster passen kann
-      // auch das Auseinanderschieben nicht zeigen. Danach steht jedes Bild
-      // an seiner verschobenen Stelle -- deshalb wird hier nichts mehr
-      // uebersprungen, es gibt keine Ueberschneidung mehr.
+         "Weniger zeigen" ist keine Entzerrung, sondern eine Auswahl. Wer
+         Abstand haben will, muss die Bilder bewegen: sie schieben einander
+         weg, bis der Mindestabstand steht. Das kostet die genaue Lage, und
+         deshalb ist die Verschiebung in Weltkoordinaten begrenzt -- in der
+         Uebersicht unsichtbar klein, beim Hineinzoomen waechst sie mit dem
+         Platz, den das Zoomen schafft. Der Punkt darunter bleibt liegen. */
       const cand = near.slice(0, budget);
       const tFan = performance.now();
       fanOut(cand, gap, w, h, shift);
-      // Das Auseinanderschieben kostet einmal je Bild, nicht je Foto. Rechnete
-      // man es den Bildkosten zu, schaetzte sich die Karte selbst immer
-      // teurer: kleineres Budget, gleicher Grundaufwand, noch teurer je Bild.
       fanMs = performance.now() - tFan;
-      for (const e of cand) place(e, false);
-    } else {
-      if (spaced) {
-        for (const e of near) {
-          if (capped && drawn >= budget) break;
-          place(e, true);
-        }
-      }
-      for (const e of near) {
+      for (const [, i, sx, sy] of cand) drawTile(i, sx, sy);
+    } else if (!spaced) {
+      for (const [, i, sx, sy] of near) {
         if (capped && drawn >= budget) break;
-        if (!place(e, false)) break;
+        drawTile(i, sx, sy);
+      }
+    } else {
+      /* Platzvergabe rein nach Lage, nicht nach Ladezustand.
+
+         Genau das war die Ursache des Flackerns beim Schieben: ein
+         Durchgang, der geladene Bilder bevorzugt, vergibt die Plaetze bei
+         jedem Bild anders, weil zwischendurch neue eintreffen. Wer nur nach
+         der Reihenfolge von der Bildmitte nach aussen vergibt, kommt bei
+         gleicher Kamera immer zum selben Ergebnis -- ob ein Bild schon da
+         ist, aendert daran nichts.
+
+         `held` haelt das Ergebnis zusaetzlich fest, solange die Kamera
+         steht: dann waechst die Auswahl nur noch, sie ordnet sich nicht um. */
+      for (const [i, sx, sy] of held) {
+        claim(sx, sy);
+        drawTile(i, sx, sy);
+      }
+      for (const [, i, sx, sy] of near) {
+        if (held.length >= budget) break;
+        if (heldSet.has(i)) continue;
+        if (!free(sx, sy)) continue;
+        claim(sx, sy);
+        held.push([i, sx, sy]);
+        heldSet.add(i);
+        drawTile(i, sx, sy);
       }
     }
 
@@ -846,10 +995,11 @@ export function createScene(canvas, model, hooks = {}) {
     stats.perThumb = msPerThumb;
     stats.drawn = drawn;
     stats.budget = capped ? budget : Infinity;
-    stats.raster = spaced || fan;
-    stats.gap = spaced || fan ? Math.round(gap) : 0;
-    stats.gapReason = gap > wanted + 0.5 ? "Fläche" : (declutter > 0 ? "Regler" : "");
-    stats.shift = fan ? Math.round(shift) : 0;
+    stats.planned = planned;
+    stats.raster = spaced || repel;
+    stats.gap = spaced || repel ? Math.round(gap) : 0;
+    stats.gapReason = repel ? "abstoßend" : (spaced ? "Fläche" : "");
+    stats.shift = repel ? Math.round(shift) : 0;
     stats.fanMs = Math.round(fanMs * 10) / 10;
     stats.imgMs = Math.round(imgMs * 10) / 10;
   }
@@ -1107,7 +1257,7 @@ export function createScene(canvas, model, hooks = {}) {
       schedule();
     },
     setColorMode(mode) { colorMode = mode; rebuildBuckets(); schedule(); },
-    setMask(m) { mask = m; schedule(); },
+    setMask(m) { mask = m; maskVersion++; schedule(); },
     setSelection(sel) { selection = sel; schedule(); },
     setMode(m) { mode = m; schedule(); },
     setSpread(k) { spread = k; schedule(); },
