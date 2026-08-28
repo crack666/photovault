@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=31";
-import { api, thumbUrl } from "../core/api.js?v=31";
-import { askText, openModal } from "../core/modal.js?v=31";
-import { createPathPick } from "../core/pathpick.js?v=31";
-import { feature, gate } from "../core/capabilities.js?v=31";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=33";
+import { api, thumbUrl } from "../core/api.js?v=33";
+import { askText, openModal } from "../core/modal.js?v=33";
+import { createPathPick } from "../core/pathpick.js?v=33";
+import { feature, gate } from "../core/capabilities.js?v=33";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=31";
-import { createScene } from "./scene.js?v=31";
+} from "./model.js?v=33";
+import { createScene } from "./scene.js?v=33";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -139,9 +139,130 @@ function saveHidden() {
   } catch (e) { /* voller Speicher darf die Karte nicht kippen */ }
 }
 
+/* ---- Zeitraum ----------------------------------------------------------
+
+   Das Aufnahmedatum steht je Foto in `atlas.json` (`t`, Tage seit 1970) --
+   der Zeitraum kostet also keinen Weg zum Server und wirkt sofort.
+
+   Zwei Auswahllisten statt eines Schiebers mit zwei Griffen: ein Jahr ist
+   die Einheit, in der man hier denkt ("zeig mir 2015"), und zwei Listen
+   sind mit der Tastatur bedienbar. Steht beides auf „alle", ist der Filter
+   aus und kostet nichts. */
+
+const TAG0 = Date.UTC(1970, 0, 1);
+const jahrVon = (t) => new Date(TAG0 + t * 86400000).getUTCFullYear();
+
+let vonJahr = null;
+let bisJahr = null;
+
+function buildYearPick() {
+  const box = $("atlas-years");
+  if (!box) return;
+  const jahre = new Set();
+  for (let i = 0; i < model.n; i++) if (model.t[i]) jahre.add(jahrVon(model.t[i]));
+  const liste = [...jahre].sort();
+  if (liste.length < 2) { box.classList.add("hidden"); return; }
+
+  const opts = (sel) => `<option value="">alle</option>` + liste.map((j) =>
+    `<option value="${j}"${String(j) === String(sel) ? " selected" : ""}>${j}</option>`).join("");
+  box.innerHTML = `
+    <select id="atlas-from" class="atlas-select" title="ab diesem Jahr">${opts(vonJahr)}</select>
+    <span class="atlas-dash">–</span>
+    <select id="atlas-to" class="atlas-select" title="bis dieses Jahr">${opts(bisJahr)}</select>`;
+
+  const lies = () => {
+    vonJahr = $("atlas-from").value ? Number($("atlas-from").value) : null;
+    bisJahr = $("atlas-to").value ? Number($("atlas-to").value) : null;
+    // Verdrehte Eingabe ist ein Versehen, kein leeres Ergebnis: tauschen und
+    // die Listen nachziehen, statt "0 sichtbar" zu zeigen.
+    if (vonJahr && bisJahr && vonJahr > bisJahr) {
+      [vonJahr, bisJahr] = [bisJahr, vonJahr];
+      $("atlas-from").value = String(vonJahr);
+      $("atlas-to").value = String(bisJahr);
+    }
+    applyFilters();
+  };
+  $("atlas-from").onchange = lies;
+  $("atlas-to").onchange = lies;
+}
+
+/** Trifft dieses Foto den gewählten Zeitraum? */
+function inYears(i) {
+  if (vonJahr === null && bisJahr === null) return true;
+  const t = model.t[i];
+  if (!t) return false;          // ohne Datum gehört es in keinen Zeitraum
+  const j = jahrVon(t);
+  return (vonJahr === null || j >= vonJahr) && (bisJahr === null || j <= bisJahr);
+}
+
+/* ---- Aus der Suche auf die Karte --------------------------------------
+
+   Die Suche beantwortet „welche Fotos", die Karte zeigt „wo sie liegen".
+   Zwei Oberflächen für dieselbe Frage zu bauen hieße, sie in zwei Dialekten
+   zu pflegen -- also reicht die Suche ihr Ergebnis herüber.
+
+   Der Ausweg liegt dort, wo man ist: das Band auf der Karte hat den Knopf
+   „alles zeigen". Müsste man dafür zurück in die Suche, wäre es dieselbe
+   Falle wie eine unsichtbare Voreinstellung. */
+
+let focusIds = null;      // Set<string> oder null
+let focusLabel = "";
+let focusNote = "";
+
+export function focusFromSearch({ ids, label, note = "" }) {
+  focusIds = ids && ids.length ? new Set(ids) : null;
+  focusLabel = label || "";
+  focusNote = note;
+  if (!booted) return;    // beim ersten Öffnen greift es über initAtlas
+  applyFocus();
+}
+
+function applyFocus() {
+  paintFocusBar();
+  applyFilters();
+}
+
+function clearFocus() {
+  focusIds = null;
+  focusLabel = "";
+  focusNote = "";
+  applyFocus();
+}
+
+function paintFocusBar() {
+  const bar = $("atlas-focus");
+  if (!bar) return;
+  bar.classList.toggle("hidden", !focusIds);
+  if (!focusIds) return;
+
+  // Wie viele der Treffer überhaupt auf dieser Karte liegen. Sie ist ein
+  // Standbild: was seit dem letzten Rechnen dazugekommen ist, fehlt hier --
+  // und das darf nicht als „weniger Treffer" durchgehen.
+  let drauf = 0;
+  for (let i = 0; i < model.n; i++) if (focusIds.has(model.ids[i])) drauf++;
+  const fehlen = focusIds.size - drauf;
+
+  bar.innerHTML = `
+    <span class="focus-what">Zeigt <b>${num(drauf)}</b>
+      ${focusNote || "Treffer"}${focusLabel ? ` von „${escapeHtml(focusLabel)}“` : ""}</span>
+    ${fehlen > 0 ? `<span class="focus-gap">${num(fehlen)} weitere liegen nicht auf
+      dieser Karte — sie ist vom ${escapeHtml((model.builtAt || "").slice(0, 10))}.</span>` : ""}
+    <button type="button" class="chip" id="atlas-focus-off">alles zeigen</button>`;
+  $("atlas-focus-off").onclick = clearFocus;
+}
+
 /** Was gerade sichtbar ist. Einmal benannt, damit `hidden` nirgends vergessen wird. */
 function mask() {
-  return visibleMask(model, filters, hidden);
+  const m = visibleMask(model, filters, hidden);
+  // Der Fokus kommt *nach* den Filtern: er ist eine andere Frage. Die Filter
+  // sagen "was will ich gerade nicht sehen", der Fokus "worum ging es".
+  if (focusIds) {
+    for (let i = 0; i < model.n; i++) if (m[i] && !focusIds.has(model.ids[i])) m[i] = 0;
+  }
+  if (vonJahr !== null || bisJahr !== null) {
+    for (let i = 0; i < model.n; i++) if (m[i] && !inYears(i)) m[i] = 0;
+  }
+  return m;
 }
 
 export async function initAtlas(deps = {}) {
@@ -186,6 +307,8 @@ ${escapeHtml(build.why)}`}</pre>`;
   // Beim Aufschlagen nur zeigen, wenn es etwas zu tun gibt. Ein Kasten, der
   // "nichts offen" meldet und dabei die Werkzeugleiste verdeckt, ist keine
   // Hilfe -- ueber das Werkzeug "Aufgaben" ist er jederzeit erreichbar.
+  buildYearPick();
+  paintFocusBar();
   paintBriefing({ onlyIfWork: true });
   document.addEventListener("keydown", onKey);
 }

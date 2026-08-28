@@ -6,7 +6,7 @@
   <title>PhotoVault — Wer ist das?</title>
   <link rel="stylesheet" href="/static/styles.css?v=11" />
   <link rel="stylesheet" href="/static/core/ui.css?v=12" />
-  <link rel="stylesheet" href="/static/atlas/atlas.css?v=14" />
+  <link rel="stylesheet" href="/static/atlas/atlas.css?v=15" />
   <link rel="stylesheet" href="/static/faces/strip.css?v=2" />
 </head>
 <body>
@@ -311,6 +311,7 @@
 
       <div class="qb-run">
         <button class="primary" type="submit">Suchen</button>
+        <button type="button" id="qb-to-atlas" class="mini hidden">Auf der Karte zeigen</button>
         <output id="qb-expr" class="expr"></output>
       </div>
     </form>
@@ -349,12 +350,16 @@
           <select id="atlas-scene" class="atlas-select"
                   title="Alle Fotos einer Szene wählen — Screenshots liegen über neun Kontinente verteilt"></select>
           <select id="atlas-who" class="atlas-select"></select>
+          <span class="atlas-years" id="atlas-years" data-group="Zeitraum"></span>
         </div>
         <span class="atlas-spacer"></span>
         <span class="atlas-count" id="atlas-count"></span>
         <div class="atlas-tools" data-group="Werkzeug" id="atlas-tools"></div>
       </div>
 
+      <!-- Band, wenn die Karte gerade nur Suchtreffer zeigt. Der Ausweg
+           steht darin, nicht in der Suche. -->
+      <div class="atlas-focus hidden" id="atlas-focus"></div>
       <div class="atlas-controls hidden" id="atlas-controls"></div>
       <aside class="atlas-brief hidden" id="atlas-brief"></aside>
       <div class="atlas-legend hidden" id="atlas-legend"></div>
@@ -395,7 +400,7 @@
     </p>
   </main>
 
-  <script type="module" src="/static/app.js?v=51"></script>
+  <script type="module" src="/static/app.js?v=53"></script>
   <!-- Vorschlagslisten: verhindern, dass ein Vertipper still eine zweite
        Identitaet anlegt. Neue Namen bleiben moeglich -- datalist schlaegt vor,
        es schreibt nicht vor. -->

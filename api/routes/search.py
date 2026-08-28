@@ -13,6 +13,20 @@ from api.query import QueryNode
 from ingest.dates import date_bound
 
 logger = logging.getLogger(__name__)
+
+#: Reissleine fuer `ids_only`. Mehr Punkte als der ganze Bestand kann eine
+#: Suche nicht treffen; die Grenze faengt nur den Fall ab, dass die Schleife
+#: aus einem anderen Grund nicht endet.
+IDS_CAP = 200_000
+
+#: Wie viele Kennungen der Freitext hoechstens liefert.
+#:
+#: Freitext ist eine *Rangfolge*, keine Menge -- "alle Treffer" gibt es dort
+#: nicht, jedes Foto hat irgendeinen Abstand zum Suchsatz. Fuer die Karte
+#: wird deshalb oben abgeschnitten, und die Antwort sagt es (`ranked`), damit
+#: das Band nicht "412 Treffer" behauptet, wo "die 412 aehnlichsten" gemeint
+#: ist.
+IDS_RANK_LIMIT = 1500
 router = APIRouter()
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
@@ -106,6 +120,11 @@ class QuerySearchRequest(BaseModel):
     caption_min_score: Optional[float] = None
     limit: int = 50
     offset: int = 0
+    #: Nur die Kennungen, ohne Payload. Fuer die Karte: sie zeigt *wo* die
+    #: Treffer liegen und braucht dafuer alle, nicht die ersten fuenfzig --
+    #: aber von jedem nur, dass er dazugehoert. 14.000 volle Ergebnisse waeren
+    #: mehrere Megabyte fuer eine Frage, die mit einer Liste beantwortet ist.
+    ids_only: bool = False
 
 
 class QuerySearchResponse(BaseModel):
@@ -116,6 +135,11 @@ class QuerySearchResponse(BaseModel):
     conditions: int
     #: Der Geltungsbereich in Worten. Leer heißt: alles außer Papierkorb.
     scope: str = ""
+    #: Nur bei `ids_only` gefüllt.
+    ids: list[str] = []
+    #: Wahr, wenn die Liste eine Rangfolge ist und oben abgeschnitten wurde --
+    #: dann sind es „die N ähnlichsten", nicht „alle Treffer".
+    ranked: bool = False
 
 
 @router.post("/query", response_model=QuerySearchResponse)
@@ -145,9 +169,25 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
                 raise HTTPException(503, "Text-Embedding fehlgeschlagen (Ollama erreichbar?)")
             points = client.query_points(
                 collection_name=COLLECTION, query=vec, using="text",
-                query_filter=filter_, limit=req.limit, offset=req.offset,
-                score_threshold=req.caption_min_score, with_payload=True,
+                query_filter=filter_,
+                limit=IDS_RANK_LIMIT if req.ids_only else req.limit,
+                offset=0 if req.ids_only else req.offset,
+                score_threshold=req.caption_min_score,
+                with_payload=not req.ids_only,
             ).points
+        elif req.ids_only:
+            # Seitenweise bis zum Ende: `limit` ist hier keine Obergrenze,
+            # sondern die Haeppchengroesse. Die Karte will alle.
+            points, offset = [], None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION, scroll_filter=filter_,
+                    limit=1024, offset=offset,
+                    with_payload=False, with_vectors=False,
+                )
+                points.extend(batch)
+                if offset is None or len(points) >= IDS_CAP:
+                    break
         else:
             points, _ = client.scroll(
                 collection_name=COLLECTION, scroll_filter=filter_,
@@ -159,6 +199,17 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
     except Exception as e:
         logger.exception("Query search failed")
         raise HTTPException(500, f"Suche fehlgeschlagen: {type(e).__name__}: {e}") from e
+
+    if req.ids_only:
+        return QuerySearchResponse(
+            total=len(points),
+            results=[],
+            ids=[str(p.id) for p in points],
+            ranked=bool(req.caption_query),
+            expression=expression or "alle Fotos",
+            conditions=count_conditions(req.query),
+            scope=scope_text(req.spaces),
+        )
 
     results = [_point_to_result(p) for p in points]
     return QuerySearchResponse(

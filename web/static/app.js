@@ -1,9 +1,9 @@
-import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=31";
-import { api, cropUrl } from "./core/api.js?v=31";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=31";
-import { gate } from "./core/capabilities.js?v=31";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=31";
-import { askConfirm, askText, notify } from "./core/modal.js?v=31";
+import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=33";
+import { api, cropUrl } from "./core/api.js?v=33";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=33";
+import { gate } from "./core/capabilities.js?v=33";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=33";
+import { askConfirm, askText, notify } from "./core/modal.js?v=33";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -29,13 +29,13 @@ function showTab(name) {
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=31");
+  const { initAtlas } = await import("./atlas/index.js?v=33");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=31");
+  const mod = await import("./trash/index.js?v=33");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -1805,6 +1805,49 @@ $("search-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   await runSearch();
 });
+
+/* Dieselbe Frage, andere Antwort: die Karte zeigt, *wo* die Treffer liegen.
+
+   Geholt werden dafuer alle Kennungen, nicht die erste Seite -- die Karte
+   waere sonst eine Stichprobe. Bei Freitext geht das nicht: das ist eine
+   Rangfolge, keine Menge, und der Server schneidet oben ab. Er sagt es
+   (`ranked`), und das Band sagt es weiter. */
+$("qb-to-atlas").addEventListener("click", async () => {
+  const btn = $("qb-to-atlas");
+  const frei = $("q-text").value.trim();
+  btn.disabled = true;
+  const alt = btn.textContent;
+  btn.textContent = "holt Treffer …";
+  let data;
+  try {
+    data = await api("/api/search/query", {
+      method: "POST",
+      body: JSON.stringify({
+        query: qbTree,
+        spaces: [...scopePick],
+        caption_query: frei || null,
+        ids_only: true,
+      }),
+    });
+  } catch (err) {
+    notify(`Konnte die Treffer nicht holen: ${err.message || err}`, { kind: "error" });
+    btn.disabled = false; btn.textContent = alt;
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = alt;
+  if (!data.ids?.length) { notify("Keine Treffer zum Zeigen."); return; }
+
+  const satz = [data.conditions ? data.expression : "alle Fotos", data.scope,
+                frei ? `ähnlich zu „${frei}“` : ""].filter(Boolean).join(", ");
+  const { focusFromSearch } = await import("./atlas/index.js?v=33");
+  focusFromSearch({
+    ids: data.ids,
+    label: satz,
+    note: data.ranked ? `der ${data.ids.length} ähnlichsten` : "Treffer",
+  });
+  document.querySelector('[data-tab="atlas"]').click();
+});
 $("q-text")?.addEventListener("input", updateExpression);
 
 async function runSearch() {
@@ -1842,6 +1885,7 @@ async function runSearch() {
       ? `${data.total} Treffer${data.total === 48 ? " (erste Seite)" : ""}`
       : "Keine Treffer.";
   }
+  $("qb-to-atlas").classList.toggle("hidden", !data.total);
   renderResults(data.results || []);
 }
 

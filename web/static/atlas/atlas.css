@@ -481,3 +481,35 @@
   font-size: .78rem;
   line-height: 1.45;
 }
+
+/* ---- Band: die Karte zeigt gerade Suchtreffer -------------------------
+   Unter der Werkzeugleiste, damit es nichts verdeckt. Der Ausweg steht
+   darin -- wer die Einschränkung sieht, soll sie dort aufheben können und
+   nicht erst zurück in die Suche müssen. */
+
+.atlas-focus {
+  position: absolute;
+  top: calc(var(--atlas-bar-h, 56px) + 22px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 40px);
+  padding: 7px 10px 7px 14px;
+  border-radius: 999px;
+  background: #1b2434f2;
+  border: 1px solid #33456a;
+  box-shadow: 0 10px 30px #0008;
+  font-size: 13px;
+}
+.atlas-focus.hidden { display: none; }
+.atlas-focus .focus-what b { color: var(--accent); }
+.atlas-focus .focus-gap { color: var(--muted); font-size: 12px; }
+
+/* Zeitraum: zwei Jahreslisten mit einem Strich dazwischen. */
+.atlas-years { display: inline-flex; align-items: center; gap: 5px; }
+.atlas-years.hidden { display: none; }
+.atlas-dash { color: var(--muted); }
