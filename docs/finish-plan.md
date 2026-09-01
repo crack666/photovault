@@ -18,7 +18,7 @@ angefasst gehoert und warum genau in dieser.
 |---|---|
 | 0 — Vorarbeiten | **erledigt** (`842c21a`) |
 | 1 — Atlas, Zeit-Anordnung | **erledigt** (`a47d87b`). 1.3 entfiel: wenn x festgehalten wird, stimmen die Bänder von selbst |
-| 2 — Atlas, Flackern | **gebaut** (`f87fb73`), Nachmessung offen — siehe unten |
+| 2 — Atlas, Flackern | **erledigt** (`f87fb73`, `30977d0`). Die Nachmessung fand zwei weitere Fehler — siehe unten |
 | 3 — `app.js` schneiden | **erledigt**. app.js 2938 → 242 Zeilen |
 | 4 — Datenschicht | **erledigt** (4.1–4.7) |
 | 5 — Gestaltung | **erledigt**: Tokens, Knopf-Bibliothek, Fingergrößen, Skalen, `jobs.css` |
@@ -51,7 +51,6 @@ mit der Grossansicht ersatzlos entfallen.
 
 **Was noch offen ist**, und zwar bewusst:
 
-- **Die Nachmessung der Unruhe** (Stufe 2, unten beschrieben).
 - **Hell-Modus** — es gibt keinen, in keiner Form. Produktentscheidung, kein Befund; seit
   der Tokenschicht überhaupt erst diskutierbar.
 - **Tastaturbedienung** — kein einziges `tabindex` im Baum. Eigenständiges, grosses Paket.
@@ -356,6 +355,75 @@ konstant bleiben. Bei hinreichend grossem Regler ist das der Fall, weil dann
 `wanted = box * declutter` ueber `cover` liegt (`:907`, `:908`, `:921`) und `box` nur an
 `cam.scale` haengt. Bleiben sie konstant und flackert es trotzdem, tragen allein die
 inneren Unstetigkeiten — und die Reparatur ist Positionsuebertrag plus Daempfung.
+
+### Nachtrag 2026-09-01: was die Nachmessung ergab
+
+Die Analyse oben ist im Kern richtig — die drei Unstetigkeiten gibt es, und der
+Positionsübertrag war die richtige erste Reparatur. Sie hat aber **die falsche Frage
+gestellt**, und das ist die Lehre daraus.
+
+Gefragt war: *warum flackert es?* Nie gefragt war: *bewirkt der Regler überhaupt etwas?*
+Die Tabelle oben behandelt `shift >= FAN_MIN_PX` sogar ausdrücklich und rechnet den
+kleinstmöglichen Wert aus — 10,4 px — und schliesst daraus, die Bedingung sei tot. Sie
+ist tot. Aber niemand hat die 10,4 px gegen den geforderten Abstand gehalten, und der
+liegt bei 31 px. Die Zahl stand da, unbeachtet, in genau der Zeile, die sie entlastete.
+
+**Wie gemessen wurde.** `fanOut` hängt an nichts ausser seinen Parametern und zwei
+Konstanten. Also aus `scene.js` herausgeschnitten und kopflos gefahren: 300 Frames bei
+stehender Kamera, synthetischer Atlas mit 14 593 Fotos in 40 Haufen. Keine Screenshots
+von etwas, das sich bewegt; die Verfahren einzeln ab- und zuschaltbar. Das hat die
+Ursachen in einem Durchgang getrennt, wo eine Sitzung im Browser nur Vermutungen
+produziert hätte.
+
+**Drei Befunde, aus einer Beobachtung.** Gemeldet war: „die Entfernung zwischen den
+Bildern ändert sich eigentlich nicht, aber sie setzen sich nie zur Ruhe."
+
+1. **Der Abstand änderte sich wirklich nicht.** Die Grenze hing am Massstab
+   (`SHIFT_WORLD * cam.scale`), der geforderte Abstand an der Kachel — und die klemmt bei
+   96 px. Über den ganzen nutzbaren Bereich war die Grenze *kleiner* als der Abstand, den
+   sie herstellen sollte: 0,34 bis 0,91 mal `gap`. Nachbarabstand vorher/nachher bei
+   Massstab 9000: **11,6 → 11,8 px** bei gefordertem 69. Die Grenze gehört in
+   Kachelabstände (`FAN_REACH`), nicht in Weltkoordinaten.
+
+2. **Der Grenzzyklus** kam nicht aus den drei Unstetigkeiten, sondern aus dem
+   *Aufsummieren* der Schübe: ein Bild wich bis zu zwölf Nachbarn einzeln um die volle
+   halbe Fehldistanz aus, zusammen bis zum Sechsfachen des Sollabstands, wurde von der
+   Grenze zurückgezogen, und im nächsten Frame stand die Nachbarschaft anders. Gemittelt
+   statt summiert: 0,94 → **0,025 px** je Kachel und Frame, Ruhe ab Frame 49.
+
+3. **Das Versprechen des Reglers war arithmetisch unmöglich.** „Es zeigt nicht weniger,
+   es macht den Haufen auf" — 900 Bilder mit 69 px Abstand brauchen 4,3 Mio px², das
+   Fenster hat 1,44 Mio. Gemessen war es sogar umgekehrt eingelöst: schlichtes Ausdünnen
+   zeigte bei Massstab 20000 **118 Bilder mit 100 px Abstand**, das Abstossen **112 mit
+   44 px**. Weniger Bilder und weniger Luft.
+
+   Was Abstossen wirklich besser kann als Ausdünnen, ist Bilder aus einem Haufen in den
+   leeren Raum daneben schieben. Dafür muss die Auswahl machbar sein: erst ausdünnen bei
+   `gap / FAN_DICHTE`, dann auffächern auf `gap`. Ergebnis 866 statt 586 Bilder bei
+   gleichem Nachbarabstand.
+
+**Und ein vierter, erst im Browser sichtbar.** Nach den drei Reparaturen blieb ein Rest
+von 0,1 px, zwölf Sekunden unverändert bei stehender Kamera und leerer Ladeschlange. Der
+Nachbarsatz einer Kachel ist keine stetige Funktion ihrer Lage — an einer Rasterkante
+wechselt sie das Feld und bekommt eine andere Mittelung. Unsichtbar auf einer 88-px-
+Kachel, aber die Zeichenschleife hörte nie auf. `FAN_RUHE` ist deshalb jetzt eine
+Schwelle beim *Übernehmen*: was sich um weniger verschieben würde, bleibt genau liegen,
+und damit ist der nächste Frame Zeichen für Zeichen derselbe. Ein Viertelpixel kostet
+zwei Prozent Abstand und bringt beweisbaren Stillstand statt asymptotischer Annäherung.
+
+| Massstab | Ruhe ab | Nachbarabstand | Verschiebung |
+|---|---|---|---|
+| 9 000 | nie → 105 | 11,6 → 68,5 px | 26 → 30 px |
+| 20 000 | nie → 35 | 25,4 → 90,0 px | 70 → 16 px |
+| 40 000 | nie → 19 | 55,4 → 106,9 px | 137 → 13 px |
+
+Im Browser bestätigt: Unruhe fällt auf exakt 0 und bleibt dort.
+
+**Die Lehre, neben der von Stufe 3.** Dort hiess sie *zum Verstehen aufspannen, zum
+Ändern in eine Reihe stellen*. Hier: **eine reine Funktion misst man, statt sie
+anzusehen.** Der ganze Befund steckte in 80 Zeilen, die von nichts abhängen — sie aus
+der Datei zu schneiden und dreihundert Frames zu fahren kostete weniger als ein einziger
+Versuch, das Wabbeln auf einem Screenshot festzuhalten.
 
 ### Zwei weitere Flackerquellen, unabhaengig vom Regler
 
