@@ -18,7 +18,7 @@ angefasst gehoert und warum genau in dieser.
 |---|---|
 | 0 — Vorarbeiten | **erledigt** (`842c21a`) |
 | 1 — Atlas, Zeit-Anordnung | **erledigt** (`a47d87b`). 1.3 entfiel: wenn x festgehalten wird, stimmen die Bänder von selbst |
-| 2 — Atlas, Flackern | **erledigt** (`f87fb73`, `30977d0`). Die Nachmessung fand zwei weitere Fehler — siehe unten |
+| 2 — Atlas, Flackern | **erledigt** (`f87fb73`, `30977d0`, `0c90f09`). Aus der Nachmessung wurde ein Umbau: Weltspreizung, Kraftgraph — siehe Nachträge |
 | 3 — `app.js` schneiden | **erledigt**. app.js 2938 → 242 Zeilen |
 | 4 — Datenschicht | **erledigt** (4.1–4.7) |
 | 5 — Gestaltung | **erledigt**: Tokens, Knopf-Bibliothek, Fingergrößen, Skalen, `jobs.css` |
@@ -424,6 +424,44 @@ Im Browser bestätigt: Unruhe fällt auf exakt 0 und bleibt dort.
 anzusehen.** Der ganze Befund steckte in 80 Zeilen, die von nichts abhängen — sie aus
 der Datei zu schneiden und dreihundert Frames zu fahren kostete weniger als ein einziger
 Versuch, das Wabbeln auf einem Screenshot festzuhalten.
+
+### Nachtrag 2, 2026-09-01: der Regler wird ein Kraftgraph
+
+Drei Einwände des Betrachters am selben Tag, jeder eine Schicht tiefer
+(`0c90f09`):
+
+1. **„Die Bilder sollen sich den Platz nehmen, den sie brauchen."** Die
+   Kapazität rechnete auf der Fläche des heutigen Haufens statt auf dem
+   Fenster. Jetzt: Fensterfläche × 0,9 / Abstand², Auswahl gesiebt von grob
+   nach fein, und wer einmal dabei ist, bleibt dabei — ohne den klebenden
+   Kern wechselten beim Schwenken 79 Bilder je Frame die Auswahl, mit ihm 0,2.
+
+2. **„Eigentlich ist unendlich viel Platz da, wenn wir genug spreaden."** Das
+   Fenster war die falsche Ebene. Gemessen am echten Bestand waren nur **24 %
+   aller Fotos überhaupt jemals darstellbar** — die Einbettung legt ähnliche
+   Fotos praktisch übereinander. Also wird die Welt selbst relaxiert: ein
+   Mindestabstand je Fotopaar (0,006 Kartenbreiten), ein Durchgang je Frame
+   als sichtbare Entfaltung, 93 % nach 15 Durchgängen, 100 % nach 120. Median-
+   Verschiebung 1,1 % der Kartenbreite. In der Zeit-Anordnung bleibt x
+   gesperrt; dort enden die Säulen bei 76 % — der Preis der Stufe-1-
+   Entscheidung, und er ist es wert.
+
+3. **„Zoomt man wieder höher, zeigen sich wieder nicht alle."** Der
+   Wunschabstand hängt an der Kachel, die beim Herauszoomen kaum schrumpft.
+   Jetzt nimmt der Schirm den Abstand, den die Zählung erlaubt, und die
+   Kachel schrumpft mit, statt dass Fotos fallen: **der Zoom ist das
+   Größenrad, der Regler das Luftrad.** Über fünf Zoomstufen desselben
+   Ausschnitts: 89/89, 249/249, 631/631, 1284/1285, 2023/2023 gezeichnet.
+
+Punkte bleiben genau zweimal ehrlich übrig: unterhalb der Bildschwelle und wo
+das Leistungsbudget deckelt.
+
+Dazwischen zwei gefundene Folgefehler: ein Bild ohne Vorframe nahm die rohe
+Lösung an und zählte nicht als bewegt — nach dem Einschalten war der erste
+Frame zugleich der letzte, kaschiert von nachladenden Bildern, die jeden Frame
+neu anstiessen. Und die Weltgarantie ist asymptotisch (~D/2 nach 200
+Durchgängen), weshalb der wirksame Abstand aus der Sichtbarenzählung kommt,
+nicht aus der Theorie.
 
 ### Zwei weitere Flackerquellen, unabhaengig vom Regler
 
