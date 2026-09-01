@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=63";
-import { thumbUrl } from "../core/api.js?v=63";
+import { colorFor, spreadPoint } from "./model.js?v=64";
+import { thumbUrl } from "../core/api.js?v=64";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -59,6 +59,11 @@ const SPREAD_ITERATIONS = 60;
 
 //: Etwas Luft zwischen zwei Kontinenten, sonst beruehren sie sich nur.
 const SPREAD_AIR = 1.15;
+
+//: Ab dieser Reglerstaerke ist die Trennung vollstaendig erreicht. Darueber
+//: wandern die Mittelpunkte nicht mehr; der Regler zieht die Kontinente nur
+//: noch zusammen, und die Luft waechst durch die Kompaktheit.
+const SPREAD_VOLL = 0.35;
 
 //: Durchgaenge beim Auseinanderschieben. Sechs reichen fuer einen dichten
 //: Haufen; danach bewegt sich kaum noch etwas, und jeder weitere kostet.
@@ -626,13 +631,19 @@ export function createScene(canvas, model, hooks = {}) {
   /* Die Weltspreizung einblenden, so weit der Regler steht.
 
      Als Differenz zur Ziel-Anordnung, nicht als Ersatz: so laesst sie sich
-     stufenlos mischen, und der Regler bei 0 kostet exakt nichts. Ueber 1
-     waechst sie nicht weiter -- mehr Luft holt dort der Bildschirm-Teil,
-     der den Wunschabstand kennt. */
+     stufenlos mischen, und der Regler bei 0 kostet exakt nichts.
+
+     Ueber 1 wird ueber die gerechnete Loesung hinaus verlaengert: die
+     Fotos wandern auf ihren Spreizstrahlen weiter, die Karte wird lokal
+     duenner, im Fenster stehen weniger -- und der Abstand waechst
+     wirklich. Vorher war bei 1 Schluss, und der Regler tat darueber
+     scheinbar nichts: die Zaehlung im Fenster blieb gleich, also blieb
+     der Abstand gleich, und nur die Kachel schrumpfte. Beobachtet als
+     "alle Werte ueber 1,0x haben keinen Effekt mehr". */
   function applyBlast() {
     if (declutter <= 0 || mode === "serien") return;
     if (!blast || blast.layout !== layout) return;
-    const ramp = Math.min(1, declutter);
+    const ramp = declutter;
     const bx = blast.xs, by = blast.ys;
     for (let i = 0; i < model.n; i++) {
       px[i] += (bx[i] - toX[i]) * ramp;
@@ -776,14 +787,26 @@ export function createScene(canvas, model, hooks = {}) {
     return { rx, ry, r };
   }
 
-  function buildSpread(strength) {
-    const cc = model.layouts[layout].centroids;
-    const k = cc.length / 2;
-    const { rx, ry, r } = clusterRadii(cc);
-    const locked = timeLocked();
-    // Nach dem Zusammenziehen ist jeder Kontinent um denselben Faktor
-    // kleiner -- die Kreise, die einander ausweichen muessen, also auch.
-    const shrink = 1 / (1 + strength);
+  /* Die kanonische Trennung -- einmal je Anordnung, bei vollen Radien.
+
+     Vorher loeste der Regler die Trennung fuer jeden Wert neu, immer von
+     den Originalmittelpunkten aus. Eine solche Relaxation ist keine
+     stetige Funktion ihrer Parameter: mit jedem Reglerschritt jammte sie
+     sich anders fest, und die Kontinente sprangen bei 0,10, 0,15, 0,20
+     jeweils in eine voellig neue Anordnung. Dieselbe Krankheit wie beim
+     Abstossen der Bilder -- nur ist die Medizin hier noch einfacher als
+     ein Startwert: die Loesung braucht die Staerke gar nicht, wenn man
+     einmal fuer die vollen Radien rechnet. Der Regler mischt dann nur
+     noch zwischen Original und dieser einen Loesung. Jeder Kontinent
+     wandert auf einem festen Strahl nach aussen, und die grobe Anordnung
+     bleibt bei jedem Wert dieselbe. */
+  let basisLayout = "";
+  let basisX = null;
+  let basisY = null;
+
+  function ensureBasis(cc, k, rx, ry, r, locked) {
+    if (basisLayout === layout) return;
+    basisLayout = layout;
     const x = new Float64Array(k), y = new Float64Array(k);
     for (let c = 0; c < k; c++) { x[c] = cc[c * 2]; y[c] = cc[c * 2 + 1]; }
 
@@ -799,9 +822,9 @@ export function createScene(canvas, model, hooks = {}) {
                nebeneinander, nicht uebereinander; sie muessen einander nicht
                ausweichen, und wer sie trotzdem trennt, verbraucht Hoehe fuer
                nichts. */
-            const overlapX = (rx[a] + rx[b]) * shrink * SPREAD_AIR;
+            const overlapX = (rx[a] + rx[b]) * SPREAD_AIR;
             if (Math.abs(x[b] - x[a]) >= overlapX) continue;
-            const want = (ry[a] + ry[b]) * shrink * SPREAD_AIR;
+            const want = (ry[a] + ry[b]) * SPREAD_AIR;
             let dy = y[b] - y[a];
             const d = Math.abs(dy);
             if (d >= want) continue;
@@ -815,7 +838,7 @@ export function createScene(canvas, model, hooks = {}) {
             moved++;
             continue;
           }
-          const want = (r[a] + r[b]) * shrink * SPREAD_AIR;
+          const want = (r[a] + r[b]) * SPREAD_AIR;
           let dx = x[b] - x[a], dy = y[b] - y[a];
           let d2 = dx * dx + dy * dy;
           if (d2 >= want * want) continue;
@@ -830,6 +853,28 @@ export function createScene(canvas, model, hooks = {}) {
         }
       }
       if (!moved) break;
+    }
+    basisX = x;
+    basisY = y;
+  }
+
+  function buildSpread(strength) {
+    const cc = model.layouts[layout].centroids;
+    const k = cc.length / 2;
+    const { rx, ry, r } = clusterRadii(cc);
+    const locked = timeLocked();
+    // Nach dem Zusammenziehen ist jeder Kontinent um denselben Faktor
+    // kleiner; die Rueckstauchung unten rechnet mit diesen Radien.
+    const shrink = 1 / (1 + strength);
+    ensureBasis(cc, k, rx, ry, r, locked);
+
+    // Auf dem Strahl zur Basis, nie daneben. Bei SPREAD_VOLL ist die
+    // Trennung vollstaendig; darueber steht der Mittelpunkt still.
+    const t = Math.min(1, strength / SPREAD_VOLL);
+    const x = new Float64Array(k), y = new Float64Array(k);
+    for (let c = 0; c < k; c++) {
+      x[c] = cc[c * 2] + (basisX[c] - cc[c * 2]) * t;
+      y[c] = cc[c * 2 + 1] + (basisY[c] - cc[c * 2 + 1]) * t;
     }
 
     spreadDx = new Float32Array(k);
@@ -1315,7 +1360,10 @@ export function createScene(canvas, model, hooks = {}) {
          Stufe alles, und je naeher, desto groesser". */
       const anz = Math.max(1, Math.min(near.length, budget));
       gapEff = Math.max(10, Math.min(gap, Math.sqrt((FAN_PACK * w * h) / anz)));
-      const kachel = Math.max(10, gapEff / Math.max(1, declutter));
+      // Die Kachel darf den Abstand nie ueberragen -- aber Luft entsteht
+      // nicht durch eine kleinere Kachel, sondern durch die Weltspreizung,
+      // die ueber 1,0 weiterwaechst und das Fenster wirklich leert.
+      const kachel = Math.max(10, Math.min(tileBox, gapEff));
       if (kachel < tileBox) {
         tileBox = kachel;
         stats.tile = Math.round(kachel);

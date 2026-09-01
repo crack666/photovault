@@ -6,18 +6,18 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=63";
-import { api, thumbUrl } from "../core/api.js?v=63";
-import { askText, openModal } from "../core/modal.js?v=63";
-import { createPathPick } from "../core/pathpick.js?v=63";
-import { feature, gate } from "../core/capabilities.js?v=63";
-import { showLightbox } from "../lightbox/index.js?v=63";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=64";
+import { api, thumbUrl } from "../core/api.js?v=64";
+import { askText, openModal } from "../core/modal.js?v=64";
+import { createPathPick } from "../core/pathpick.js?v=64";
+import { feature, gate } from "../core/capabilities.js?v=64";
+import { showLightbox } from "../lightbox/index.js?v=64";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=63";
-import { createScene } from "./scene.js?v=63";
+} from "./model.js?v=64";
+import { createScene } from "./scene.js?v=64";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -564,18 +564,19 @@ const KNOBS = [
   {
     id: "spread", label: "Kontinente auseinander", min: 0, max: 2, step: 0.05, start: 0,
     hint: "Die Kontinente stoßen einander ab, bis sie sich nicht mehr überdecken, und werden dabei "
-        + "kompakter. Innerhalb eines Kontinents bleibt die Anordnung, wie sie ist — nur die Ränder "
-        + "hören auf, ineinander zu sprenkeln. Danach wird alles zurück ins Bild gestaucht.",
+        + "kompakter. Jeder wandert auf einem festen Strahl nach außen — die grobe Anordnung bleibt "
+        + "bei jedem Wert dieselbe. Innerhalb eines Kontinents bleibt die Anordnung, wie sie ist. "
+        + "Danach wird alles zurück ins Bild gestaucht.",
     apply: (v) => scene.setSpread(v), fmt: (v) => (v ? `${v.toFixed(2)}×` : "aus"),
   },
   {
     id: "declutter", label: "Bilder abstoßen", min: 0, max: 2.5, step: 0.1, start: 0,
     hint: "Wunschabstand zwischen zwei Bildern, in Kacheln gemessen — bei 1,0 stoßen sie gerade "
-        + "aneinander. Die Karte entfaltet sich dafür wie ein Kraftgraph: jedes Foto bekommt Platz "
-        + "in der Welt, dichte Haufen atmen aus, und beim Hineinzoomen wird jedes Foto zur Kachel. "
-        + "Punkte bleiben nur, wo mehr Fotos sichtbar sind, als das Fenster bei diesem Abstand "
-        + "trägt — eine Zoomstufe tiefer sind auch sie Bilder. Auf dem Schirm wandert kein Bild "
-        + "weiter als drei Kachelabstände von seinem wahren Ort.",
+        + "aneinander, darüber spreizt sich die Welt weiter und zwischen den Bildern entsteht "
+        + "echte Luft. Die Karte entfaltet sich wie ein Kraftgraph: jedes Foto bekommt Platz in "
+        + "der Welt, dichte Haufen atmen aus, und beim Hineinzoomen wird jedes Foto zur Kachel. "
+        + "Punkte bleiben nur, wo mehr Fotos sichtbar sind, als das Fenster trägt — eine "
+        + "Zoomstufe tiefer sind auch sie Bilder.",
     apply: (v) => scene.setDeclutter(v),
     fmt: (v) => (v ? (v < 1 ? `${v.toFixed(1)}× — überlappt noch` : `${v.toFixed(1)}× Kachel`) : "aus"),
   },

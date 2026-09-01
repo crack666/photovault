@@ -9,7 +9,7 @@
    `ids` nimmt eine oder mehrere Element-Kennungen: die meisten Ansichten
    zeigen die Leiste zweimal, oben und unten. */
 
-import { $ } from "./dom.js?v=63";
+import { $ } from "./dom.js?v=64";
 
 export function renderPager(ids, offset, returned, total, onPage, schritt = 20) {
   const start = total === 0 ? 0 : offset + 1;
