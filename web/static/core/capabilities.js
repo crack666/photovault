@@ -49,7 +49,28 @@ export async function gate(id, control, note) {
   }
   if (control) control.disabled = true;
   if (note) {
-    note.textContent = `${f.label} nicht verfügbar: ${f.why}${f.lost ? ` ${f.lost}` : ""}`;
+    note.textContent = `${f.label} nicht verfügbar: ${f.why}${f.lost ? ` ${f.lost}` : ""} `;
+    /* Und ein Weg zurück, ohne die Seite neu zu laden.
+
+       Die Antwort auf „was kann diese Installation" wird einmal je Sitzung
+       geholt und danach geteilt — richtig so, sonst fragen drei Ansichten
+       dasselbe dreimal. Der Preis war: wer Ollama startet, *nachdem* die
+       Seite offen war, blieb bis zum Neuladen gesperrt. Genau dafür gab es
+       `forgetCapabilities`, und niemand rief es.
+
+       Der Knopf steht neben dem Grund, weil man ihn genau dort sucht: man
+       liest, was fehlt, behebt es, und will es sofort noch einmal wissen. */
+    const erneut = document.createElement("button");
+    erneut.type = "button";
+    erneut.className = "mini";
+    erneut.textContent = "erneut prüfen";
+    erneut.addEventListener("click", async () => {
+      erneut.disabled = true;
+      erneut.textContent = "prüft …";
+      forgetCapabilities();
+      await gate(id, control, note);
+    });
+    note.appendChild(erneut);
     note.classList.remove("hidden");
   }
   return false;
