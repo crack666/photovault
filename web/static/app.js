@@ -1,9 +1,9 @@
-import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=33";
-import { api, cropUrl } from "./core/api.js?v=33";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=33";
-import { gate } from "./core/capabilities.js?v=33";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=33";
-import { askConfirm, askText, notify } from "./core/modal.js?v=33";
+import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=54";
+import { api, cropUrl } from "./core/api.js?v=54";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=54";
+import { gate } from "./core/capabilities.js?v=54";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=54";
+import { askConfirm, askText, notify } from "./core/modal.js?v=54";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -22,20 +22,20 @@ function showTab(name) {
 
 /* Der Atlas kommt als eigenes Modul und erst, wenn er gebraucht wird.
 
-   Das `?v=` an jedem Import ist kein Schmuck: ein `import "./model.js"` ohne
+   Das `?v=54` an jedem Import ist kein Schmuck: ein `import "./model.js"` ohne
    Parameter liefert aus dem Browser-Cache beliebig lange die alte Fassung,
    auch wenn index.html schon die neue erwartet. Genau das ist passiert. Die
    Zahl gilt fuer alle Module gemeinsam und wird gemeinsam erhoeht.
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=33");
+  const { initAtlas } = await import("./atlas/index.js?v=54");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=33");
+  const mod = await import("./trash/index.js?v=54");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -690,7 +690,6 @@ $("nav").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-tab]");
   if (btn) showTab(btn.dataset.tab);
 });
-showTab(tabFromUrl());
 
 async function loadQueue() {
   $("queue-meta").textContent = "Gesichter werden gruppiert …";
@@ -999,7 +998,6 @@ const CHANNEL_FILTERS = [
   { key: "whatsapp-sent", label: "Verschickt" },
 ];
 let channelFilter = "";
-let lastGallery = null;
 
 let lbPhotos = [], lbIndex = 0;
 
@@ -1078,7 +1076,6 @@ function fillGallery(timelineEl, streamEl, full, { selectable, meta } = {}) {
      Daten. Damit filterte jeder Klick auf dem Ergebnis des vorigen weiter:
      erst "Alle" 51, dann "Eigene Aufnahmen" 17, und danach zeigte auch
      "Alle" nur noch diese 17, bis man die Seite neu lud. */
-  lastGallery = { timelineEl, streamEl, data: full, selectable };
   const bar = streamEl.previousElementSibling?.classList.contains("chanbar")
     ? streamEl.previousElementSibling
     : Object.assign(document.createElement("div"), { className: "chanbar" });
@@ -1840,7 +1837,7 @@ $("qb-to-atlas").addEventListener("click", async () => {
 
   const satz = [data.conditions ? data.expression : "alle Fotos", data.scope,
                 frei ? `ähnlich zu „${frei}“` : ""].filter(Boolean).join(", ");
-  const { focusFromSearch } = await import("./atlas/index.js?v=33");
+  const { focusFromSearch } = await import("./atlas/index.js?v=54");
   focusFromSearch({
     ids: data.ids,
     label: satz,
@@ -2878,3 +2875,15 @@ async function refreshEventNames() {
 
 refreshPersonNames();
 refreshEventNames();
+
+/* Zuletzt, nicht zwischendrin.
+
+   Stand frueher direkt hinter der Navigationsleiste. Das war zu frueh: bei
+   `?tab=events` ruft showTab den Serien-Tab auf, und dessen Zustand (evTab und
+   Nachbarn) wird erst weiter unten mit `let` deklariert -- der Zugriff fiel in
+   die temporale Totzone und brach die Auswertung des ganzen Moduls ab. Alles
+   danach, auch die Tasten der Grossansicht, wurde nie gebunden. Von der
+   Jobs-Seite fuehrt genau so ein Link hierher (core/nav.js).
+
+   Am Ende ist gebunden, was gebunden gehoert, bevor der erste Tab aufgeht. */
+showTab(tabFromUrl());

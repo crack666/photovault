@@ -6,9 +6,53 @@
   --accent: #8ab4ff;
   --chip: #2a3140;
   --danger: #c4c9d4;
+
+  /* Diese drei wurden benutzt, bevor es sie gab: 13 Stellen riefen
+     var(--line) und var(--fg) mit Ausweichwert auf, und der Ausweichwert
+     fuer --line stand in styles.css anders als in jobs.html. Damit gab es
+     denselben Knopf mit zwei Rahmenfarben, je nach Elternelement. */
+  --line: #2a2f3d;
+  --fg: #f2f4f8;
+  --bg2: #171b22;
+
+  /* Sagt dem Browser, dass er seine eigenen Teile dunkel malen soll:
+     Bildlaufleisten, Aufklapplisten, Ankreuzfelder und vor allem den
+     Kalender von input[type=date]. Ohne das steht ein weisser Kalender
+     auf einer durchgehend dunklen Oberflaeche. */
+  color-scheme: dark;
+  accent-color: var(--accent);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, sans-serif; }
+
+/* Bedienelemente erben keine Schrift, das muss man ihnen sagen.
+
+   Ohne diese Zeile faellt jedes button, input und select auf die
+   Formularschrift des Browsers zurueck. Am deutlichsten in der Kopfleiste:
+   core/nav.js baut auf index.html ein <button class="tab">, auf jobs.html
+   ein <a class="tab"> -- der Link erbt system-ui, der Knopf nicht. Dieselbe
+   Leiste, zwei Schriften. */
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* Sichtbar nur fuer die Tastatur, nicht bei jedem Mausklick. Drei der vier
+   bestehenden :focus-Regeln entfernen den Umriss ersatzlos; das hier ist
+   der gemeinsame Ersatz darunter. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Wer Bewegung abbestellt hat, bekommt keine. Betrifft die sieben
+   Uebergaenge und das Aufziehen der Vorschaubilder im Fotostrom. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 .top {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 24px; border-bottom: 1px solid #2a2e38;
