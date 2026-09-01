@@ -6,18 +6,18 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=58";
-import { api, thumbUrl } from "../core/api.js?v=58";
-import { askText, openModal } from "../core/modal.js?v=58";
-import { createPathPick } from "../core/pathpick.js?v=58";
-import { feature, gate } from "../core/capabilities.js?v=58";
-import { showLightbox } from "../lightbox/index.js?v=58";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=63";
+import { api, thumbUrl } from "../core/api.js?v=63";
+import { askText, openModal } from "../core/modal.js?v=63";
+import { createPathPick } from "../core/pathpick.js?v=63";
+import { feature, gate } from "../core/capabilities.js?v=63";
+import { showLightbox } from "../lightbox/index.js?v=63";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=58";
-import { createScene } from "./scene.js?v=58";
+} from "./model.js?v=63";
+import { createScene } from "./scene.js?v=63";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -570,12 +570,12 @@ const KNOBS = [
   },
   {
     id: "declutter", label: "Bilder abstoßen", min: 0, max: 2.5, step: 0.1, start: 0,
-    hint: "Mindestabstand zwischen zwei Bildern, in Kacheln gemessen — bei 1,0 stoßen sie gerade "
-        + "aneinander. Die Bilder schieben einander weg, bis der Abstand steht, wie die Knoten in "
-        + "einem Graphen. Es wird also nichts weggelassen, der Haufen wird aufgemacht. "
-        + "Der Preis ist die genaue Lage: wie weit ein Bild wandern darf, wächst mit dem Zoom — "
-        + "in der Übersicht unsichtbar, ganz nah bis zu einer halben Bildschirmbreite. "
-        + "Der Punkt darunter bleibt liegen, wo das Foto hingehört.",
+    hint: "Wunschabstand zwischen zwei Bildern, in Kacheln gemessen — bei 1,0 stoßen sie gerade "
+        + "aneinander. Die Karte entfaltet sich dafür wie ein Kraftgraph: jedes Foto bekommt Platz "
+        + "in der Welt, dichte Haufen atmen aus, und beim Hineinzoomen wird jedes Foto zur Kachel. "
+        + "Punkte bleiben nur, wo mehr Fotos sichtbar sind, als das Fenster bei diesem Abstand "
+        + "trägt — eine Zoomstufe tiefer sind auch sie Bilder. Auf dem Schirm wandert kein Bild "
+        + "weiter als drei Kachelabstände von seinem wahren Ort.",
     apply: (v) => scene.setDeclutter(v),
     fmt: (v) => (v ? (v < 1 ? `${v.toFixed(1)}× — überlappt noch` : `${v.toFixed(1)}× Kachel`) : "aus"),
   },

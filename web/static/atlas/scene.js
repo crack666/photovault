@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=58";
-import { thumbUrl } from "../core/api.js?v=58";
+import { colorFor, spreadPoint } from "./model.js?v=63";
+import { thumbUrl } from "../core/api.js?v=63";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -85,39 +85,92 @@ const FAN_ITERATIONS = 6;
 
    Der Massstab ist hier die falsche Einheit. Die Frage lautet "wie weit darf
    ein Foto von seinem Punkt weg, ohne dass man es ihm noch zuordnet", und die
-   beantwortet man in Kacheln: anderthalb Kachelabstaende sind auf jeder
-   Zoomstufe dasselbe fuer das Auge.
+   beantwortet man in Kacheln: drei Kachelabstaende sind auf jeder Zoomstufe
+   dasselbe fuer das Auge -- und der Punkt darunter bleibt ohnehin liegen,
+   die Verschiebung ist sichtbar und nicht behauptet.
 
-   Bei diesem Wert bindet die Grenze kaum noch -- die tatsaechliche
-   Verschiebung liegt gemessen bei 13 bis 30 px. Sie ist ein Notnagel gegen
-   Ausreisser geworden, nicht mehr der Mechanismus. Der Punkt darunter bleibt
-   ohnehin liegen: die Verschiebung ist sichtbar und nicht behauptet. */
-const FAN_REACH = 1.5;
+   Drei, nicht anderthalb, seit die Bilder in den leeren Raum neben dem
+   Haufen ruecken duerfen (FAN_PACK): die Grenze ist nur noch die Decke
+   fuers Aufblasen des Haufens. Gemessen bindet sie selten -- die mittlere
+   Verschiebung liegt bei 25 bis 44 px, die groesste um 90 bis 120 -- aber
+   sie haelt den Schwanz: kein Bild landet weiter als drei Kacheln von
+   seinem Punkt. */
+const FAN_REACH = 3;
 
-/* Wie eng ausgewaehlt wird, gemessen am Abstand, der am Ende stehen soll.
+/* Wieviele Bilder hierher passen, sagt das Fenster -- nicht der Haufen.
 
-   Hier steckte der zweite Fehler, und es war ein Denkfehler. Der Regler
-   versprach "es zeigt nicht weniger, es macht den Haufen auf". Das geht
-   nicht: 900 Bilder mit 69 px Abstand brauchen 4,3 Mio px², das Fenster hat
-   1,44 Mio. Die Relaxation sucht dann eine Loesung, die es nicht gibt, und
-   was man sieht, ist ihre Suche.
+   Der erste Wurf hat die Bewerber auf der *heutigen* Flaeche des Haufens
+   ausgesiebt: was dort bei knappem Abstand ueberlebte, durfte bleiben. Das
+   war zu wenig, und der Einwand dagegen war richtig -- insgesamt ist ja
+   Platz. Ein gedraengter Haufen soll seine Nachbarn zur Seite schieben und
+   sich in den leeren Raum ausbreiten, wie die Knoten eines Kraftgraphen.
+   Die Frage "wieviele" beantwortet deshalb die Fensterflaeche:
 
-   Gemessen war das Versprechen sogar umgekehrt eingeloest: schlichtes
-   Ausduennen zeigte bei Massstab 20000 118 Bilder mit 100 px Abstand, das
-   Abstossen 112 mit 44 px -- weniger Bilder UND weniger Luft.
+     Kapazitaet = FAN_PACK * Fensterflaeche / gap²
 
-   Was Abstossen wirklich besser kann als Ausduennen, ist Bilder aus einem
-   Haufen in den leeren Raum daneben schieben. Dafuer muss die Auswahl
-   machbar sein. Also erst ausduennen, aber auf einen engeren Abstand als
-   gefordert, sodass mehr Bilder ueberleben -- und die dann auffaechern:
+   0,9 ist gemessen die Stelle, an der beides noch gilt: der Abstand kommt
+   an (Nachbarabstand 0,94 bis 1,01 mal gap; das zehnte Perzentil, also die
+   schlimmste Draengelei, nicht unter 0,73), und die Karte steht nach ein
+   bis vier Sekunden. Bei 1,1 kippt es: fuenf Sekunden Wanderung fuer drei
+   Prozent weniger Abstand.
 
-     ausduennen bei gap       586 Bilder,  Nachbarabstand 33,0 px
-     ausduennen bei gap/1,3   866 Bilder,  Nachbarabstand 30,6 px   (gap = 31)
+   Gegen schlichtes Ausduennen, das vorher der heimliche Massstab war:
 
-   Anderthalbmal so viele Bilder bei vollem Abstand. Groesser gewaehlt kippt
-   es zurueck ins Unmoegliche: bei gap/2 faellt der erreichte Abstand auf
-   23,8 px, und die Karte braucht 201 statt 53 Frames bis zur Ruhe. */
-const FAN_DICHTE = 1.3;
+     Massstab  9000   ausduennen 191    jetzt 274 Bilder
+     Massstab 20000   ausduennen 118    jetzt 166
+     Massstab 40000   ausduennen  83    jetzt 117
+
+   Anderthalbmal so viele, alle beim vollen Abstand. */
+const FAN_PACK = 0.9;
+
+/* Wer die Plaetze bekommt: gesiebt, von grob nach fein.
+
+   Das erste Sieb nimmt, wer den Abstand schon von allein hat -- diese
+   Bilder muessen sich gar nicht bewegen. Jedes weitere laesst dichter
+   Stehendes nach, bis die Kapazitaet erreicht ist; das letzte nimmt auch
+   exakt Uebereinanderliegendes, das erst das Auffaechern trennt. Die
+   Reihenfolge ist die der Wahrheit: erst die Unverrueckten, dann die, die
+   Platz brauchen. Kein Teiler ist groesser als 1, deshalb genuegt dem
+   Sieb dasselbe Raster mit Zellgroesse gap. */
+const FAN_SIEBE = [1, 1.4, 2, 3.2, 5, Infinity];
+
+/* Die Weltspreizung: ein Mindestabstand fuer jedes Fotopaar, in
+   Weltkoordinaten.
+
+   Die Bildschirm-Relaxation oben kann nur verteilen, was das Fenster
+   hergibt. Der eigentliche Engpass liegt aber eine Ebene tiefer: die
+   Einbettung legt aehnliche Fotos praktisch uebereinander. Gemessen am
+   echten Bestand waren nur 24 Prozent aller Fotos ueberhaupt jemals
+   darstellbar -- selbst am Zoomende lagen drei Viertel dichter beieinander,
+   als eine Kachel breit ist. Kein Fensterverfahren der Welt aendert das:
+   der Platz muss in der *Welt* entstehen, nicht auf dem Schirm.
+
+   Also werden die Weltkoordinaten selbst relaxiert -- einmal je Anordnung,
+   mit demselben Verfahren wie beim Zeichnen (Raster, gemittelte Schuebe),
+   bis jedes Paar mindestens BLAST_D auseinanderliegt. Der Wert ist so
+   gewaehlt, dass die ganze Karte dann in den Zoombereich passt:
+
+     0,006 * Zoom 45000 = 270 px  -- jede Kachel hat Luft
+     Belegung: 14.887 * 0,866 * 0,006² = 46 % des Einheitsquadrats
+
+   Gemessen: nach 15 Durchgaengen sind 93 Prozent frei, nach 60 sind es
+   99,9, nach 120 alle. Der Median wandert dabei 1,1 Prozent der
+   Kartenbreite -- die Karte bleibt sie selbst, sie atmet nur aus.
+
+   In der Zeit-Anordnung ist x das Datum und bleibt gesperrt; dort enden
+   die Saeulen bei 76 Prozent. Das ist der Preis der Entscheidung aus
+   Stufe 1, und er ist es wert: ein Foto unter falschem Jahr waere eine
+   Luege, ein Punkt statt einer Kachel ist nur ein Punkt. */
+const BLAST_D = 0.006;
+
+//: Obergrenze der Durchgaenge -- danach ist praktisch alles frei, und der
+//: Rest sind Reststapel, die auch der Bildschirm-Finisher trennen kann.
+const BLAST_ITER = 200;
+
+//: Rechenzeit je Frame fuers Entfalten. Ein Durchgang kostet gemessen
+//: 5 bis 10 ms; ein Budget knapp darunter heisst ein Durchgang je Frame,
+//: und das Entfalten ist selbst die Animation.
+const BLAST_MS = 9;
 
 /* Wieviele Nachbarn ein Bild je Durchgang hoechstens wegschiebt.
 
@@ -301,6 +354,8 @@ export function createScene(canvas, model, hooks = {}) {
   let fanKey = "";              // Einstellung, zu der die Verschiebungen passen
   let unruhe = 0;               // mittlere Aenderung je Kachel und Frame, px
   let verschoben = 0;           // mittlere Abweichung von der wahren Lage, px
+  let fanKern = new Set();      // wer beim Abstossen zuletzt dabei war
+  let blast = null;             // Weltspreizung: { layout, xs, ys, iter, fertig, lockX }
 
   let tileBox = 22;             // Kachelbreite des letzten Plans
   let selection = null; // Set<number> oder null
@@ -555,6 +610,7 @@ export function createScene(canvas, model, hooks = {}) {
     if (mix >= 1) {
       px.set(toX);
       py.set(toY);
+      applyBlast();
       applySpread();
       return false;
     }
@@ -562,8 +618,26 @@ export function createScene(canvas, model, hooks = {}) {
       px[i] = fromX[i] + (toX[i] - fromX[i]) * mix;
       py[i] = fromY[i] + (toY[i] - fromY[i]) * mix;
     }
+    applyBlast();
     applySpread();
     return true;
+  }
+
+  /* Die Weltspreizung einblenden, so weit der Regler steht.
+
+     Als Differenz zur Ziel-Anordnung, nicht als Ersatz: so laesst sie sich
+     stufenlos mischen, und der Regler bei 0 kostet exakt nichts. Ueber 1
+     waechst sie nicht weiter -- mehr Luft holt dort der Bildschirm-Teil,
+     der den Wunschabstand kennt. */
+  function applyBlast() {
+    if (declutter <= 0 || mode === "serien") return;
+    if (!blast || blast.layout !== layout) return;
+    const ramp = Math.min(1, declutter);
+    const bx = blast.xs, by = blast.ys;
+    for (let i = 0; i < model.n; i++) {
+      px[i] += (bx[i] - toX[i]) * ramp;
+      py[i] += (by[i] - toY[i]) * ramp;
+    }
   }
 
   /* Kontinente wirklich auseinander -- nicht nur zusammenziehen.
@@ -598,6 +672,81 @@ export function createScene(canvas, model, hooks = {}) {
      der Bedeutungs-Anordnung (model.js, byTime gibt `y: m.y` durch). Damit
      stimmen die Baender ohne eigene Umrechnung, weil an x nichts geschieht. */
   function timeLocked() { return layout === "zeit"; }
+
+  /* Die Weltspreizung rechnet im Hintergrund, ein Durchgang je Frame.
+
+     Kein Worker, kein Blocken: draw() ruft ensureBlast(), das hoechstens
+     BLAST_MS verbraucht und sagt, ob es noch etwas zu tun gibt. Solange
+     ja, wird weitergezeichnet -- das Entfalten der Karte ist damit selbst
+     die Animation, wie bei einem Kraftgraphen, der sich setzt. */
+  function blastStart() {
+    const L = model.layouts[layout];
+    blast = {
+      layout,
+      xs: Float64Array.from(L.x),
+      ys: Float64Array.from(L.y),
+      iter: 0,
+      fertig: false,
+      lockX: timeLocked(),
+    };
+  }
+
+  function blastStep(budgetMs) {
+    const t0 = performance.now();
+    const d = BLAST_D, d2 = d * d;
+    const xs = blast.xs, ys = blast.ys;
+    const key = (gx, gy) => gx * 100000 + gy;
+    while (blast.iter < BLAST_ITER && performance.now() - t0 < budgetMs) {
+      const grid = new Map();
+      for (let i = 0; i < model.n; i++) {
+        const k = key(Math.floor(xs[i] / d), Math.floor(ys[i] / d));
+        const l = grid.get(k);
+        if (l) l.push(i); else grid.set(k, [i]);
+      }
+      let bewegt = 0;
+      for (let i = 0; i < model.n; i++) {
+        const gx = Math.floor(xs[i] / d), gy = Math.floor(ys[i] / d);
+        let sx = 0, sy = 0, treffer = 0;
+        for (let a = gx - 1; a <= gx + 1; a++) {
+          for (let b = gy - 1; b <= gy + 1; b++) {
+            const l = grid.get(key(a, b));
+            if (!l) continue;
+            for (const j of l) {
+              if (j === i) continue;
+              let dx = xs[j] - xs[i], dy = ys[j] - ys[i];
+              let dd = dx * dx + dy * dy;
+              if (dd >= d2) continue;
+              if (dd < 1e-16) {
+                const ang = (i * 2.399963) % 6.283185;
+                dx = Math.cos(ang); dy = Math.sin(ang); dd = 1;
+              }
+              const dist = Math.sqrt(dd);
+              const push = (d - dist) / 2;
+              sx -= (dx / dist) * push;
+              sy -= (dy / dist) * push;
+              treffer++;
+            }
+          }
+        }
+        if (treffer) {
+          if (!blast.lockX) xs[i] += sx / treffer;
+          ys[i] += sy / treffer;
+          bewegt++;
+        }
+      }
+      blast.iter++;
+      if (!bewegt) { blast.fertig = true; return; }
+    }
+    if (blast.iter >= BLAST_ITER) blast.fertig = true;
+  }
+
+  /** @returns true, solange noch entfaltet wird -- dann weiterzeichnen. */
+  function ensureBlast() {
+    if (declutter <= 0 || mode === "serien") return false;
+    if (!blast || blast.layout !== layout) blastStart();
+    if (!blast.fertig) blastStep(BLAST_MS);
+    return !blast.fertig;
+  }
 
   function clusterRadii(cc) {
     // Wie weit ein Kontinent reicht: quadratisches Mittel der Abstaende
@@ -779,6 +928,7 @@ export function createScene(canvas, model, hooks = {}) {
 
   function draw() {
     const now = performance.now();
+    const entfaltet = ensureBlast();
     const animating = positions(now);
     stats.drawn = 0;
     stats.budget = 0;
@@ -855,7 +1005,7 @@ export function createScene(canvas, model, hooks = {}) {
     // Nur der eigene Aufwand, ohne das Warten aufs Bild -- was der Browser
     // danach mit der Leinwand macht, steht hier nicht drin.
     stats.ms = Math.round((performance.now() - now) * 10) / 10;
-    if (animating) schedule();
+    if (animating || entfaltet) schedule();
   }
 
   function fade(color) {
@@ -1084,7 +1234,7 @@ export function createScene(canvas, model, hooks = {}) {
        Jetzt entscheidet die Kachelbreite mal der Geraetepixel-Faktor: die
        feine Stufe kommt, wenn sie wirklich etwas beitraegt -- also bei
        vergroesserter Kachel. */
-    const size = box * (window.devicePixelRatio || 1) > 160 ? 320 : 160;
+    let size = box * (window.devicePixelRatio || 1) > 160 ? 320 : 160;
 
     /* Abstand und Anzahl haengen zusammen, und in dieser Reihenfolge.
 
@@ -1132,15 +1282,57 @@ export function createScene(canvas, model, hooks = {}) {
     const gap = heldGap;
     const budget = heldBudget;
 
+    /* Der Schirm nimmt den Abstand, den die Welt hergibt -- und laesst die
+       Kachel mitschrumpfen, statt Fotos fallen zu lassen.
+
+       Beobachtet nach der Weltspreizung: ganz nah war jedes Foto eine
+       Kachel, eine Zoomstufe hoeher fielen dieselben Fotos zurueck auf
+       Punkte. Der Grund war die Kapazitaetsrechnung mit dem *Wunsch*abstand:
+       der haengt an der Kachel, die Kachel schrumpft beim Herauszoomen kaum,
+       also traegt das Fenster immer weniger Bilder -- obwohl die Welt
+       laengst garantiert, dass jedes Paar BLAST_D auseinanderliegt.
+
+       Diese Garantie ist auf dem Schirm BLAST_D mal Massstab. Wer sie als
+       wirksamen Abstand uebernimmt, bekommt eine Kapazitaet, die auf jeder
+       Zoomstufe fuer alle Sichtbaren reicht: 0,9 / 0,866 ist groesser als
+       eins, mehr als dicht an dicht liegt in der Welt nichts. Die Kachel
+       wird dann hoechstens so gross wie dieser Abstand -- der Zoom ist das
+       Groessenrad, der Regler das Luftrad: ueber 1,0 kauft er Luft, indem
+       die Kachel weiter schrumpft, nie indem Fotos verschwinden.
+
+       Punkte bleiben genau zweimal ehrlich uebrig: unterhalb der
+       Bildschwelle (BLAST_D * 2600 sind 16 px -- kleiner waere ohnehin
+       nichts zu erkennen) und wo das Leistungsbudget deckelt. */
+    const repel = declutter > 0 && thumbMode !== "alles";
+    let gapEff = gap;
+    if (repel) {
+      /* Nicht aus der Weltgarantie hergeleitet, sondern aus der Zaehlung:
+         soviel Abstand, dass die Kapazitaet fuer alle Sichtbaren reicht --
+         das gilt per Konstruktion, unabhaengig davon, wie weit die
+         Relaxation der Welt schon gekommen ist. Die Weltspreizung sorgt
+         dafuer, dass die Sichtbarenzahl beim Hineinzoomen faellt und die
+         Kachel dadurch waechst; erst zusammen ergibt beides "auf jeder
+         Stufe alles, und je naeher, desto groesser". */
+      const anz = Math.max(1, Math.min(near.length, budget));
+      gapEff = Math.max(10, Math.min(gap, Math.sqrt((FAN_PACK * w * h) / anz)));
+      const kachel = Math.max(10, gapEff / Math.max(1, declutter));
+      if (kachel < tileBox) {
+        tileBox = kachel;
+        stats.tile = Math.round(kachel);
+        size = kachel * (window.devicePixelRatio || 1) > 160 ? 320 : 160;
+      }
+    }
+
     /* Was das Abstossen bestimmt -- ohne Kameralage. Aendert sich der Regler,
        der Kachelmodus, die Anordnung oder die Auswahl, sind die alten
        Verschiebungen sinnlos. Ein Schwenk dagegen ist genau der Fall, fuer
        den sie da sind. */
     const einstellung = [thumbMode, declutter, tileScale, layout, spread,
-                         maskVersion, Math.round(gap)].join("|");
+                         maskVersion, Math.round(gapEff)].join("|");
     if (einstellung !== fanKey) {
       fanKey = einstellung;
       fanned.clear();
+      fanKern = new Set();
       unruhe = 0;
       verschoben = 0;
     }
@@ -1154,12 +1346,10 @@ export function createScene(canvas, model, hooks = {}) {
        nichts.
 
        Steht der Regler auf einem Wert, stossen die Bilder einander ab, bis
-       der Abstand steht -- wie die Knoten in einem Graphen. Erst das ist
-       Entzerren: es zeigt nicht weniger, es macht den Haufen auf.
-
-       Der Platz dafuer kommt vom Hineinzoomen, und nur von dort. */
-    const grenze = gap * FAN_REACH;
-    const repel = declutter > 0 && thumbMode !== "alles";
+       der Abstand steht -- wie die Knoten eines Kraftgraphen. Gezeigt wird,
+       was das Fenster bei diesem Abstand traegt (FAN_PACK); der Haufen
+       schiebt sich dafuer in den leeren Raum daneben. */
+    const grenze = gapEff * FAN_REACH;
     //  punkte  -- kommt hier gar nicht an, draw() ueberspringt uns.
     //  kegel   -- kein Abstand, nur das Budget: die Mitte verbraucht es.
     //  flaeche -- ausduennen, sobald mehr sichtbar ist als passt.
@@ -1175,27 +1365,25 @@ export function createScene(canvas, model, hooks = {}) {
        Bilder erscheinen, und nichts an ihrer Lage. Also die neun Felder ringsum
        mitpruefen -- das Raster ist nur der Index, der Abstand die Bedingung. */
     const taken = new Map();
-
-    /* Der Abstand, nach dem *ausgewaehlt* wird -- beim Abstossen enger als
-       der, der am Ende stehen soll. Den Rest legt das Auffaechern zu. Ohne
-       Abstossen sind beide dasselbe, der `spaced`-Zweig merkt nichts davon. */
-    const pick = repel ? gap / FAN_DICHTE : gap;
-    const pick2 = pick * pick;
+    const gap2 = gap * gap;
 
     // Zahl statt Zeichenkette als Rasterschluessel: je Bewerber neun
     // Nachschlagevorgaenge, bei 4.000 Bewerbern also 36.000 -- als
     // zusammengesetzte Zeichenkette waren das ebenso viele neue Objekte.
     const key = (gx, gy) => (gx + 2048) * 4096 + (gy + 2048);
 
-    function free(sx, sy) {
-      const gx = Math.floor(sx / pick), gy = Math.floor(sy / pick);
+    // Der Radius ist waehlbar, damit die Siebe des Abstoss-Zweigs dasselbe
+    // Raster benutzen koennen -- aber nie groesser als gap, sonst reicht
+    // der 3x3-Ring nicht.
+    function free(sx, sy, r2 = gap2) {
+      const gx = Math.floor(sx / gap), gy = Math.floor(sy / gap);
       for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
           const list = taken.get(key(gx + dx, gy + dy));
           if (!list) continue;
           for (let k = 0; k < list.length; k += 2) {
             const ddx = list[k] - sx, ddy = list[k + 1] - sy;
-            if (ddx * ddx + ddy * ddy < pick2) return false;
+            if (ddx * ddx + ddy * ddy < r2) return false;
           }
         }
       }
@@ -1203,7 +1391,7 @@ export function createScene(canvas, model, hooks = {}) {
     }
 
     function claim(sx, sy) {
-      const k = key(Math.floor(sx / pick), Math.floor(sy / pick));
+      const k = key(Math.floor(sx / gap), Math.floor(sy / gap));
       const list = taken.get(k);
       if (list) list.push(sx, sy);
       else taken.set(k, [sx, sy]);
@@ -1231,25 +1419,20 @@ export function createScene(canvas, model, hooks = {}) {
     }
 
     if (repel) {
-      /* Erst ausduennen, dann abstossen -- beides, nicht das eine statt des
-         anderen.
+      /* Wieviele, sagt die Kapazitaet. Wer, sagen die Siebe. Wohin, das
+         Auffaechern. Und wer einmal dabei ist, bleibt dabei.
 
-         Hier stand "Abstossen statt Weglassen": alle Bewerber behalten und
-         auseinanderschieben, bis der Abstand steht. Das war der Fehler. Der
-         Abstand steht dann naemlich nie. 900 Bilder mit 69 px Abstand
-         brauchen 4,3 Mio px², das Fenster hat 1,44 Mio -- was man sieht, ist
-         die Relaxation beim vergeblichen Suchen, und sie sucht fuer immer.
+         Ohne das Letzte wechselte beim Schwenken je Frame ein Drittel der
+         Auswahl: die Siebe greifen in der Reihenfolge des Abstands zur
+         Bildmitte, und die permutiert bei jedem Pixel Kameralage. Gemessen
+         ueber einen Schwenk von 240 px: 79 Wechsel je Frame ohne den Kern,
+         0,2 mit ihm -- und nach dem Halt steht dieselbe Guete wie beim
+         Kaltstart, Nachbarabstand 0,98 mal gap nach 1,6 s.
 
-         Also die Auswahl machbar machen: ausduennen wie im `spaced`-Zweig,
-         aber bei `gap / FAN_DICHTE` statt bei `gap`. Was dabei ueberlebt,
-         passt garantiert. Und weil enger ausgewaehlt wurde, ueberleben mehr
-         Bilder, als bei vollem Abstand nebeneinander laegen, wenn sie sich
-         nicht bewegen duerften. Genau diese Differenz holt das Auffaechern
-         herein, indem es sie in den leeren Raum neben dem Haufen schiebt.
-
-         Das ist das Einzige, was Abstossen wirklich besser kann als
-         Ausduennen -- und jetzt kann es das: 866 statt 586 Bilder bei
-         gleichem Nachbarabstand. Der Punkt darunter bleibt liegen. */
+         Kernmitglieder raeumen ihren Platz erst, wenn sie aus dem Fenster
+         fallen oder die Kapazitaet sinkt; sie belegen das Raster, damit
+         Neuzugaenge zu ihnen Abstand halten. Der Punkt unter jedem Bild
+         bleibt liegen. */
       /* Und zwar so, dass es dabei zur Ruhe kommt.
 
          Bis hierher fing jeder Frame bei null an: `fanOut` startete an der
@@ -1269,15 +1452,31 @@ export function createScene(canvas, model, hooks = {}) {
          eine neue Loesung aus, sondern zieht die vorhandene nach, und aus
          dem Sprung wird eine Bewegung.
 
-         Dasselbe Mittel, das der `spaced`-Zweig mit `held` schon benutzt --
-         nur dass es dort die Auswahl festhaelt und hier die Lage. */
+         Dasselbe Mittel, das der `spaced`-Zweig mit `held` schon benutzt:
+         `fanned` traegt die Lage von Frame zu Frame, der Kern die Auswahl. */
+      const kap = Math.min(budget,
+        Math.max(24, Math.floor((FAN_PACK * w * h) / (gapEff * gapEff))));
       const cand = [];
-      for (const t of near) {
-        if (cand.length >= budget) break;
-        if (!free(t[2], t[3])) continue;
-        claim(t[2], t[3]);
-        cand.push(t.slice());
+      const drin = new Uint8Array(near.length);
+      for (let a = 0; a < near.length && cand.length < kap; a++) {
+        if (!fanKern.has(near[a][1])) continue;
+        drin[a] = 1;
+        claim(near[a][2], near[a][3]);
+        cand.push(near[a].slice());
       }
+      for (const teiler of FAN_SIEBE) {
+        if (cand.length >= kap) break;
+        const r2 = teiler === Infinity ? 0 : (gapEff / teiler) ** 2;
+        for (let a = 0; a < near.length && cand.length < kap; a++) {
+          if (drin[a]) continue;
+          if (r2 && !free(near[a][2], near[a][3], r2)) continue;
+          drin[a] = 1;
+          claim(near[a][2], near[a][3]);
+          cand.push(near[a].slice());
+        }
+      }
+      fanKern = new Set();
+      for (const c of cand) fanKern.add(c[1]);
       // Die wahre Lage getrennt halten: die Begrenzung der Verschiebung
       // muss sich auf sie beziehen, nicht auf den mitgebrachten Startwert.
       const trueX = new Float32Array(cand.length);
@@ -1288,7 +1487,7 @@ export function createScene(canvas, model, hooks = {}) {
         if (d) { cand[a][2] += d[0]; cand[a][3] += d[1]; }
       }
       const tFan = performance.now();
-      fanOut(cand, gap, w, h, grenze, trueX, trueY);
+      fanOut(cand, gapEff, w, h, grenze, trueX, trueY);
       fanMs = performance.now() - tFan;
 
       /* Gedaempft uebernehmen, nicht roh.
@@ -1306,24 +1505,31 @@ export function createScene(canvas, model, hooks = {}) {
       const naechste = new Map();
       for (let a = 0; a < cand.length; a++) {
         const zielX = cand[a][2] - trueX[a], zielY = cand[a][3] - trueY[a];
-        const vor = fanned.get(cand[a][1]);
-        let dx = zielX, dy = zielY;
-        if (vor) {
-          dx = vor[0] + (zielX - vor[0]) * FAN_EASE;
-          dy = vor[1] + (zielY - vor[1]) * FAN_EASE;
-          const weg = Math.hypot(dx - vor[0], dy - vor[1]);
-          // Unter der Schwelle genau liegen bleiben, nicht fast. `vor`
-          // uebernehmen und nicht etwa runden: nur der unveraenderte Wert
-          // macht den naechsten Frame identisch und damit das Stillstehen
-          // endgueltig.
-          if (weg < FAN_RUHE) { dx = vor[0]; dy = vor[1]; }
-          else bewegt++;
-          unruheSumme += weg < FAN_RUHE ? 0 : weg;
-          unruheZahl++;
-          // Was uebernommen wurde, muss auch gezeichnet werden.
-          cand[a][2] = trueX[a] + dx;
-          cand[a][3] = trueY[a] + dy;
-        }
+        /* Wer noch keinen Vorframe hat, beginnt bei null Verschiebung und
+           east von dort -- der Einstieg ist Teil der Bewegung, kein Sprung.
+
+           Vorher nahm ein neues Bild sofort die rohe Loesung an und zaehlte
+           nicht als bewegt. Nach dem Einschalten war deshalb der allererste
+           Frame zugleich der letzte: nichts galt als in Bewegung, kein
+           weiterer wurde angefordert, und die Karte fror mitten im
+           Aufblasen ein -- beobachtet als 168 gezeichnete bei 276 Plaetzen
+           und im Mittel 12 statt 25 px Verschiebung. Aufgefallen ist es
+           erst mit vollem Bildspeicher: solange Bilder nachluden, stiess
+           jedes fertige Bild den naechsten Frame an und deckte den Fehler
+           zu. */
+        const vor = fanned.get(cand[a][1]) || [0, 0];
+        let dx = vor[0] + (zielX - vor[0]) * FAN_EASE;
+        let dy = vor[1] + (zielY - vor[1]) * FAN_EASE;
+        const weg = Math.hypot(dx - vor[0], dy - vor[1]);
+        // Unter der Schwelle genau liegen bleiben, nicht fast: nur der
+        // unveraenderte Wert macht den naechsten Frame identisch und damit
+        // das Stillstehen endgueltig.
+        if (weg < FAN_RUHE) { dx = vor[0]; dy = vor[1]; }
+        else { bewegt++; unruheSumme += weg; }
+        unruheZahl++;
+        // Was uebernommen wurde, muss auch gezeichnet werden.
+        cand[a][2] = trueX[a] + dx;
+        cand[a][3] = trueY[a] + dy;
         naechste.set(cand[a][1], [dx, dy]);
         wegSumme += Math.hypot(dx, dy);
       }
@@ -1378,7 +1584,7 @@ export function createScene(canvas, model, hooks = {}) {
     stats.budget = capped ? budget : Infinity;
     stats.wish = wish;
     stats.raster = spaced || repel;
-    stats.gap = spaced || repel ? Math.round(gap) : 0;
+    stats.gap = repel ? Math.round(gapEff) : (spaced ? Math.round(gap) : 0);
     stats.gapReason = repel ? "abstoßend" : (spaced ? "Fläche" : "");
     /* Was tatsaechlich verschoben wurde, nicht die Obergrenze.
 
