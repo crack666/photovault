@@ -8,11 +8,11 @@
    sagt "der Klick ist verbraucht", und die Galerie laesst die Grossansicht
    dann zu. Die Galerie kennt die Auswahl nicht. */
 
-import { api, cropUrl } from "../core/api.js?v=55";
-import { $, escapeHtml } from "../core/dom.js?v=55";
-import { askConfirm, askText, notify } from "../core/modal.js?v=55";
-import { forgetPeopleList, setPeopleList } from "../core/people.js?v=55";
-import { fillGallery } from "../gallery/index.js?v=55";
+import { api, cropUrl } from "../core/api.js?v=58";
+import { $, escapeHtml } from "../core/dom.js?v=58";
+import { askConfirm, askText, notify } from "../core/modal.js?v=58";
+import { forgetPeopleList, setPeopleList } from "../core/people.js?v=58";
+import { fillGallery } from "../gallery/index.js?v=58";
 
 function personCard(p, { onOpen, extraActions } = {}) {
   const el = document.createElement("div");

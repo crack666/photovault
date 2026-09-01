@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=55";
-import { thumbUrl } from "../core/api.js?v=55";
+import { colorFor, spreadPoint } from "./model.js?v=58";
+import { thumbUrl } from "../core/api.js?v=58";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -65,28 +65,59 @@ const SPREAD_AIR = 1.15;
 const FAN_ITERATIONS = 6;
 
 /* Wie weit ein Bild beim Auffaechern hoechstens von seinem Platz wegdarf --
-   gemessen in Weltkoordinaten, nicht in Pixeln. Darin steckt die ganze Idee.
+   gemessen in Kachelabstaenden, nicht in Weltkoordinaten.
 
-   Beim Hineinzoomen entsteht Platz: derselbe Weltabstand ist auf dem Schirm
-   doppelt so gross, wenn man doppelt so nah dran ist. Diesen Platz soll das
-   Auffaechern nutzen -- aber nur ihn. Eine Grenze in Pixeln wuerde in der
-   Uebersicht Kontinente verschieben und beim Hineinzoomen nichts mehr
-   hergeben. In Weltkoordinaten ist es umgekehrt und richtig herum:
+   Hier stand eine feste Weltdistanz (0,004), mit dem Argument, der Fehler
+   solle auf jeder Zoomstufe derselbe kleine Weltabstand sein. Das klingt
+   sauber und war der Grund, warum der Regler nichts bewirkte: die Kachel
+   waechst beim Hineinzoomen viel langsamer als der Massstab -- sie klemmt bei
+   96 px --, der geforderte Abstand haengt an ihr, die erlaubte Verschiebung
+   dagegen am Massstab. Gemessen ueber den nutzbaren Bereich:
 
-     Uebersicht (Massstab ~900)   0,004 * 900   =  3,6 px  -- unsichtbar
-     nah dran   (Massstab 20000)  0,004 * 20000 =   80 px  -- echte Luft
-     ganz nah   (Massstab 90000)  0,004 * 90000 =  360 px  -- ein Haufen
-                                                              faechert auf
+     Massstab   2600   gap  31 px   Grenze  10 px   = 0,34 * gap
+     Massstab   9000   gap  69 px   Grenze  36 px   = 0,52 * gap
+     Massstab  20000   gap  88 px   Grenze  80 px   = 0,91 * gap
 
-   Die Karte behauptet also nie eine Lage, die das grosse Ganze verfaelscht:
-   der Fehler ist immer derselbe kleine Weltabstand, egal wie es aussieht.
-   Und Fotos, die auf exakt derselben Stelle liegen -- Beinahe-Dubletten --
-   trennen sich erst dann, wenn man wirklich hinsieht. */
-const SHIFT_WORLD = 0.004;
+   Ueberall weniger als der Abstand, den die Bilder herstellen sollen. Die
+   Relaxation schiebt auseinander, die Grenze zieht zurueck, und heraus kam
+   ein Nachbarabstand von 11,6 -> 11,8 px bei gefordertem 69. Nicht wenig --
+   nichts.
 
-//: Unter so vielen Pixeln lohnt das Auffaechern nicht -- es kostet sechs
-//: Durchgaenge und bewegt nichts, was man sehen koennte.
-const FAN_MIN_PX = 2;
+   Der Massstab ist hier die falsche Einheit. Die Frage lautet "wie weit darf
+   ein Foto von seinem Punkt weg, ohne dass man es ihm noch zuordnet", und die
+   beantwortet man in Kacheln: anderthalb Kachelabstaende sind auf jeder
+   Zoomstufe dasselbe fuer das Auge.
+
+   Bei diesem Wert bindet die Grenze kaum noch -- die tatsaechliche
+   Verschiebung liegt gemessen bei 13 bis 30 px. Sie ist ein Notnagel gegen
+   Ausreisser geworden, nicht mehr der Mechanismus. Der Punkt darunter bleibt
+   ohnehin liegen: die Verschiebung ist sichtbar und nicht behauptet. */
+const FAN_REACH = 1.5;
+
+/* Wie eng ausgewaehlt wird, gemessen am Abstand, der am Ende stehen soll.
+
+   Hier steckte der zweite Fehler, und es war ein Denkfehler. Der Regler
+   versprach "es zeigt nicht weniger, es macht den Haufen auf". Das geht
+   nicht: 900 Bilder mit 69 px Abstand brauchen 4,3 Mio px², das Fenster hat
+   1,44 Mio. Die Relaxation sucht dann eine Loesung, die es nicht gibt, und
+   was man sieht, ist ihre Suche.
+
+   Gemessen war das Versprechen sogar umgekehrt eingeloest: schlichtes
+   Ausduennen zeigte bei Massstab 20000 118 Bilder mit 100 px Abstand, das
+   Abstossen 112 mit 44 px -- weniger Bilder UND weniger Luft.
+
+   Was Abstossen wirklich besser kann als Ausduennen, ist Bilder aus einem
+   Haufen in den leeren Raum daneben schieben. Dafuer muss die Auswahl
+   machbar sein. Also erst ausduennen, aber auf einen engeren Abstand als
+   gefordert, sodass mehr Bilder ueberleben -- und die dann auffaechern:
+
+     ausduennen bei gap       586 Bilder,  Nachbarabstand 33,0 px
+     ausduennen bei gap/1,3   866 Bilder,  Nachbarabstand 30,6 px   (gap = 31)
+
+   Anderthalbmal so viele Bilder bei vollem Abstand. Groesser gewaehlt kippt
+   es zurueck ins Unmoegliche: bei gap/2 faellt der erreichte Abstand auf
+   23,8 px, und die Karte braucht 201 statt 53 Frames bis zur Ruhe. */
+const FAN_DICHTE = 1.3;
 
 /* Wieviele Nachbarn ein Bild je Durchgang hoechstens wegschiebt.
 
@@ -100,16 +131,37 @@ const FAN_MIN_PX = 2;
    etwas langsamer aus. Und er wirkt genau dort, wo er muss: in duennen
    Gegenden hat kein Punkt so viele Nachbarn. */
 //: Wie weit eine Kachel je Frame ihrer neuen Sollage folgt. Ganz (1.0)
-//: heisst: jedes Frame die volle Loesung -- und weil die Relaxation bei
-//: Ueberfuellung keine Ruhelage hat, ist das genau das Zittern. Ein Drittel
-//: daempft die Schaukel weg und laesst das Nachziehen beim Schwenken weich
-//: aussehen, ohne dass es traege wirkt.
+//: hiesse: jedes Frame die volle Loesung, also auch jeden Sprung der
+//: Relaxation ungefiltert. Ein Drittel macht aus dem Nachziehen beim
+//: Schwenken eine weiche Bewegung, ohne dass es traege wirkt -- gemessen
+//: 0,8 px groesster Schirmsprung waehrend eines Schwenks.
 const FAN_EASE = 0.34;
 
-//: Ab wann die Bewegung als beendet gilt, in Pixeln je Kachel und Frame.
-//: Darunter wird kein Frame mehr angefordert -- sonst laeuft die Schleife
-//: ewig weiter, um Hundertstelpixel zu verschieben.
-const FAN_RUHE = 0.08;
+/* Was noch als Bewegung zaehlt, in Pixeln je Kachel und Frame.
+
+   Nicht nur ein Abbruchkriterium, sondern die Schwelle beim Uebernehmen
+   selbst: was sich um weniger verschieben wuerde, bleibt genau liegen. Der
+   Unterschied ist nicht kosmetisch. Ohne die Schwelle laeuft die Schleife
+   ewig weiter, denn der Nachbarsatz einer Kachel ist keine stetige Funktion
+   ihrer Lage -- an einer Rasterkante wechselt sie das Feld, sieht andere
+   Nachbarn, bekommt eine andere Mittelung und wandert zurueck. Gemessen im
+   Browser: 0,1 px Unruhe, ueber zwoelf Sekunden unveraendert, bei voellig
+   stehender Kamera und leerer Ladeschlange. Unsichtbar auf einer 88-px-
+   Kachel, aber die Karte zeichnet dafuer bis zum Sankt-Nimmerleins-Tag.
+
+   Bleibt in einem Frame jede Kachel liegen, ist der naechste Frame Zeichen
+   fuer Zeichen derselbe -- damit steht es, und zwar beweisbar, nicht nur
+   annaehernd. Der Wert entscheidet, wie lange das dauert und was es kostet:
+
+     0,08 px   steht nach 3,6 bis 5,1 s   Abstand 67,9 von 69
+     0,25 px   steht nach 0,9 bis 2,0 s   Abstand 66,5 von 69
+     0,40 px   steht nach 0,8 bis 1,3 s   Abstand 65,3 von 69
+
+   Ein Viertelpixel sieht niemand, und zwei Prozent Abstand ist ein Preis,
+   den man fuer eine Karte zahlt, die auch wirklich stillsteht. Auf den
+   Schwenk wirkt die Schwelle nicht: der groesste Schirmsprung bleibt bei
+   allen drei Werten 0,74 px. */
+const FAN_RUHE = 0.25;
 
 const FAN_NEIGHBOURS = 12;
 
@@ -196,7 +248,7 @@ export function createScene(canvas, model, hooks = {}) {
   //: Was der letzte Durchlauf gekostet hat. Ohne Zahlen ist "ruckelt es?"
   //: Geschmackssache -- und die Antwort haengt am Geraet, nicht an meiner
   //: Meinung.
-  const stats = { visible: 0, drawn: 0, budget: 0, raster: false, gap: 0, shift: 0,
+  const stats = { visible: 0, drawn: 0, budget: 0, raster: false, gap: 0, verschoben: 0,
                   ms: 0, fanMs: 0, imgMs: 0, cached: 0, off: "", gapReason: "",
                   tile: 0, tileAuto: 1,
                   perThumb: MS_PER_THUMB_START };
@@ -248,6 +300,7 @@ export function createScene(canvas, model, hooks = {}) {
   let fanned = new Map();       // index -> [dx, dy] gegen die wahre Lage
   let fanKey = "";              // Einstellung, zu der die Verschiebungen passen
   let unruhe = 0;               // mittlere Aenderung je Kachel und Frame, px
+  let verschoben = 0;           // mittlere Abweichung von der wahren Lage, px
 
   let tileBox = 22;             // Kachelbreite des letzten Plans
   let selection = null; // Set<number> oder null
@@ -874,8 +927,9 @@ export function createScene(canvas, model, hooks = {}) {
         // Zaehlt man erst hinter dem Ueberspringen, laeuft der letzte Punkt
         // eines vollen Rasterfelds trotzdem durch die ganze Liste -- und
         // genau daran hingen die gemessenen 122 ms.
-        let seen = 0;
-        let ax = cand[a][2], ay = cand[a][3];
+        let seen = 0, treffer = 0;
+        const ax = cand[a][2], ay = cand[a][3];
+        let schubX = 0, schubY = 0;
         for (let dx = -1; dx <= 1 && seen < FAN_NEIGHBOURS; dx++) {
           for (let dy = -1; dy <= 1 && seen < FAN_NEIGHBOURS; dy++) {
             const list = cells.get((gx + dx) + ":" + (gy + dy));
@@ -899,13 +953,36 @@ export function createScene(canvas, model, hooks = {}) {
               // keine Rolle mehr, sodass der Deckel nicht die einen
               // bevorzugt und die anderen uebergeht.
               const push = (minDist - d) / 2;
-              ax -= (ddx / d) * push;
-              ay -= (ddy / d) * push;
+              schubX -= (ddx / d) * push;
+              schubY -= (ddy / d) * push;
+              treffer++;
               moved++;
             }
           }
         }
-        cand[a][2] = ax; cand[a][3] = ay;
+        /* Der Mittelwert der Schuebe, nicht ihre Summe -- daran hing das
+           Wabbeln.
+
+           Summiert weicht ein Bild jedem Nachbarn einzeln um die volle halbe
+           Fehldistanz aus. In einem dichten Haufen sind das zwoelf Schuebe in
+           einem Durchgang, zusammen bis zum Sechsfachen des Sollabstands. Es
+           schiesst weit ueber, die Begrenzung zieht es zurueck, im naechsten
+           Frame steht die Nachbarschaft anders -- das ist keine Annaeherung,
+           sondern ein Grenzzyklus. Er endet nie von selbst.
+
+           Gemessen bei stehender Kamera, Massstab 9000, ueber 200 Frames:
+           summiert 0,94 px je Kachel und Frame, dauerhaft. Gemittelt 0,025,
+           und ab Frame 49 steht die Karte still. Waehrend eines Schwenks
+           faellt der groesste Schirmsprung von 6,2 px auf 0,8 px.
+
+           Der Mittelwert zeigt in dieselbe Richtung wie die Summe, nur mit
+           einer Schrittweite, die eine Loesung anlaeuft statt sie zu
+           ueberspringen. Ueber sechs Durchgaenge kommt derselbe Abstand
+           heraus. */
+        if (treffer) {
+          cand[a][2] = ax + schubX / treffer;
+          cand[a][3] = ay + schubY / treffer;
+        }
       }
       if (!moved) break;
     }
@@ -1061,7 +1138,12 @@ export function createScene(canvas, model, hooks = {}) {
        den sie da sind. */
     const einstellung = [thumbMode, declutter, tileScale, layout, spread,
                          maskVersion, Math.round(gap)].join("|");
-    if (einstellung !== fanKey) { fanKey = einstellung; fanned.clear(); unruhe = 0; }
+    if (einstellung !== fanKey) {
+      fanKey = einstellung;
+      fanned.clear();
+      unruhe = 0;
+      verschoben = 0;
+    }
 
     /* Was mit dem Abstand geschieht -- und das ist der Unterschied, um den
        es geht.
@@ -1076,8 +1158,8 @@ export function createScene(canvas, model, hooks = {}) {
        Entzerren: es zeigt nicht weniger, es macht den Haufen auf.
 
        Der Platz dafuer kommt vom Hineinzoomen, und nur von dort. */
-    const shift = SHIFT_WORLD * cam.scale;
-    const repel = declutter > 0 && thumbMode !== "alles" && shift >= FAN_MIN_PX;
+    const grenze = gap * FAN_REACH;
+    const repel = declutter > 0 && thumbMode !== "alles";
     //  punkte  -- kommt hier gar nicht an, draw() ueberspringt uns.
     //  kegel   -- kein Abstand, nur das Budget: die Mitte verbraucht es.
     //  flaeche -- ausduennen, sobald mehr sichtbar ist als passt.
@@ -1093,7 +1175,12 @@ export function createScene(canvas, model, hooks = {}) {
        Bilder erscheinen, und nichts an ihrer Lage. Also die neun Felder ringsum
        mitpruefen -- das Raster ist nur der Index, der Abstand die Bedingung. */
     const taken = new Map();
-    const gap2 = gap * gap;
+
+    /* Der Abstand, nach dem *ausgewaehlt* wird -- beim Abstossen enger als
+       der, der am Ende stehen soll. Den Rest legt das Auffaechern zu. Ohne
+       Abstossen sind beide dasselbe, der `spaced`-Zweig merkt nichts davon. */
+    const pick = repel ? gap / FAN_DICHTE : gap;
+    const pick2 = pick * pick;
 
     // Zahl statt Zeichenkette als Rasterschluessel: je Bewerber neun
     // Nachschlagevorgaenge, bei 4.000 Bewerbern also 36.000 -- als
@@ -1101,14 +1188,14 @@ export function createScene(canvas, model, hooks = {}) {
     const key = (gx, gy) => (gx + 2048) * 4096 + (gy + 2048);
 
     function free(sx, sy) {
-      const gx = Math.floor(sx / gap), gy = Math.floor(sy / gap);
+      const gx = Math.floor(sx / pick), gy = Math.floor(sy / pick);
       for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
           const list = taken.get(key(gx + dx, gy + dy));
           if (!list) continue;
           for (let k = 0; k < list.length; k += 2) {
             const ddx = list[k] - sx, ddy = list[k + 1] - sy;
-            if (ddx * ddx + ddy * ddy < gap2) return false;
+            if (ddx * ddx + ddy * ddy < pick2) return false;
           }
         }
       }
@@ -1116,7 +1203,7 @@ export function createScene(canvas, model, hooks = {}) {
     }
 
     function claim(sx, sy) {
-      const k = key(Math.floor(sx / gap), Math.floor(sy / gap));
+      const k = key(Math.floor(sx / pick), Math.floor(sy / pick));
       const list = taken.get(k);
       if (list) list.push(sx, sy);
       else taken.set(k, [sx, sy]);
@@ -1144,14 +1231,25 @@ export function createScene(canvas, model, hooks = {}) {
     }
 
     if (repel) {
-      /* Abstossen statt Weglassen -- wie die Knoten in einem Graphen.
+      /* Erst ausduennen, dann abstossen -- beides, nicht das eine statt des
+         anderen.
 
-         "Weniger zeigen" ist keine Entzerrung, sondern eine Auswahl. Wer
-         Abstand haben will, muss die Bilder bewegen: sie schieben einander
-         weg, bis der Mindestabstand steht. Das kostet die genaue Lage, und
-         deshalb ist die Verschiebung in Weltkoordinaten begrenzt -- in der
-         Uebersicht unsichtbar klein, beim Hineinzoomen waechst sie mit dem
-         Platz, den das Zoomen schafft. Der Punkt darunter bleibt liegen. */
+         Hier stand "Abstossen statt Weglassen": alle Bewerber behalten und
+         auseinanderschieben, bis der Abstand steht. Das war der Fehler. Der
+         Abstand steht dann naemlich nie. 900 Bilder mit 69 px Abstand
+         brauchen 4,3 Mio px², das Fenster hat 1,44 Mio -- was man sieht, ist
+         die Relaxation beim vergeblichen Suchen, und sie sucht fuer immer.
+
+         Also die Auswahl machbar machen: ausduennen wie im `spaced`-Zweig,
+         aber bei `gap / FAN_DICHTE` statt bei `gap`. Was dabei ueberlebt,
+         passt garantiert. Und weil enger ausgewaehlt wurde, ueberleben mehr
+         Bilder, als bei vollem Abstand nebeneinander laegen, wenn sie sich
+         nicht bewegen duerften. Genau diese Differenz holt das Auffaechern
+         herein, indem es sie in den leeren Raum neben dem Haufen schiebt.
+
+         Das ist das Einzige, was Abstossen wirklich besser kann als
+         Ausduennen -- und jetzt kann es das: 866 statt 586 Bilder bei
+         gleichem Nachbarabstand. Der Punkt darunter bleibt liegen. */
       /* Und zwar so, dass es dabei zur Ruhe kommt.
 
          Bis hierher fing jeder Frame bei null an: `fanOut` startete an der
@@ -1173,7 +1271,13 @@ export function createScene(canvas, model, hooks = {}) {
 
          Dasselbe Mittel, das der `spaced`-Zweig mit `held` schon benutzt --
          nur dass es dort die Auswahl festhaelt und hier die Lage. */
-      const cand = near.slice(0, budget).map((t) => t.slice());
+      const cand = [];
+      for (const t of near) {
+        if (cand.length >= budget) break;
+        if (!free(t[2], t[3])) continue;
+        claim(t[2], t[3]);
+        cand.push(t.slice());
+      }
       // Die wahre Lage getrennt halten: die Begrenzung der Verschiebung
       // muss sich auf sie beziehen, nicht auf den mitgebrachten Startwert.
       const trueX = new Float32Array(cand.length);
@@ -1184,22 +1288,21 @@ export function createScene(canvas, model, hooks = {}) {
         if (d) { cand[a][2] += d[0]; cand[a][3] += d[1]; }
       }
       const tFan = performance.now();
-      fanOut(cand, gap, w, h, shift, trueX, trueY);
+      fanOut(cand, gap, w, h, grenze, trueX, trueY);
       fanMs = performance.now() - tFan;
 
       /* Gedaempft uebernehmen, nicht roh.
 
-         Der Startwert allein genuegt nicht. Ist mehr zu zeigen, als der
-         Abstand hergibt, findet die Relaxation gar keine Ruhelage: sie
-         schiebt auseinander, die Begrenzung auf `shift` zieht zurueck, und
-         im naechsten Frame beginnt dasselbe von der zurueckgezogenen Lage
-         aus. Gemessen waren das 5,5 px je Kachel und Frame bei voellig
-         stehender Kamera -- sichtbar als Zittern.
+         Nicht mehr gegen ein Zittern -- das hatte zwei andere Ursachen und
+         ist dort behoben, in der Auswahl und im Mittelwert der Schuebe. Was
+         bleibt, ist der Zweck, fuer den die Daempfung ohnehin taugt: die
+         Relaxation ist keine stetige Funktion der Kameralage, ein Schwenk um
+         ein Pixel kann eine Kachel um mehrere springen lassen. Ein Drittel je
+         Frame macht daraus eine Bewegung.
 
-         Also nur einen Teil des Weges gehen. Das nimmt der Schaukel die
-         Amplitude und macht aus dem Nachziehen beim Schwenken zugleich eine
-         weiche Bewegung statt eines Nachspringens. */
-      let unruheSumme = 0, unruheZahl = 0;
+         Gemessen ueber einen Schwenk von 240 px: groesster Schirmsprung
+         0,8 px, Restzappeln nach dem Anhalten 0,11 px. */
+      let unruheSumme = 0, unruheZahl = 0, wegSumme = 0, bewegt = 0;
       const naechste = new Map();
       for (let a = 0; a < cand.length; a++) {
         const zielX = cand[a][2] - trueX[a], zielY = cand[a][3] - trueY[a];
@@ -1208,20 +1311,34 @@ export function createScene(canvas, model, hooks = {}) {
         if (vor) {
           dx = vor[0] + (zielX - vor[0]) * FAN_EASE;
           dy = vor[1] + (zielY - vor[1]) * FAN_EASE;
-          unruheSumme += Math.hypot(dx - vor[0], dy - vor[1]);
+          const weg = Math.hypot(dx - vor[0], dy - vor[1]);
+          // Unter der Schwelle genau liegen bleiben, nicht fast. `vor`
+          // uebernehmen und nicht etwa runden: nur der unveraenderte Wert
+          // macht den naechsten Frame identisch und damit das Stillstehen
+          // endgueltig.
+          if (weg < FAN_RUHE) { dx = vor[0]; dy = vor[1]; }
+          else bewegt++;
+          unruheSumme += weg < FAN_RUHE ? 0 : weg;
           unruheZahl++;
           // Was uebernommen wurde, muss auch gezeichnet werden.
           cand[a][2] = trueX[a] + dx;
           cand[a][3] = trueY[a] + dy;
         }
         naechste.set(cand[a][1], [dx, dy]);
+        wegSumme += Math.hypot(dx, dy);
       }
       fanned = naechste;
       unruhe = unruheZahl ? unruheSumme / unruheZahl : 0;
-      // Solange sich noch etwas ruehrt, den naechsten Frame anfordern --
-      // sonst friert die Bewegung auf halbem Weg ein, wenn nichts anderes
-      // mehr zeichnen laesst.
-      if (unruhe > FAN_RUHE) schedule();
+      verschoben = cand.length ? wegSumme / cand.length : 0;
+      /* Solange sich noch etwas ruehrt, den naechsten Frame anfordern --
+         sonst friert die Bewegung auf halbem Weg ein, wenn nichts anderes
+         mehr zeichnen laesst.
+
+         Gefragt wird nach der Anzahl, nicht nach dem Mittelwert. Der
+         Mittelwert faellt schon unter die Schwelle, waehrend einzelne
+         Kacheln noch weit wandern -- die blieben dann auf halbem Weg
+         stehen, bis zufaellig etwas anderes einen Frame ausloest. */
+      if (bewegt) schedule();
 
       for (const [, i, sx, sy] of cand) planTile(i, sx, sy);
     } else if (!spaced) {
@@ -1263,7 +1380,16 @@ export function createScene(canvas, model, hooks = {}) {
     stats.raster = spaced || repel;
     stats.gap = spaced || repel ? Math.round(gap) : 0;
     stats.gapReason = repel ? "abstoßend" : (spaced ? "Fläche" : "");
-    stats.shift = repel ? Math.round(shift) : 0;
+    /* Was tatsaechlich verschoben wurde, nicht die Obergrenze.
+
+       Frueher stand hier `shift`, und solange das eine Weltdistanz war,
+       war es auch eine Aussage. Seit die Grenze ein festes Vielfaches von
+       `gap` ist, steht sie schon zwei Angaben weiter links -- die Zahl
+       waere nur noch Arithmetik. Interessant ist, wieviel die Karte sich
+       bei diesem Spielraum wirklich herausnimmt: gemessen 13 bis 30 px,
+       also weit unter dem Erlaubten. Wer wissen will, ob die Karte ihm
+       etwas vormacht, liest genau das. */
+    stats.verschoben = repel ? Math.round(verschoben) : 0;
     stats.fanMs = Math.round(fanMs * 10) / 10;
     stats.unruhe = repel ? Math.round(unruhe * 10) / 10 : 0;
   }

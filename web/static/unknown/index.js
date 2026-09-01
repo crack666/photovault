@@ -7,13 +7,13 @@
    Der Block braucht nichts aus app.js, nur Bausteine: die Galerie fuer die
    Fotos einer Gruppe, die Personenliste, die Vorschlagsliste. */
 
-import { api, cropUrl } from "../core/api.js?v=55";
-import { $, escapeHtml } from "../core/dom.js?v=55";
-import { faceStatsLine } from "../core/format.js?v=55";
-import { askConfirm, askText, notify } from "../core/modal.js?v=55";
-import { refreshPersonNames } from "../core/names.js?v=55";
-import { forgetPeopleList } from "../core/people.js?v=55";
-import { fillGallery } from "../gallery/index.js?v=55";
+import { api, cropUrl } from "../core/api.js?v=58";
+import { $, escapeHtml } from "../core/dom.js?v=58";
+import { faceStatsLine } from "../core/format.js?v=58";
+import { askConfirm, askText, notify } from "../core/modal.js?v=58";
+import { refreshPersonNames } from "../core/names.js?v=58";
+import { forgetPeopleList } from "../core/people.js?v=58";
+import { fillGallery } from "../gallery/index.js?v=58";
 
 /* ---- Unbekannte Gesichter: gezielt aussortieren ----
    Je mehr Personen benannt sind, desto mehr Beifang bleibt übrig. Die

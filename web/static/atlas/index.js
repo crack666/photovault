@@ -6,18 +6,18 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=55";
-import { api, thumbUrl } from "../core/api.js?v=55";
-import { askText, openModal } from "../core/modal.js?v=55";
-import { createPathPick } from "../core/pathpick.js?v=55";
-import { feature, gate } from "../core/capabilities.js?v=55";
-import { showLightbox } from "../lightbox/index.js?v=55";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=58";
+import { api, thumbUrl } from "../core/api.js?v=58";
+import { askText, openModal } from "../core/modal.js?v=58";
+import { createPathPick } from "../core/pathpick.js?v=58";
+import { feature, gate } from "../core/capabilities.js?v=58";
+import { showLightbox } from "../lightbox/index.js?v=58";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=55";
-import { createScene } from "./scene.js?v=55";
+} from "./model.js?v=58";
+import { createScene } from "./scene.js?v=58";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -681,7 +681,7 @@ function paintStats() {
       + ` · Kachel ${num(s.tile)} px (${s.tileAuto}× Zoom)`
       + ` · ${budget}${s.gap ? ` · ${s.gap} px Abstand${
             s.gapReason ? ` (${escapeHtml(s.gapReason)})` : ""}` : ""}`
-      + (s.shift ? ` · bis ${s.shift} px verschoben` : "");
+      + (s.verschoben ? ` · im Mittel ${s.verschoben} px verschoben` : "");
   const teile = [];
   if (s.imgMs) teile.push(`${s.imgMs} ms zeichnen`);
   if (s.fanMs) teile.push(`${s.fanMs} ms schieben`);
