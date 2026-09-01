@@ -12,28 +12,51 @@ angefasst gehoert und warum genau in dieser.
 
 **Fokus der Session: Benutzbarkeit und Gestaltung. Keine neuen Funktionen.**
 
-## Stand 2026-09-01
+## Stand 2026-09-01 — abgearbeitet
 
 | Stufe | Zustand |
 |---|---|
 | 0 — Vorarbeiten | **erledigt** (`842c21a`) |
 | 1 — Atlas, Zeit-Anordnung | **erledigt** (`a47d87b`). 1.3 entfiel: wenn x festgehalten wird, stimmen die Bänder von selbst |
 | 2 — Atlas, Flackern | **gebaut** (`f87fb73`), Nachmessung offen — siehe unten |
-| 3 — `app.js` schneiden | **3.1–3.3 erledigt** (`8468ff7`, `541fb64`, `df35faf`). app.js 2938 → 2491 Zeilen. Offen: 3.4 Galerie, 3.5 Serien, 3.6 Suche/Personen/Unbekannte |
-| 4 — Datenschicht | 4.1–4.6 **erledigt** (`aa846ec`, `45608fb`, `01c26d8`); 4.7 offen |
-| 5 — Gestaltung | **angefangen** (`863c863`): Tokens, Hauptknopf, Fingergrößen. Offen: Knopf-Bibliothek, Skalen, `jobs.html` |
+| 3 — `app.js` schneiden | **erledigt**. app.js 2938 → 242 Zeilen |
+| 4 — Datenschicht | **erledigt** (4.1–4.7) |
+| 5 — Gestaltung | **erledigt**: Tokens, Knopf-Bibliothek, Fingergrößen, Skalen, `jobs.css` |
 
-**Entwurfsentscheidung getroffen:** In der Zeit-Anordnung gehört x dem Datum.
-Ausgewichen wird nur senkrecht, und nur zwischen Kontinenten, die sich waagerecht
-überschneiden. Die Karte wird dadurch nicht höher — die Rückstauchung rechnet in dieser
-Anordnung nur über y, die Kontinente werden also senkrecht dünner.
+Dazu, nicht geplant: **drei Sicherheitsfehler** beim Schreiben der fehlenden Tests
+gefunden und behoben (`cd66b7f`, `b51afa5`) — der Papierkorb liess sich mit expliziten
+Kennungen vollständig überspringen, der Löschpfad gab den Pfad aus dem Payload ungeprüft
+an `unlink`, und die Albumliste hielt die Freigabe selbst für ein Album, dessen
+Umbenennen die ganze Sammlung verschoben hätte.
 
-**Was in Stufe 2 noch fehlt:** die Nachmessung. Die neue Kennzahl *Unruhe* steht in der
-Aufwand-Anzeige (mittlere Änderung der Verschiebung je Kachel und Frame). Vor der Dämpfung
-stand sie bei **5,5 px trotz stehender Kamera**. Der Wert danach ist nicht abgenommen: die
-Vorschau war ausgeblendet, und ohne sichtbares Fenster feuert `requestAnimationFrame`
-nicht, der Canvas zeichnet also gar nicht. Prüfen: Atlas öffnen, *Aufwand* und *Bilder
-abstoßen* einschalten, ziehen. Bei stehender Kamera gehört die Zahl nahe null.
+Tests: 610 → 750.
+
+### Der Schnitt, wie er ausgegangen ist
+
+```
+core/     api, dom, nav, modal, capabilities, pathpick,
+          format, names, pager, people
+faces/    strip
+lightbox/ index
+gallery/  index
+events/   index      unknown/ index      search/ index      people/ index
+atlas/    index, model, scene
+trash/    index
+app.js    Router + Warteschlange, 242 Zeilen
+```
+
+Kein Zyklus, keine Injektion. Jede Kante zeigt von einem Feature auf einen Baustein, nie
+von einem Feature auf ein anderes. Die zwei `deps`-Injektionen, die es vorher gab, sind
+mit der Grossansicht ersatzlos entfallen.
+
+**Was noch offen ist**, und zwar bewusst:
+
+- **Die Nachmessung der Unruhe** (Stufe 2, unten beschrieben).
+- **Hell-Modus** — es gibt keinen, in keiner Form. Produktentscheidung, kein Befund; seit
+  der Tokenschicht überhaupt erst diskutierbar.
+- **Tastaturbedienung** — kein einziges `tabindex` im Baum. Eigenständiges, grosses Paket.
+- **Request-Level-Tests** — `TestClient` kommt im Repo nicht vor. Die vier neuen
+  Testdateien decken die Routenlogik mit Doubles ab, nicht die App als Ganzes.
 
 ### Zum Schnitt: die Reihenfolge ist enger als hier notiert
 
