@@ -12,6 +12,7 @@
 import { $, escapeHtml, num } from "../core/dom.js?v=55";
 import { api, thumbUrl } from "../core/api.js?v=55";
 import { openModal } from "../core/modal.js?v=55";
+import { showLightbox } from "../lightbox/index.js?v=55";
 
 const PAGE = 60;
 
@@ -24,11 +25,9 @@ let limit = PAGE;
 //: unten angekommen.
 let rendered = 0;
 let loading = false;
-let showLightbox = () => {};
 let booted = false;
 
-export async function initTrash(deps = {}) {
-  showLightbox = deps.showLightbox || showLightbox;
+export async function initTrash() {
   booted = true;
   await refresh();
 }

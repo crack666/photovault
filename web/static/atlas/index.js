@@ -11,6 +11,7 @@ import { api, thumbUrl } from "../core/api.js?v=55";
 import { askText, openModal } from "../core/modal.js?v=55";
 import { createPathPick } from "../core/pathpick.js?v=55";
 import { feature, gate } from "../core/capabilities.js?v=55";
+import { showLightbox } from "../lightbox/index.js?v=55";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
@@ -86,7 +87,6 @@ let filters = { fold: false, open: false, camera: false, spacesOff: new Set() };
 let colorMode = "kontinent";
 let thumbMode = "flaeche";
 let statsOn = false;
-let showLightbox = () => {};
 let booted = false;
 
 /* Weggeräumtes. Die Karte ist ein Standbild: verschiebt man Fotos, stünden sie
@@ -266,9 +266,8 @@ function mask() {
   return m;
 }
 
-export async function initAtlas(deps = {}) {
+export async function initAtlas() {
   if (booted) { scene?.resize(); return; }
-  showLightbox = deps.showLightbox || showLightbox;
 
   const status = $("atlas-status");
   status.textContent = "Karte wird geladen …";
