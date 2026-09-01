@@ -1800,6 +1800,8 @@ async function unassignPerson(p) {
 
 $("search-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  // Eine neue Frage faengt auf Seite eins an.
+  qbOffset = 0;
   await runSearch();
 });
 
@@ -1847,6 +1849,12 @@ $("qb-to-atlas").addEventListener("click", async () => {
 });
 $("q-text")?.addEventListener("input", updateExpression);
 
+/* Wie viele Treffer eine Seite fasst. Der Wert stand fruher als nackte 48
+   im Rumpf der Anfrage, und daneben pruefte die Meldung auf dieselbe 48, um
+   auf "erste Seite" zu schliessen -- zwei Stellen, eine Zahl. */
+const QB_PAGE = 48;
+let qbOffset = 0;
+
 async function runSearch() {
   const box = $("search-results");
   const meta = $("search-meta");
@@ -1860,7 +1868,8 @@ async function runSearch() {
         query: qbTree,
         spaces: [...scopePick],
         caption_query: $("q-text").value.trim() || null,
-        limit: 48,
+        limit: QB_PAGE,
+        offset: qbOffset,
       }),
     });
   } catch (err) {
@@ -1877,13 +1886,20 @@ async function runSearch() {
     (free ? `, sortiert nach „${free}“` : "") +
     ` — ${data.total} Treffer` +
     (data.conditions ? ` · ${data.conditions} Bedingung${data.conditions === 1 ? "" : "en"}` : "");
+  const gezeigt = data.returned ?? (data.results || []).length;
   if (meta) {
+    // Die Zahl ist jetzt die ganze Menge, nicht die Seitenlaenge -- also
+    // steht daneben, welcher Ausschnitt gerade zu sehen ist.
     meta.textContent = data.total
-      ? `${data.total} Treffer${data.total === 48 ? " (erste Seite)" : ""}`
+      ? (gezeigt < data.total
+          ? `${data.total} Treffer · ${qbOffset + 1}–${qbOffset + gezeigt} zu sehen`
+          : `${data.total} Treffer`)
       : "Keine Treffer.";
   }
   $("qb-to-atlas").classList.toggle("hidden", !data.total);
   renderResults(data.results || []);
+  renderPager(["qb-pager", "qb-pager-2"], qbOffset, gezeigt, data.total,
+              (next) => { qbOffset = next; runSearch(); }, QB_PAGE);
 }
 
 function renderResults(results, unknown = []) {
@@ -1977,7 +1993,7 @@ function vorschlaegeLabel(n) {
   return k === 1 ? "1 Vorschlag" : `${k} Vorschläge`;
 }
 
-function renderPager(ids, offset, returned, total, onPage) {
+function renderPager(ids, offset, returned, total, onPage, schritt = EV_PAGE) {
   const start = total === 0 ? 0 : offset + 1;
   const end = Math.min(offset + returned, total);
   const fits = total <= 0 || (offset <= 0 && end >= total);
@@ -1995,11 +2011,11 @@ function renderPager(ids, offset, returned, total, onPage) {
     const next = el.querySelector(".pager-next");
     if (prev) prev.addEventListener("click", () => {
       if (offset <= 0) return;
-      onPage(Math.max(0, offset - EV_PAGE));
+      onPage(Math.max(0, offset - schritt));
     });
     if (next) next.addEventListener("click", () => {
       if (end >= total) return;
-      onPage(offset + (returned || EV_PAGE));
+      onPage(offset + (returned || schritt));
     });
   });
 }

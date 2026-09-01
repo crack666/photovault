@@ -128,7 +128,15 @@ class QuerySearchRequest(BaseModel):
 
 
 class QuerySearchResponse(BaseModel):
+    #: Wie viele Fotos die Bedingung *insgesamt* treffen -- nicht wie viele
+    #: auf dieser Seite stehen. Vorher stand hier die Seitenlänge, und die
+    #: Oberfläche schrieb bei 5.000 passenden Fotos „48 Treffer (erste
+    #: Seite)" ohne einen Weg zur zweiten.
     total: int
+    #: Wie viele auf dieser Seite stehen. Zusammen mit `offset` alles, was
+    #: ein Blättern braucht.
+    returned: int = 0
+    offset: int = 0
     results: list[dict]
     #: Der Ausdruck in Worten -- kommt aus derselben Verschachtelung wie der Filter.
     expression: str
@@ -189,11 +197,22 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
                 if offset is None or len(points) >= IDS_CAP:
                     break
         else:
-            points, _ = client.scroll(
-                collection_name=COLLECTION, scroll_filter=filter_,
+            # Blättern braucht eine Zahl, und `scroll` nimmt keine.
+            #
+            # Der `offset` von `scroll` ist ein Punkt-Cursor: die Kennung,
+            # hinter der es weitergeht. Eine 48 dort sind keine 48 Punkte,
+            # sondern eine Kennung, die es nicht gibt -- Qdrant fängt dann
+            # wieder vorn an. Gemessen: Seite zwei lieferte dieselben 48
+            # Fotos wie Seite eins. Aufgefallen ist das nie, weil die
+            # Oberfläche nie einen Offset geschickt hat.
+            #
+            # `query_points` ohne Suchvektor listet dieselbe Menge in
+            # Kennungsreihenfolge und versteht eine Zahl.
+            points = client.query_points(
+                collection_name=COLLECTION, query_filter=filter_,
                 limit=req.limit, offset=req.offset,
                 with_payload=True, with_vectors=False,
-            )
+            ).points
     except HTTPException:
         raise
     except Exception as e:
@@ -203,6 +222,7 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
     if req.ids_only:
         return QuerySearchResponse(
             total=len(points),
+            returned=len(points),
             results=[],
             ids=[str(p.id) for p in points],
             ranked=bool(req.caption_query),
@@ -213,12 +233,36 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
 
     results = [_point_to_result(p) for p in points]
     return QuerySearchResponse(
-        total=len(results),
+        total=_total_for(client, filter_, req, len(results)),
+        returned=len(results),
+        offset=req.offset,
         results=results,
         expression=expression or "alle Fotos",
         conditions=count_conditions(req.query),
         scope=scope_text(req.spaces),
     )
+
+
+def _total_for(client, filter_, req, seite: int) -> int:
+    """Wie viele Fotos die Bedingung trifft -- unabhängig von der Seitengröße.
+
+    Qdrant zählt das selbst, exakt und ohne die Punkte zu holen. Die Rangfolge
+    nach Bildbeschreibung ändert daran nichts: sie sortiert dieselbe Menge um.
+    Nur eine Mindestähnlichkeit würde sie beschneiden, und dann ist die Zahl
+    eine Obergrenze -- die Oberfläche setzt keine.
+
+    Scheitert das Zählen, ist die Seitenlänge die ehrlichere Antwort als eine
+    Ausnahme: die Treffer stehen ja schon da.
+    """
+    if req.caption_min_score is not None:
+        return seite
+    try:
+        return client.count(
+            collection_name=COLLECTION, count_filter=filter_, exact=True
+        ).count
+    except Exception as e:  # pragma: no cover -- Zaehlen ist Beiwerk
+        logger.warning("Trefferzahl konnte nicht ermittelt werden: %s", e)
+        return seite
 
 
 @router.post("")
