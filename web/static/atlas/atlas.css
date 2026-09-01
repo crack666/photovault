@@ -81,7 +81,7 @@
 }
 .atlas-seg .chip + .chip { border-left: 1px solid #333c4d; }
 .atlas-seg .chip:hover { background: #232a36; color: var(--text); }
-.atlas-seg .chip.on { background: var(--accent); color: #0b1020; font-weight: 600; }
+.atlas-seg .chip.on { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 
 /* „An oder aus" — einzelne Schalter, aus = hohl, an = gefüllt. */
 .atlas-toggles { gap: 5px; }
@@ -322,7 +322,7 @@
 .atlas-controls .chip:hover { color: var(--text); }
 .atlas-actions .primary-action {
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border-color: transparent;
   font-weight: 600;
 }

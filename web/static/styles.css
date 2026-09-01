@@ -12,6 +12,9 @@
      fuer --line stand in styles.css anders als in jobs.html. Damit gab es
      denselben Knopf mit zwei Rahmenfarben, je nach Elternelement. */
   --line: #2a2f3d;
+  /* Schrift auf der Akzentfarbe. Stand achtmal hart in vier Dateien — eine
+     Änderung am Hauptknopf traf damit immer nur eine davon. */
+  --on-accent: #0b1020;
   --fg: #f2f4f8;
   --bg2: #171b22;
 
@@ -63,7 +66,7 @@ nav { display: flex; gap: 8px; }
   background: transparent; color: var(--text); border: 0; border-radius: 999px;
   padding: 8px 14px; cursor: pointer;
 }
-.tab.on, .primary { background: var(--accent); color: #0b1020; font-weight: 600; }
+.tab.on, .primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .ghost { color: var(--muted); }
 .view { max-width: 720px; margin: 32px auto; padding: 0 16px 64px; }
 .hidden { display: none !important; }
@@ -87,13 +90,21 @@ nav { display: flex; gap: 8px; }
 .thumbs .thumb.on img { border-color: var(--accent); }
 /* Ausgeschlossen: bleibt sichtbar, damit man es zurücknehmen kann. */
 .thumbs .thumb.out img { opacity: .3; filter: grayscale(1); border-color: #6b3a38; }
+/* Sichtbar, nicht nur beim Ueberfahren.
+
+   ui.css haelt fest, dass die Oberflaeche ueber Tailscale auch vom Handy
+   bedient wird -- und dort gibt es kein Hover. Ein 18 px grosser Knopf mit
+   opacity 0 war damit nicht erreichbar, sondern nur nicht vorhanden.
+   Zurueckgenommen statt versteckt: da, aber nicht laut. */
 .thumbs .drop {
-  position: absolute; top: -5px; right: -5px;
-  width: 18px; height: 18px; padding: 0; border-radius: 50%;
-  background: #2a3140; color: var(--muted); border: 1px solid #3a4254;
-  font-size: .6rem; line-height: 1; opacity: 0; transition: opacity .12s;
+  position: absolute; top: -6px; right: -6px;
+  width: 24px; height: 24px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #2a3140; color: var(--muted); border: 1px solid var(--line);
+  font-size: .65rem; line-height: 1; opacity: .55; transition: opacity .12s;
 }
-.thumbs .thumb:hover .drop, .thumbs .thumb.out .drop { opacity: 1; }
+.thumbs .thumb:hover .drop, .thumbs .thumb.out .drop,
+.thumbs .drop:focus-visible { opacity: 1; }
 .thumbs .drop:hover { background: #6b3a38; color: #fff; }
 .thumbs .thumb.out .drop { background: #6b3a38; color: #fff; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 16px 0; min-height: 36px; }
@@ -156,9 +167,13 @@ nav { display: flex; gap: 8px; }
   flex: 1; min-width: 180px; background: #12151c; color: var(--text);
   border: 1px solid #3a4254; border-radius: 10px; padding: 10px 12px;
 }
+/* Fingergerecht, wie ui.css es fuer die ganze Oberflaeche festhaelt: sie
+   wird ueber Tailscale auch vom Handy bedient. Die Klasse hatte keine
+   Mindesthoehe und kam auf rund 24 px -- allein in index.html 26-mal. */
 .mini {
-  font-size: .7rem; padding: 4px 9px; border-radius: 999px;
-  background: var(--chip); color: var(--muted); border: 1px solid #3a4254;
+  font-size: .72rem; padding: 6px 11px; border-radius: 999px;
+  min-height: 32px; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--chip); color: var(--muted); border: 1px solid var(--line);
 }
 .mini:hover { color: var(--text); }
 .mini.undo:hover { color: #e88c89; border-color: #6b3a38; }
@@ -459,7 +474,7 @@ nav { display: flex; gap: 8px; }
   padding: 2px 10px; border-radius: 999px;
   background: transparent; color: var(--muted); border: 1px solid #3a4254;
 }
-.joiner.on { background: var(--accent); color: #0b1020; border-color: var(--accent); }
+.joiner.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .qb-add, .qb-subadd { display: flex; gap: 7px; }
 .qb-subadd { margin-top: 4px; }
 .qb-run { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -491,7 +506,7 @@ nav { display: flex; gap: 8px; }
 .shots img.picked {
   outline: 3px solid var(--accent); transform: scale(.94);
 }
-#btn-select-mode.on { background: var(--accent); color: #0b1020; font-weight: 600; }
+#btn-select-mode.on { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 
 
 /* --- Ereignisse im Zeitstrahl -------------------------------------------
@@ -501,14 +516,14 @@ nav { display: flex; gap: 8px; }
 .event .ev-when {
   margin: 2px 0 0;
   font-size: 12px;
-  color: var(--muted, #8b93a7);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
 .event .ev-people {
   margin: 2px 0 0;
   font-size: 12px;
-  color: var(--accent, #7aa2f7);
+  color: var(--accent);
 }
 
 /* Empfangenes und Verschicktes ist Beifang neben den eigenen Aufnahmen --
@@ -527,7 +542,7 @@ nav { display: flex; gap: 8px; }
   border-radius: 2px;
 }
 .tl i b { display: block; width: 100%; min-height: 1px; }
-.tl i b.ch-camera        { background: var(--accent, #7aa2f7); }
+.tl i b.ch-camera        { background: var(--accent); }
 .tl i b.ch-whatsapp      { background: #4c7a5a; }
 .tl i b.ch-whatsapp-sent { background: #3d5f4a; }
 .tl i b.ch-screenshot,
@@ -546,9 +561,9 @@ nav { display: flex; gap: 8px; }
 .chanbar .chan {
   padding: 4px 10px;
   border-radius: 999px;
-  border: 1px solid var(--line, #2a2f3d);
+  border: 1px solid var(--line);
   background: transparent;
-  color: var(--muted, #8b93a7);
+  color: var(--muted);
   font-size: 13px;
   cursor: pointer;
 }
@@ -558,11 +573,11 @@ nav { display: flex; gap: 8px; }
   margin-left: 4px;
   font-variant-numeric: tabular-nums;
 }
-.chanbar .chan:hover { border-color: var(--accent, #7aa2f7); }
+.chanbar .chan:hover { border-color: var(--accent); }
 .chanbar .chan.on {
-  border-color: var(--accent, #7aa2f7);
-  color: var(--fg, #e6e8ef);
-  background: color-mix(in srgb, var(--accent, #7aa2f7) 14%, transparent);
+  border-color: var(--accent);
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 /* Der Monat gliedert, drangt sich aber nicht vor das Jahr. */
@@ -575,13 +590,13 @@ nav { display: flex; gap: 8px; }
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  color: var(--muted, #8b93a7);
+  color: var(--muted);
 }
 .month-head::after {
   content: "";
   flex: 1;
   height: 1px;
-  background: var(--line, #2a2f3d);
+  background: var(--line);
 }
 .month-head em {
   font-style: normal;
@@ -594,7 +609,7 @@ nav { display: flex; gap: 8px; }
 /* --- Unbenannte Serien --------------------------------------------------- */
 
 .serie {
-  border: 1px solid var(--line, #2a2f3d);
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px;
   margin-bottom: 12px;
@@ -609,14 +624,14 @@ nav { display: flex; gap: 8px; }
 }
 .serie-head strong { display: block; font-size: 15px; }
 .serie-head .muted { display: block; font-size: 12px; font-variant-numeric: tabular-nums; }
-.serie-head .ev-people { display: block; font-size: 12px; color: var(--accent, #7aa2f7); }
+.serie-head .ev-people { display: block; font-size: 12px; color: var(--accent); }
 .serie-form { display: flex; gap: 6px; }
 .serie-form input {
   min-width: 220px;
   padding: 5px 9px;
   border-radius: 6px;
-  border: 1px solid var(--line, #2a2f3d);
-  background: var(--bg2, #12151c);
+  border: 1px solid var(--line);
+  background: var(--bg2);
   color: inherit;
 }
 .serie .shots img { width: 92px; height: 92px; object-fit: cover; border-radius: 6px; }
@@ -631,7 +646,7 @@ nav { display: flex; gap: 8px; }
 }
 .sg-fromto {
   margin-top: 4px; padding: 8px 10px; border-radius: 8px;
-  border: 1px solid var(--line, #2a2f3d); background: #12151c;
+  border: 1px solid var(--line); background: #12151c;
 }
 .sg-moves { list-style: none; margin: 8px 0 0; padding: 0; }
 .sg-moves li {
@@ -642,7 +657,7 @@ nav { display: flex; gap: 8px; }
   cursor: pointer;
 }
 .sg-moves input[type="checkbox"] {
-  margin: 0; flex: none; width: 16px; height: 16px; accent-color: var(--accent, #7aa2f7);
+  margin: 0; flex: none; width: 16px; height: 16px; accent-color: var(--accent);
 }
 .sg-move.off code { opacity: .45; text-decoration: line-through; }
 .sg-arrow { color: var(--muted); padding: 0 8px; }
@@ -658,17 +673,19 @@ nav { display: flex; gap: 8px; }
 }
 .shot-strip .shot { position: relative; margin: 0; flex: none; }
 .shot-strip .shot.out img { opacity: .3; filter: grayscale(1); }
+/* Wie oben: am Handy gibt es kein Hover. */
 .shot-strip .shot .drop {
-  position: absolute; top: -5px; right: -5px;
-  width: 18px; height: 18px; padding: 0; border-radius: 50%;
-  background: #2a3140; color: var(--muted); border: 1px solid #3a4254;
+  position: absolute; top: -6px; right: -6px;
+  width: 24px; height: 24px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #2a3140; color: var(--muted); border: 1px solid var(--line);
   font-size: .6rem; line-height: 1; opacity: 0;
 }
 .shot-strip .shot:hover .drop, .shot-strip .shot.out .drop { opacity: 1; }
 .shot-strip .shot .drop:hover, .shot-strip .shot.out .drop { background: #6b3a38; color: #fff; }
 .shot-strip .strip-nav {
   width: 28px; height: 92px; padding: 0; flex: none;
-  border-radius: 8px; border: 1px solid var(--line, #2a2f3d);
+  border-radius: 8px; border: 1px solid var(--line);
   background: var(--card); font-size: 1.15rem; color: var(--text);
 }
 .shot-strip .strip-nav:disabled { opacity: .25; cursor: default; }
@@ -684,7 +701,7 @@ nav { display: flex; gap: 8px; }
 .pager .muted { font-variant-numeric: tabular-nums; }
 .pager .mini {
   min-width: 2.2rem; padding: 4px 12px;
-  border: 1px solid var(--line, #2a2f3d); border-radius: 8px;
+  border: 1px solid var(--line); border-radius: 8px;
   background: var(--card); color: var(--text);
 }
 .pager .mini:disabled { opacity: .25; cursor: default; }
@@ -693,21 +710,21 @@ nav { display: flex; gap: 8px; }
   margin: 16px auto 8px; padding: 6px 14px; width: max-content;
   max-width: calc(100% - 16px);
   background: color-mix(in srgb, var(--bg) 88%, var(--card));
-  border: 1px solid var(--line, #2a2f3d); border-radius: 999px;
+  border: 1px solid var(--line); border-radius: 999px;
 }
 
 
 /* --- Kandidaten bereits benannter Personen ------------------------------- */
 
 .cands {
-  border: 1px solid var(--line, #2a2f3d);
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 14px;
 }
 .cands > summary { cursor: pointer; font-weight: 600; }
-.cands > summary span { font-weight: 400; color: var(--muted, #8b93a7); }
-.cand { border-top: 1px solid var(--line, #2a2f3d); padding: 10px 0; }
+.cands > summary span { font-weight: 400; color: var(--muted); }
+.cand { border-top: 1px solid var(--line); padding: 10px 0; }
 .cand-head {
   display: flex;
   align-items: baseline;
@@ -720,9 +737,9 @@ nav { display: flex; gap: 8px; }
   margin-left: auto;
   padding: 4px 10px;
   border-radius: 6px;
-  border: 1px solid var(--accent, #7aa2f7);
+  border: 1px solid var(--accent);
   background: transparent;
-  color: var(--accent, #7aa2f7);
+  color: var(--accent);
   cursor: pointer;
 }
 .cand-head button:disabled { opacity: .5; cursor: default; }

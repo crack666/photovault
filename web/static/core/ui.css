@@ -93,7 +93,7 @@ a.tab:hover { background: #2a3140; }
 .pv-modal footer button.primary {
   background: var(--accent);
   border-color: transparent;
-  color: #0b1020;
+  color: var(--on-accent);
   font-weight: 600;
 }
 .pv-modal footer button.primary:hover { background: #a3c5ff; }
@@ -211,7 +211,7 @@ a.tab:hover { background: #2a3140; }
   min-width: 44px;
   border-radius: 10px;
   background: var(--accent);
-  color: #0b1020;
+  color: var(--on-accent);
   border: 0;
   font-size: 1rem;
   font-weight: 700;
