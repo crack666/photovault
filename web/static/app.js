@@ -3,6 +3,9 @@ import { api, cropUrl } from "./core/api.js?v=55";
 import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=55";
 import { feature, gate } from "./core/capabilities.js?v=55";
 import { refreshEventNames, refreshPersonNames } from "./core/names.js?v=55";
+import {
+  forgetPeopleList, loadPeopleList, peopleList, setPeopleList,
+} from "./core/people.js?v=55";
 import { bindLightbox, showLightbox } from "./lightbox/index.js?v=55";
 import { fillGallery } from "./gallery/index.js?v=55";
 import { bindEvents, loadEventTab } from "./events/index.js?v=55";
@@ -202,7 +205,7 @@ async function assignUnknown(name) {
     body: JSON.stringify({ name, face_ids: ids }),
   });
   ukSel.clear();
-  peopleCache = [];
+  forgetPeopleList();
   refreshPersonNames();
   showUkPane("uk-overview");
   loadUnknown(true);
@@ -311,7 +314,6 @@ const SCOPE_KEY = "pv-search-spaces";
 let spacesCache = [];
 let scopePick = new Set();
 
-let peopleCache = [];
 let peopleFilter = "";
 let peopleLimit = 16;
 let qbTree = { op: "and", children: [] };
@@ -321,10 +323,7 @@ async function loadPersonPicker() {
   // 503. Wer kein Ollama hat, tippt sonst einmal ins Leere und weiss nicht,
   // warum -- obwohl der Rest der Suche vollstaendig funktioniert.
   gate("freetext", $("q-text"), $("q-text-gate"));
-  if (!peopleCache.length) {
-    try { peopleCache = await api("/api/persons"); } catch { peopleCache = []; }
-  }
-  peopleCache.sort((a, b) => (b.face_count || 0) - (a.face_count || 0));
+  await loadPeopleList();
   await loadScope();
   renderBuilder();
   renderPeopleChips();
@@ -450,11 +449,11 @@ function renderCond(cond, path) {
     const pick = document.createElement("select");
     pick.className = "person-select";
     pick.innerHTML = `<option value="">— Person wählen —</option>` +
-      peopleCache.map((p) =>
+      peopleList().map((p) =>
         `<option value="${escapeHtml(p.id)}" ${p.id === cond.value ? "selected" : ""}>${escapeHtml(p.name)} (${p.face_count})</option>`).join("");
     pick.addEventListener("change", () => {
       cond.value = pick.value;
-      cond.label = (peopleCache.find((p) => p.id === pick.value) || {}).name || pick.value;
+      cond.label = (peopleList().find((p) => p.id === pick.value) || {}).name || pick.value;
       updateExpression();
       showFaceFor(row, cond.value);
     });
@@ -482,7 +481,7 @@ function renderCond(cond, path) {
 /* Das Gesicht neben der Auswahl: zeigt sofort, ob die richtige Person gemeint ist. */
 function showFaceFor(row, personId) {
   row.querySelector(".qb-face")?.remove();
-  const p = peopleCache.find((x) => x.id === personId);
+  const p = peopleList().find((x) => x.id === personId);
   if (!p) return;
   const img = document.createElement("img");
   img.className = "qb-face";
@@ -517,7 +516,7 @@ function setPersonInQuery(person, on) {
 function renderPeopleChips() {
   const host = $("search-people");
   if (!host) return;
-  if (!peopleCache.length) {
+  if (!peopleList().length) {
     host.innerHTML = "<p class='muted hint'>Noch niemand benannt — zuerst unter „Wer ist das?“.</p>";
     return;
   }
@@ -529,16 +528,16 @@ function renderPeopleChips() {
   // Bei 114 benannten Personen waren 98 unerreichbar: die Liste endete nach
   // den 16 mit den meisten Gesichtern. Angehakte gehören immer dazu -- sonst
   // sieht man nicht mehr, wen man gewählt hat, sobald man tippt.
-  const matching = peopleCache.filter(hit);
+  const matching = peopleList().filter(hit);
   const visible = [
-    ...peopleCache.filter((p) => chosen.has(p.id)),
+    ...peopleList().filter((p) => chosen.has(p.id)),
     ...matching.filter((p) => !chosen.has(p.id)).slice(0, peopleLimit),
   ];
   const rest = matching.filter((p) => !chosen.has(p.id)).length - peopleLimit;
 
   host.innerHTML = `
     <div class="person-find">
-      <input type="search" id="person-find" placeholder="Namen suchen — ${peopleCache.length} benannt"
+      <input type="search" id="person-find" placeholder="Namen suchen — ${peopleList().length} benannt"
              value="${escapeHtml(peopleFilter)}" autocomplete="off" />
       ${chosen.size ? `<button type="button" class="mini" id="person-none">Auswahl leeren</button>` : ""}
     </div>
@@ -568,7 +567,7 @@ function renderPeopleChips() {
   if ($("person-none")) {
     $("person-none").onclick = () => {
       selectedPeople().forEach((c) => {
-        const p = peopleCache.find((x) => x.id === c.value);
+        const p = peopleList().find((x) => x.id === c.value);
         if (p) setPersonInQuery(p, false);
       });
       renderBuilder();
@@ -577,7 +576,7 @@ function renderPeopleChips() {
   }
   host.querySelectorAll(".search-person").forEach((b) => {
     b.addEventListener("click", () => {
-      const p = peopleCache.find((x) => x.id === b.dataset.id);
+      const p = peopleList().find((x) => x.id === b.dataset.id);
       if (!p) return;
       setPersonInQuery(p, !b.classList.contains("on"));
       renderBuilder();
@@ -595,7 +594,7 @@ async function renderSearchExamples() {
   const host = $("search-examples");
   if (!host) return;
   const freitext = (await feature("freetext")).ok;
-  const named = peopleCache.filter((p) => (p.face_count || 0) >= 8);
+  const named = peopleList().filter((p) => (p.face_count || 0) >= 8);
   const a = named[0], b = named[1];
   const first = (p) => (p.name || "").split(/\s+/)[0] || p.name;
   const items = [];
@@ -888,7 +887,7 @@ async function togglePin(p, kind) {
     method: "POST",
     body: JSON.stringify({ pin: next }),
   });
-  peopleCache = [];
+  forgetPeopleList();
   loadPeople();
 }
 
@@ -903,7 +902,7 @@ function appendSection(box, title, people) {
 
 async function loadPeople() {
   const people = await api("/api/persons");
-  peopleCache = people;
+  setPeopleList(people);
   const box = $("people-list");
   box.innerHTML = "";
   if (!people.length) {
@@ -1197,7 +1196,7 @@ async function editAliases(p) {
       method: "POST",
       body: JSON.stringify({ aliases: (input || "").split(",").map((s) => s.trim()).filter(Boolean) }),
     });
-    peopleCache = [];  // Picker im Suchtab neu laden
+    forgetPeopleList();  // Picker im Suchtab neu laden
     notify(res.aliases.length
       ? `Gespeichert: „${res.aliases.join("“, „")}“`
       : "Spitznamen entfernt.");
@@ -1431,7 +1430,7 @@ async function loadCandidates() {
                                  threshold: d.threshold }),
         });
         el.remove();
-        peopleCache = [];
+        forgetPeopleList();
         loadUnknown(true);
         loadCandidates();
       } catch (err) {
