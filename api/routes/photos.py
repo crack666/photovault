@@ -287,6 +287,11 @@ class BulkCaptionRequest(BaseModel):
     photo_ids: list[str]
     caption_de: str
     lock: bool = True
+    #: Wie bei `annotate`. Der Haken in der Karte versprach Kontrolle ueber
+    #: die GPU-Last und hatte hier keine Wirkung -- neu eingebettet wurde
+    #: immer. Voreinstellung bleibt True, damit bestehende Aufrufer sich
+    #: nicht anders verhalten.
+    reembed: bool = Field(True, description="Text-Vektoren direkt neu rechnen")
 
 
 @router.post("/caption/bulk")
@@ -305,7 +310,10 @@ def set_captions(req: BulkCaptionRequest) -> dict:
         points=req.photo_ids,
         wait=True,
     )
-    stats = rebuild_text_vectors(q, req.photo_ids, collection=PHOTOS, ollama_url=OLLAMA_URL)
+    stats = (
+        rebuild_text_vectors(q, req.photo_ids, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        if req.reembed else {}
+    )
     return {"updated": len(req.photo_ids), "locked": bool(req.lock),
             "reembedded": stats.get("updated", 0)}
 

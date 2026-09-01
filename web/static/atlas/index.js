@@ -1325,11 +1325,15 @@ async function setCaption() {
     rows: 3,
   });
   if (!text) return;
+  // Derselbe Haken wie bei der Notiz. Er stand daneben und wirkte hier
+  // nicht -- gesetzt oder nicht, es wurde immer neu eingebettet.
   await run(`/api/photos/caption/bulk`, {
     photo_ids: selectedIds(),
     caption_de: text,
     lock: true,
-  }, (r) => `${num(r.updated)} Fotos beschriftet.`);
+    reembed: $("atlas-reembed").checked,
+  }, (r) => `${num(r.updated)} Fotos beschriftet${
+    r.reembedded ? `, ${num(r.reembedded)} neu eingebettet` : ""}.`);
 }
 
 async function run(path, body, done) {

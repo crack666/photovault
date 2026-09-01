@@ -1,7 +1,7 @@
 import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=54";
 import { api, cropUrl } from "./core/api.js?v=54";
 import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=54";
-import { gate } from "./core/capabilities.js?v=54";
+import { feature, gate } from "./core/capabilities.js?v=54";
 import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=54";
 import { askConfirm, askText, notify } from "./core/modal.js?v=54";
 
@@ -321,7 +321,7 @@ async function loadPersonPicker() {
   await loadScope();
   renderBuilder();
   renderPeopleChips();
-  renderSearchExamples();
+  await renderSearchExamples();
 }
 
 async function loadScope() {
@@ -579,9 +579,15 @@ function renderPeopleChips() {
   });
 }
 
-function renderSearchExamples() {
+/* Beispiele duerfen nicht an der Sperre vorbeischreiben.
+
+   Zwei der Kacheln setzen Freitext. Ohne Ollama ist das Feld gesperrt, die
+   Kachel schrieb aber direkt hinein -- und die Suche antwortete mit 503. Die
+   Sperre war gut begruendet und griff an genau einer von vier Stellen. */
+async function renderSearchExamples() {
   const host = $("search-examples");
   if (!host) return;
+  const freitext = (await feature("freetext")).ok;
   const named = peopleCache.filter((p) => (p.face_count || 0) >= 8);
   const a = named[0], b = named[1];
   const first = (p) => (p.name || "").split(/\s+/)[0] || p.name;
@@ -603,6 +609,7 @@ function renderSearchExamples() {
     items.push({
       title: `${first(a)} · Geburtstag`,
       hint: "Person plus was im Bild ist",
+      needs: "freetext",
       run: () => {
         qbTree = { op: "and", children: [] };
         setPersonInQuery(a, true);
@@ -613,6 +620,7 @@ function renderSearchExamples() {
   items.push({
     title: "Feuerwerk in der Nacht",
     hint: "nur Freitext, sortiert",
+    needs: "freetext",
     run: () => {
       qbTree = { op: "and", children: [] };
       $("q-text").value = "Feuerwerk in der Nacht";
@@ -634,14 +642,15 @@ function renderSearchExamples() {
       $("q-text").value = "";
     },
   });
-  host.innerHTML = items.map((ex, i) =>
+  const zeigbar = items.filter((ex) => freitext || ex.needs !== "freetext");
+  host.innerHTML = zeigbar.map((ex, i) =>
     `<button type="button" class="search-ex" data-i="${i}">
        <strong>${escapeHtml(ex.title)}</strong>
        <span>${escapeHtml(ex.hint)}</span>
      </button>`).join("");
   host.querySelectorAll(".search-ex").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      items[Number(btn.dataset.i)].run();
+      zeigbar[Number(btn.dataset.i)].run();
       renderBuilder();
       await runSearch();
     });
@@ -1454,9 +1463,18 @@ async function loadPhotoInfo(id, opts = {}) {
     `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join("");
 
   $("lb-caption").value = d.caption_de || "";
+  /* "Behalten" und "Speichern" taten dasselbe: beide schickten den Feldinhalt
+     mit lock: true. Der Nutzer suchte einen Unterschied, den es nicht gab.
+
+     Jetzt hat der zweite Knopf eine eigene Aufgabe -- die Beschreibung des
+     Modells uebernehmen, ohne sie anzufassen -- und ist nur da, wenn es die
+     ueberhaupt zu uebernehmen gibt: eine da, noch nicht gesperrt, nichts
+     getippt. */
+  $("lb-caption").dataset.stored = d.caption_de || "";
   $("lb-cap-state").textContent = d.caption_locked
     ? "von Hand — bleibt bei neuen Läufen erhalten"
     : (d.caption_de ? "vom Modell erzeugt" : "noch keine Beschreibung");
+  updateKeepButton(Boolean(d.caption_locked));
   fillMap(d.gps);
   fillFileWarn(d.file_warning);
   const accept = $("lb-date-accept");
@@ -1496,6 +1514,18 @@ bindFaceStrip($("lb-faces"));
 
 $("lb-toggle").addEventListener("click", () => setLbInfoOpen(false));
 $("lb-reveal").addEventListener("click", () => setLbInfoOpen(true));
+
+/** Sichtbar nur, solange es etwas zu uebernehmen gibt. */
+function updateKeepButton(locked) {
+  const feld = $("lb-caption");
+  const gespeichert = feld.dataset.stored || "";
+  const unveraendert = feld.value === gespeichert;
+  $("lb-keep-caption").classList.toggle(
+    "hidden", locked || !gespeichert.trim() || !unveraendert);
+}
+
+// Wer tippt, will speichern, nicht uebernehmen.
+$("lb-caption").addEventListener("input", () => updateKeepButton(false));
 
 $("lb-save-caption").addEventListener("click", async () => {
   const id = $("lb-info").dataset.photoId;
@@ -1594,12 +1624,15 @@ $("lb-trash").addEventListener("click", () => {
 
 $("lb-keep-caption").addEventListener("click", async () => {
   const id = $("lb-info").dataset.photoId;
-  if (!id || !$("lb-caption").value.trim()) return;
-  $("lb-cap-state").textContent = "sperrt …";
+  // Ausdruecklich der gespeicherte Text, nicht der im Feld: uebernommen wird,
+  // was das Modell geschrieben hat.
+  const text = $("lb-caption").dataset.stored || "";
+  if (!id || !text.trim()) return;
+  $("lb-cap-state").textContent = "übernimmt …";
   try {
     await api(`/api/photos/${encodeURIComponent(id)}/caption`, {
       method: "POST",
-      body: JSON.stringify({ caption_de: $("lb-caption").value, lock: true }),
+      body: JSON.stringify({ caption_de: text, lock: true }),
     });
     await loadPhotoInfo(id);
   } catch (err) {
