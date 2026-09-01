@@ -8,13 +8,14 @@ einer von drei Routen sichtbar war.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.qdrant_util import FACES, PHOTOS, client
+from api.qdrant_util import FACES, PHOTOS, TRASH_KEY, client
 from api.thumbs import drop_cached
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,53 @@ router = APIRouter()
 # hinterlaesst einen Zustand, den niemand mehr versteht.
 
 TRASH_LOG = Path(__file__).resolve().parent.parent.parent / "logs"
+
+#: Woher die Bibliothekswurzel kommt. Dieselbe Liste, aus der auch der Ingest
+#: liest -- es soll nicht zwei Wahrheiten darüber geben, was zur Sammlung
+#: gehört.
+SOURCES_FILE = Path(__file__).resolve().parent.parent.parent / "sources.txt"
+
+
+def photo_root() -> str:
+    """Das gemeinsame Elternverzeichnis der indizierten Quellen, oder "".
+
+    Gebraucht wird das als Schranke fürs Löschen. Der Pfad einer Datei kommt
+    aus dem Payload, und das Payload ist nichts, worauf man ein `unlink`
+    setzen sollte, ohne zu prüfen, wohin es zeigt: wer auf irgendeinem Weg
+    einen Punkt mit fremdem `file_path` in den Index bekommt, löscht sonst
+    eine beliebige Datei auf der Maschine.
+
+    Nicht die Quellen einzeln, sondern ihr gemeinsames Elternverzeichnis:
+    im Index stehen 13 Fotos, die unter keiner der aktiven Quellen liegen
+    (Bereich „Sonstiges"). Sie gehören zur Sammlung und müssen löschbar
+    bleiben -- `/etc/passwd` nicht.
+    """
+    if (override := os.environ.get("PHOTOVAULT_PHOTO_ROOT", "").strip()):
+        return override.replace("\\", "/").rstrip("/")
+    try:
+        from ingest.scanner import load_sources
+        from ingest.spaces import common_root
+
+        include, _ = load_sources(str(SOURCES_FILE))
+        return common_root([p.rstrip("/") for p in include])
+    except Exception as e:
+        logger.warning("Bibliothekswurzel nicht bestimmbar: %s", e)
+        return ""
+
+
+def under_root(path: str, root: str) -> bool:
+    """Liegt `path` wirklich unterhalb von `root`?
+
+    Zeichenweise reicht nicht: `/mnt/photo-alt/x.jpg` beginnt mit
+    `/mnt/photo` und gehört trotzdem nicht dazu. Also auf Segmentgrenze
+    prüfen. `..` wird vorher aufgelöst, sonst führt
+    `/mnt/photo/../etc/passwd` an der Schranke vorbei.
+    """
+    if not path or not root:
+        return False
+    p = os.path.normpath(path.replace("\\", "/")).replace("\\", "/")
+    r = os.path.normpath(root.replace("\\", "/")).replace("\\", "/").rstrip("/")
+    return p == r or p.startswith(r + "/")
 
 
 class TrashRequest(BaseModel):
@@ -129,11 +177,20 @@ class EmptyTrashRequest(BaseModel):
 def empty_trash(req: EmptyTrashRequest) -> dict:
     """Endgueltig loeschen: Datei, Indexpunkt, Gesichter, Vorschaubild.
 
-    Es gibt kein Zurueck. Deshalb zwei Vorkehrungen: `confirm` muss gesetzt
-    sein, und jeder geloeschte Pfad landet vorher in einem Protokoll unter
-    `logs/`. Rueckgaengig macht das nichts, aber man kann hinterher sehen, was
-    weg ist -- und das ist der Unterschied zwischen einem Fehler und einem
-    Raetsel.
+    Es gibt kein Zurueck. Deshalb vier Vorkehrungen:
+
+    * `confirm` muss gesetzt sein.
+    * Geloescht wird nur, was wirklich im Papierkorb liegt. Kennungen in
+      `photo_ids` waehlen aus dem Papierkorb aus, sie umgehen ihn nicht.
+    * Geloescht wird nur innerhalb der Bibliothek (siehe `photo_root`).
+    * Jeder geloeschte Pfad landet vorher in einem Protokoll unter `logs/`.
+      Rueckgaengig macht das nichts, aber man kann hinterher sehen, was weg
+      ist -- und das ist der Unterschied zwischen einem Fehler und einem
+      Raetsel.
+
+    Was die beiden mittleren Schranken aussortiert haben, steht als
+    `skipped` und `outside` in der Antwort: stillschweigend weniger zu
+    loeschen als verlangt waere genauso schlecht wie zu viel.
     """
     from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue
 
@@ -143,13 +200,55 @@ def empty_trash(req: EmptyTrashRequest) -> dict:
         ids = [p["id"] for p in list_trash(limit=1_000_000)["photos"]]
     if not ids:
         return {"deleted": 0, "note": "Der Papierkorb ist leer."}
-    if not req.confirm:
-        return {"would_delete": len(ids), "note": "Ohne confirm wird nichts gelöscht."}
 
     found = []
     for i in range(0, len(ids), 128):
         found.extend(q.retrieve(collection_name=PHOTOS, ids=ids[i : i + 128],
                                 with_payload=True, with_vectors=False))
+
+    # Zwei Schranken, beide vor der Bestätigungsfrage — damit die Vorschau
+    # dieselbe Zahl nennt, die das Löschen dann trifft.
+    #
+    # Erstens: nur, was wirklich vorgemerkt ist. `req.photo_ids` wurde bisher
+    # ungeprüft übernommen; die Papierkorb-Bedingung galt allein im Zweig
+    # ohne Kennungen. Ein Aufruf mit beliebigen Kennungen und `confirm` hat
+    # damit Fotos gelöscht, die nie im Papierkorb lagen — die erste, bewusst
+    # umkehrbare Stufe ließ sich vollständig überspringen.
+    #
+    # Zweitens: nur innerhalb der Bibliothek. Der Pfad kommt aus dem Payload.
+    root = photo_root()
+    if not root:
+        raise HTTPException(
+            500,
+            "Bibliothekswurzel unbekannt — es wird nichts gelöscht. sources.txt "
+            "prüfen oder PHOTOVAULT_PHOTO_ROOT setzen.",
+        )
+
+    erlaubt, nicht_vorgemerkt, ausserhalb = [], [], []
+    for point in found:
+        payload = point.payload or {}
+        if not payload.get(TRASH_KEY):
+            nicht_vorgemerkt.append(str(point.id))
+            continue
+        path = payload.get("file_path") or ""
+        if path and not under_root(path, root):
+            ausserhalb.append(path)
+            continue
+        erlaubt.append(point)
+    found = erlaubt
+
+    # Immer dieselben Schluessel, egal welcher Weg genommen wird. Eine
+    # Antwort, deren Gestalt vom Ausgang abhaengt, zwingt jeden Aufrufer zu
+    # einer Fallunterscheidung -- und der Aufrufer vergisst sie.
+    leer = {"deleted": 0, "files": 0, "thumbs": 0, "failed": [],
+            "skipped": len(nicht_vorgemerkt), "outside": len(ausserhalb)}
+    if not found:
+        note = ("Nichts davon liegt im Papierkorb." if nicht_vorgemerkt or ausserhalb
+                else "Keine dieser Kennungen steht im Index.")
+        return {**leer, "note": note}
+    if not req.confirm:
+        return {**leer, "would_delete": len(found),
+                "note": "Ohne confirm wird nichts gelöscht."}
 
     TRASH_LOG.mkdir(parents=True, exist_ok=True)
     record = TRASH_LOG / f"deleted-{int(datetime.now(timezone.utc).timestamp())}.log"
@@ -191,5 +290,7 @@ def empty_trash(req: EmptyTrashRequest) -> dict:
         "files": deleted_files,
         "thumbs": thumbs,
         "failed": failed,
+        "skipped": len(nicht_vorgemerkt),
+        "outside": len(ausserhalb),
         "log": str(record),
     }
