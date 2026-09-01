@@ -12,12 +12,13 @@
 
 import { escapeHtml, num } from "../core/dom.js?v=55";
 import { api, cropUrl } from "../core/api.js?v=55";
+import { forgetPeopleList, loadPeopleList, peopleList } from "../core/people.js?v=55";
+import { refreshPersonNames } from "../core/names.js?v=55";
 
 /* Ab hier ist ein Vorschlag so stark, dass er hervorgehoben wird -- die
    Prozentangabe hilft nur beim Zweifeln. */
 const STRONG = 0.55;
 
-let people = null;      // {id, name, face_count}[] -- einmal je Sitzung
 let openFace = null;    // face_id, dessen Namensfeld gerade offen ist
 let current = null;     // {photoId, faces, named, note}
 let onChange = () => {};
@@ -113,7 +114,7 @@ function drawPanel(host) {
       ${sugg
         ? `<p class="fs-lead">Sieht aus wie:</p><div class="fs-suggs">${sugg}</div>`
         : `<p class="fs-lead muted">Keine benannte Person ähnelt diesem Gesicht${
-             people && !people.length ? " — es ist noch niemand benannt" : ""}.</p>`}
+             peopleList().length ? "" : " — es ist noch niemand benannt"}.</p>`}
       <label class="fs-pick">Aus der Liste:
         <select data-role="pick"><option value="">lädt …</option></select>
       </label>
@@ -131,13 +132,13 @@ function drawPanel(host) {
 async function fillPeople(panel) {
   const sel = panel.querySelector('[data-role="pick"]');
   if (!sel) return;
-  if (!people) {
-    try { people = await api("/api/persons"); }
-    catch (e) {
-      sel.innerHTML = `<option value="">nicht abrufbar: ${
-        escapeHtml(String(e.message || e).slice(0, 60))}</option>`;
-      return;
-    }
+  // Dieselbe Liste wie Personenreiter und Suche. Vorher hielt dieser
+  // Streifen eine dritte eigene Kopie -- und ein hier angelegter Name kam in
+  // den anderen beiden erst nach dem Neuladen an.
+  const people = await loadPeopleList();
+  if (!people.length) {
+    sel.innerHTML = `<option value="">niemand benannt</option>`;
+    return;
   }
   sel.innerHTML = `<option value="">— wählen —</option>` + people
     .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${num(p.face_count)})</option>`)
@@ -222,7 +223,13 @@ async function run(host, path, body, done, named) {
   const faceId = openFace;
   // Neu laden statt lokal nachziehen: eine Zuordnung verändert auch die
   // Vorschläge der übrigen Gesichter auf demselben Foto.
-  people = null;
+  //
+  // Und beide Listen erneuern, nicht nur die eigene Ansicht: hier kann ein
+  // Name entstehen, den es vorher nicht gab (der Zweig „neue Person" bei den
+  // Aktionen unten). Ohne das stünde er in der Vorschlagsliste der übrigen
+  // Namensfelder erst nach dem Neuladen.
+  forgetPeopleList();
+  refreshPersonNames();
   await mountFaceStrip(host, photoId);
   onChange();
   const who = named ? named(res) : null;
@@ -322,7 +329,7 @@ async function onFollow(host, btn) {
     state(host, `Fehlgeschlagen: ${String(e.message || e).slice(0, 160)}`);
     return;
   }
-  people = null;
+  forgetPeopleList();
   await mountFaceStrip(host, photoId);
   onChange();
   state(host, `${num(res.assigned)} weitere Gesichter sind jetzt ${name}.`);

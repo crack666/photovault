@@ -826,6 +826,13 @@ async function assignNew(name, faceIds) {
     method: "POST",
     body: JSON.stringify({ name, face_ids: faceIds }),
   });
+  /* Hier entsteht ein Name, den es vorher nicht gab -- also muessen ihn beide
+     Listen erfahren. Genau das fehlte: assignUnknown machte denselben POST und
+     erneuerte beides, dieser Weg -- der Hauptweg der Warteschlange -- keines
+     von beiden. Ein gerade vergebener Name stand in der Vorschlagsliste erst
+     nach dem Neuladen der Seite. */
+  forgetPeopleList();
+  refreshPersonNames();
   next();
 }
 
