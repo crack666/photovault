@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=64";
-import { thumbUrl } from "../core/api.js?v=64";
+import { colorFor, spreadPoint } from "./model.js?v=65";
+import { thumbUrl } from "../core/api.js?v=65";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -1050,6 +1050,9 @@ export function createScene(canvas, model, hooks = {}) {
     // Nur der eigene Aufwand, ohne das Warten aufs Bild -- was der Browser
     // danach mit der Leinwand macht, steht hier nicht drin.
     stats.ms = Math.round((performance.now() - now) * 10) / 10;
+    // Fuer Fehlermeldungen der Art "auf dieser Zoomstufe": die Stufe muss
+    // ablesbar sein, sonst kann sie niemand nennen.
+    stats.scale = Math.round(cam.scale);
     if (animating || entfaltet) schedule();
   }
 
@@ -1371,12 +1374,26 @@ export function createScene(canvas, model, hooks = {}) {
       }
     }
 
-    /* Was das Abstossen bestimmt -- ohne Kameralage. Aendert sich der Regler,
-       der Kachelmodus, die Anordnung oder die Auswahl, sind die alten
-       Verschiebungen sinnlos. Ein Schwenk dagegen ist genau der Fall, fuer
-       den sie da sind. */
+    /* Was das Abstossen bestimmt -- nur echte Entscheidungen, keine Folgen
+       der Kameralage.
+
+       Hier stand auch der gerundete wirksame Abstand. Das war ein Fehler
+       mit einem sehr sichtbaren Gesicht: auf dicht belegten Zoomstufen
+       haengt der Abstand an der Sichtbarenzahl, und die aendert sich beim
+       Schwenken laufend -- jeder Rundungssprung warf saemtliche
+       Verschiebungen und den Kern weg, und die ganze Karte jammte sich vor
+       den Augen des Betrachters neu fest. Auf Zoomstufen, wo stattdessen
+       der Wunschabstand bindet, blieb er beim Schwenken konstant -- dort
+       war Ruhe. Genau so wurde es gemeldet: "auf bestimmten Zoomstufen,
+       aber nicht auf allen".
+
+       Ein wandernder Abstand ist aber kein Grund zu vergessen: die
+       Relaxation ist in ihrem Mindestabstand stetig, der Warmstart zieht
+       die vorhandene Loesung einfach auf das neue Mass nach. Verworfen
+       wird nur noch, was wirklich einen Bruch bedeutet: Regler,
+       Kachelmodus, Anordnung, Auswahl. */
     const einstellung = [thumbMode, declutter, tileScale, layout, spread,
-                         maskVersion, Math.round(gapEff)].join("|");
+                         maskVersion].join("|");
     if (einstellung !== fanKey) {
       fanKey = einstellung;
       fanned.clear();

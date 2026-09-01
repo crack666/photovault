@@ -6,18 +6,18 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=64";
-import { api, thumbUrl } from "../core/api.js?v=64";
-import { askText, openModal } from "../core/modal.js?v=64";
-import { createPathPick } from "../core/pathpick.js?v=64";
-import { feature, gate } from "../core/capabilities.js?v=64";
-import { showLightbox } from "../lightbox/index.js?v=64";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=65";
+import { api, thumbUrl } from "../core/api.js?v=65";
+import { askText, openModal } from "../core/modal.js?v=65";
+import { createPathPick } from "../core/pathpick.js?v=65";
+import { feature, gate } from "../core/capabilities.js?v=65";
+import { showLightbox } from "../lightbox/index.js?v=65";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=64";
-import { createScene } from "./scene.js?v=64";
+} from "./model.js?v=65";
+import { createScene } from "./scene.js?v=65";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -690,7 +690,7 @@ function paintStats() {
   // weit die Kacheln wandern -- beim Schwenken wandern sie zu Recht. Steht
   // hier eine zweistellige Zahl, sieht man Flackern statt Bewegung.
   if (s.unruhe) teile.push(`${s.unruhe} px Unruhe`);
-  box.innerHTML = `${was} · ${s.ms} ms`
+  box.innerHTML = `${was} · Maßstab ${num(s.scale)} · ${s.ms} ms`
     + (teile.length ? ` (${teile.join(", ")})` : "")
     + ` · ${num(s.cached)} Bilder im Speicher (~${num(speicher)} MB)`
     + (s.queued ? ` · ${num(s.queued)} warten` : "");

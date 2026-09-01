@@ -11,8 +11,8 @@
    liefen zwei API-Aufrufe bei jedem Import mit, und zwar noch bevor
    feststeht, welcher Tab überhaupt geöffnet wird. */
 
-import { api } from "./api.js?v=64";
-import { $, escapeHtml } from "./dom.js?v=64";
+import { api } from "./api.js?v=65";
+import { $, escapeHtml } from "./dom.js?v=65";
 
 function fillDatalist(id, values) {
   const el = $(id);

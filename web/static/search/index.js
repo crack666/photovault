@@ -7,13 +7,13 @@
    Braucht von aussen nur Bausteine -- die Personenliste, die Blaetterleiste,
    die Grossansicht -- und nichts aus app.js. */
 
-import { api, cropUrl } from "../core/api.js?v=64";
-import { feature, gate } from "../core/capabilities.js?v=64";
-import { $, escapeHtml, num } from "../core/dom.js?v=64";
-import { notify } from "../core/modal.js?v=64";
-import { renderPager } from "../core/pager.js?v=64";
-import { loadPeopleList, peopleList } from "../core/people.js?v=64";
-import { showLightbox } from "../lightbox/index.js?v=64";
+import { api, cropUrl } from "../core/api.js?v=65";
+import { feature, gate } from "../core/capabilities.js?v=65";
+import { $, escapeHtml, num } from "../core/dom.js?v=65";
+import { notify } from "../core/modal.js?v=65";
+import { renderPager } from "../core/pager.js?v=65";
+import { loadPeopleList, peopleList } from "../core/people.js?v=65";
+import { showLightbox } from "../lightbox/index.js?v=65";
 
 /* ---- Ausdrucks-Builder ----
    Der Ausdrucksbaum hier ist derselbe, den das Backend nach Qdrant übersetzt. Die
@@ -565,7 +565,7 @@ export function bindSearch() {
 
     const satz = [data.conditions ? data.expression : "alle Fotos", data.scope,
                   frei ? `ähnlich zu „${frei}“` : ""].filter(Boolean).join(", ");
-    const { focusFromSearch } = await import("./atlas/index.js?v=64");
+    const { focusFromSearch } = await import("./atlas/index.js?v=65");
     focusFromSearch({
       ids: data.ids,
       label: satz,

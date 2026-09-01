@@ -12,13 +12,13 @@
    griff oben darauf zu -- temporale Totzone, die Auswertung brach ab. Als
    eigenes Modul ist der Zustand vor dem ersten Aufruf da. */
 
-import { api } from "../core/api.js?v=64";
-import { $, escapeHtml } from "../core/dom.js?v=64";
-import { CHANNEL_FILTERS, evDate, eventWhen } from "../core/format.js?v=64";
-import { askConfirm, notify } from "../core/modal.js?v=64";
-import { refreshEventNames } from "../core/names.js?v=64";
-import { renderPager } from "../core/pager.js?v=64";
-import { bindShotStrip } from "../gallery/index.js?v=64";
+import { api } from "../core/api.js?v=65";
+import { $, escapeHtml } from "../core/dom.js?v=65";
+import { CHANNEL_FILTERS, evDate, eventWhen } from "../core/format.js?v=65";
+import { askConfirm, notify } from "../core/modal.js?v=65";
+import { refreshEventNames } from "../core/names.js?v=65";
+import { renderPager } from "../core/pager.js?v=65";
+import { bindShotStrip } from "../gallery/index.js?v=65";
 
 /* ---- Unbenannte Serien -------------------------------------------------
    Gegenstück zu "Wer ist das?": das System bildet Gruppen, der Mensch
