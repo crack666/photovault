@@ -90,15 +90,18 @@ a.tab:hover { background: #2a3140; }
   font-size: .88rem;
 }
 .pv-modal footer button:hover { background: #313a4a; color: var(--text); }
+/* Muss hier stehen bleiben: `.pv-modal footer button` setzt selbst einen
+   Hintergrund und ist spezifischer als `.primary` aus styles.css -- die
+   gemeinsame Regel erreicht den Dialog also gar nicht. Statt das mit
+   !important zu erzwingen, bleibt der Kontext-Override und nimmt die Farbe
+   aus denselben Tokens. */
 .pv-modal footer button.primary {
-  background: var(--accent);
-  border-color: transparent;
-  color: var(--on-accent);
-  font-weight: 600;
+  background: var(--accent); border-color: transparent;
+  color: var(--on-accent); font-weight: 600;
 }
-.pv-modal footer button.primary:hover { background: #a3c5ff; }
+.pv-modal footer button.primary:hover { background: var(--accent-hover); }
 .pv-modal footer button.danger {
-  background: #5c2f2c;
+  background: var(--danger-bg);
   border-color: #7d4340;
   color: #ffd9d5;
   font-weight: 600;
@@ -234,12 +237,7 @@ a.tab:hover { background: #2a3140; }
   position: sticky; top: 8px; z-index: 2;
 }
 .trash-bar .spacer { flex: 1; }
-.trash-bar .danger-action {
-  min-height: 36px; padding: 0 .9rem; border-radius: 9px;
-  background: #5c2f2c; border: 1px solid #7d4340; color: #ffd9d5; font-weight: 600;
-  font-size: .84rem;
-}
-.trash-bar .danger-action:hover { background: #6f3835; }
+/* Der Knopf dort traegt jetzt .danger-strong, definiert in styles.css. */
 .trash-bar .mini:disabled { opacity: .4; }
 
 .trash-grid {

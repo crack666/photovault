@@ -15,6 +15,15 @@
   /* Schrift auf der Akzentfarbe. Stand achtmal hart in vier Dateien — eine
      Änderung am Hauptknopf traf damit immer nur eine davon. */
   --on-accent: #0b1020;
+  --accent-hover: #a3c5ff;
+
+  /* Gefahr in zwei Stärken, weil zwei Dinge gemeint sind: umkehrbar (in den
+     Papierkorb legen) und nicht (den Papierkorb leeren). Vorher hiessen beide
+     `.danger-action` und sahen je nach Datei verschieden aus — dieselbe
+     Klasse, zwei Bedeutungen, entschieden vom Elternelement. */
+  --danger: #e8b0ad;
+  --danger-line: #6b3a38;
+  --danger-bg: #5c2f2c;
   --fg: #f2f4f8;
   --bg2: #171b22;
 
@@ -66,7 +75,39 @@ nav { display: flex; gap: 8px; }
   background: transparent; color: var(--text); border: 0; border-radius: 999px;
   padding: 8px 14px; cursor: pointer;
 }
-.tab.on, .primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+/* Der bestätigende Knopf — und alles, was „ausgewählt" heisst.
+
+   Es gab dafür vier Schreibweisen in vier Dateien (.primary, .primary-action,
+   .go, .chip.on) und die Textfarbe achtmal hart daneben. Eine Änderung am
+   Hauptknopf traf immer nur eine davon. */
+.tab.on,
+.primary,
+.primary-action,
+.starter button.go,
+.joiner.on,
+.atlas-seg .chip.on,
+#btn-select-mode.on {
+  background: var(--accent); color: var(--on-accent); font-weight: 600;
+  border-color: transparent;
+}
+.primary:hover,
+.primary-action:hover,
+.starter button.go:hover:not(:disabled) { background: var(--accent-hover); }
+
+/* Zurückgenommen: das Ziel ist umkehrbar, der Knopf muss nicht drängen. */
+.danger-action {
+  background: transparent; color: var(--danger);
+  border: 1px solid var(--danger-line);
+}
+.danger-action:hover { background: #3a2422; color: #ffd7d4; }
+
+/* Gefüllt: dahinter steht kein Zurück. */
+.danger-strong {
+  min-height: 36px; padding: 0 .9rem; border-radius: 9px;
+  background: var(--danger-bg); border: 1px solid #7d4340;
+  color: #ffd9d5; font-weight: 600; font-size: .84rem;
+}
+.danger-strong:hover { background: #6f3835; }
 .ghost { color: var(--muted); }
 .view { max-width: 720px; margin: 32px auto; padding: 0 16px 64px; }
 .hidden { display: none !important; }
@@ -474,7 +515,7 @@ nav { display: flex; gap: 8px; }
   padding: 2px 10px; border-radius: 999px;
   background: transparent; color: var(--muted); border: 1px solid #3a4254;
 }
-.joiner.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.joiner.on { border-color: var(--accent); }
 .qb-add, .qb-subadd { display: flex; gap: 7px; }
 .qb-subadd { margin-top: 4px; }
 .qb-run { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -506,7 +547,6 @@ nav { display: flex; gap: 8px; }
 .shots img.picked {
   outline: 3px solid var(--accent); transform: scale(.94);
 }
-#btn-select-mode.on { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 
 
 /* --- Ereignisse im Zeitstrahl -------------------------------------------
