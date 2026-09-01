@@ -9,11 +9,11 @@
    Rueckweg gebraucht. Seit lightbox/ ein eigenes Modul ist, gibt es dafuer
    keinen Grund mehr. */
 
-import { escapeHtml } from "../core/dom.js?v=65";
+import { escapeHtml } from "../core/dom.js?v=66";
 import {
   CHANNEL_FILTERS, CHANNEL_LABEL, eventMeta, eventTitle, monthLabel,
-} from "../core/format.js?v=65";
-import { showLightbox } from "../lightbox/index.js?v=65";
+} from "../core/format.js?v=66";
+import { showLightbox } from "../lightbox/index.js?v=66";
 
 function peopleLine(ev) {
   const names = ev.person_names || [];

@@ -6,18 +6,18 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=65";
-import { api, thumbUrl } from "../core/api.js?v=65";
-import { askText, openModal } from "../core/modal.js?v=65";
-import { createPathPick } from "../core/pathpick.js?v=65";
-import { feature, gate } from "../core/capabilities.js?v=65";
-import { showLightbox } from "../lightbox/index.js?v=65";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=66";
+import { api, thumbUrl } from "../core/api.js?v=66";
+import { askText, openModal } from "../core/modal.js?v=66";
+import { createPathPick } from "../core/pathpick.js?v=66";
+import { feature, gate } from "../core/capabilities.js?v=66";
+import { showLightbox } from "../lightbox/index.js?v=66";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=65";
-import { createScene } from "./scene.js?v=65";
+} from "./model.js?v=66";
+import { createScene } from "./scene.js?v=66";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -289,6 +289,12 @@ ${escapeHtml(build.why)}`}</pre>`;
   booted = true;
 
   buildToolbar();
+  // Fuer Fehlermeldungen: pvAtlas.springe(x, y, Massstab) stellt die Sicht
+  // aus der Aufwand-Zeile wieder her, pvAtlas.kamera() liest sie ab.
+  window.pvAtlas = {
+    springe: (x, y, m) => scene?.springe(x, y, m),
+    kamera: () => scene?.kamera(),
+  };
   scene = createScene($("atlas-canvas"), model, {
     onHover: showHover,
     onPick: (i) => openAt(i),
@@ -690,7 +696,7 @@ function paintStats() {
   // weit die Kacheln wandern -- beim Schwenken wandern sie zu Recht. Steht
   // hier eine zweistellige Zahl, sieht man Flackern statt Bewegung.
   if (s.unruhe) teile.push(`${s.unruhe} px Unruhe`);
-  box.innerHTML = `${was} · Maßstab ${num(s.scale)} · ${s.ms} ms`
+  box.innerHTML = `${was} · Maßstab ${num(s.scale)} · Mitte ${s.mx} / ${s.my} · ${s.ms} ms`
     + (teile.length ? ` (${teile.join(", ")})` : "")
     + ` · ${num(s.cached)} Bilder im Speicher (~${num(speicher)} MB)`
     + (s.queued ? ` · ${num(s.queued)} warten` : "");

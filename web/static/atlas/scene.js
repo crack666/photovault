@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=65";
-import { thumbUrl } from "../core/api.js?v=65";
+import { colorFor, spreadPoint } from "./model.js?v=66";
+import { thumbUrl } from "../core/api.js?v=66";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -221,6 +221,29 @@ const FAN_EASE = 0.34;
    allen drei Werten 0,74 px. */
 const FAN_RUHE = 0.25;
 
+/* Und wenn eine Tasche gar keine Loesung hat: Geduld verlieren.
+
+   In ueberfuellten Gegenden gibt es Lagen ohne Ruhepunkt -- mehr Bilder
+   wollen Platz, als innerhalb der Reichweite vorhanden ist, die Ziele
+   springen fuer immer, und 20 bis 30 Kacheln zittern dauerhaft umeinander.
+   Beobachtet mit im Mittel 155 px Verschiebung bei 204 px Grenze: die
+   ganze Tasche drueckt gegen den Anschlag und konkurriert ewig.
+
+   Dagegen hilft kein besseres Verfahren, denn das Problem ist nicht das
+   Verfahren, sondern die Aufgabe: sie ist dort unloesbar. Also waechst die
+   Ruheschwelle, solange die Kamera steht -- wie Haftreibung, die mit der
+   Zeit zunimmt. Nach ein paar Sekunden friert auch eine Tasche ein, die
+   keinen perfekten Platz gefunden hat. Stehen schlaegt perfekt; wer die
+   Kamera bewegt, loest die Reibung wieder. */
+//: Obergrenze der wachsenden Schwelle, px je Frame. Erreicht nach rund
+//: vier Sekunden Stillstand; darunter friert jedes Zittern ein.
+const FAN_RUHE_MAX = 2.5;
+
+//: Frames Stillstand, nach denen die Schwelle um ein FAN_RUHE gewachsen
+//: ist. Der Anfang eines echten Einschwingens (Schritte weit ueber der
+//: Schwelle) bleibt davon unberuehrt.
+const FAN_GEDULD = 30;
+
 const FAN_NEIGHBOURS = 12;
 
 /* Wieviel Zeit ein Bild kosten darf, und wie die Karte das selbst herausfindet.
@@ -360,6 +383,8 @@ export function createScene(canvas, model, hooks = {}) {
   let unruhe = 0;               // mittlere Aenderung je Kachel und Frame, px
   let verschoben = 0;           // mittlere Abweichung von der wahren Lage, px
   let fanKern = new Set();      // wer beim Abstossen zuletzt dabei war
+  let fanStill = 0;             // Frames, seit denen die Kamera steht
+  let fanCamKey = "";           // Kameralage, auf die sich fanStill bezieht
   let blast = null;             // Weltspreizung: { layout, xs, ys, iter, fertig, lockX }
 
   let tileBox = 22;             // Kachelbreite des letzten Plans
@@ -1050,9 +1075,12 @@ export function createScene(canvas, model, hooks = {}) {
     // Nur der eigene Aufwand, ohne das Warten aufs Bild -- was der Browser
     // danach mit der Leinwand macht, steht hier nicht drin.
     stats.ms = Math.round((performance.now() - now) * 10) / 10;
-    // Fuer Fehlermeldungen der Art "auf dieser Zoomstufe": die Stufe muss
-    // ablesbar sein, sonst kann sie niemand nennen.
+    // Fuer Fehlermeldungen der Art "auf dieser Zoomstufe": Stufe und Mitte
+    // muessen ablesbar sein, sonst kann sie niemand nennen -- und mit
+    // springe() unten laesst sich genau diese Sicht wiederherstellen.
     stats.scale = Math.round(cam.scale);
+    stats.mx = Math.round(toWorldX(w / 2) * 1000) / 1000;
+    stats.my = Math.round(toWorldY(h / 2) * 1000) / 1000;
     if (animating || entfaltet) schedule();
   }
 
@@ -1551,6 +1579,11 @@ export function createScene(canvas, model, hooks = {}) {
         const d = fanned.get(cand[a][1]);
         if (d) { cand[a][2] += d[0]; cand[a][3] += d[1]; }
       }
+      // Steht die Kamera (und alles andere), waechst die Haftreibung.
+      if (camKey === fanCamKey) fanStill++;
+      else { fanCamKey = camKey; fanStill = 0; }
+      const ruhe = Math.min(FAN_RUHE_MAX, FAN_RUHE * (1 + fanStill / FAN_GEDULD));
+
       const tFan = performance.now();
       fanOut(cand, gapEff, w, h, grenze, trueX, trueY);
       fanMs = performance.now() - tFan;
@@ -1589,7 +1622,7 @@ export function createScene(canvas, model, hooks = {}) {
         // Unter der Schwelle genau liegen bleiben, nicht fast: nur der
         // unveraenderte Wert macht den naechsten Frame identisch und damit
         // das Stillstehen endgueltig.
-        if (weg < FAN_RUHE) { dx = vor[0]; dy = vor[1]; }
+        if (weg < ruhe) { dx = vor[0]; dy = vor[1]; }
         else { bewegt++; unruheSumme += weg; }
         unruheZahl++;
         // Was uebernommen wurde, muss auch gezeichnet werden.
@@ -1997,6 +2030,13 @@ export function createScene(canvas, model, hooks = {}) {
     setTileScale(k) { tileScale = k; schedule(); },
     setDeclutter(px_) { declutter = px_; schedule(); },
     setThumbMode(m) { thumbMode = m; schedule(); },
+    /** Die Sicht aus der Aufwand-Zeile wiederherstellen: springe(x, y, Massstab). */
+    springe(wx, wy, scale) { flyTo(wx, wy, scale); },
+    kamera() {
+      return { scale: Math.round(cam.scale),
+               x: Math.round(toWorldX(canvas._w / 2) * 1000) / 1000,
+               y: Math.round(toWorldY(canvas._h / 2) * 1000) / 1000 };
+    },
     stats: () => {
       // Nur wirklich geladene Bilder zaehlen. `images.size` enthielt auch die
       // Platzhalter der Angefragten -- 11.615 "Bilder im Speicher" bei 231

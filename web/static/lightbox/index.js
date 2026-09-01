@@ -11,9 +11,9 @@
    laesst uebergebene Objekte als Referenz durch, damit eine hier gespeicherte
    Beschreibung auch in der Kachel des Aufrufers ankommt. Nicht kopieren. */
 
-import { api } from "../core/api.js?v=65";
-import { $, escapeHtml, isTyping } from "../core/dom.js?v=65";
-import { bindFaceStrip, mountFaceStrip } from "../faces/strip.js?v=65";
+import { api } from "../core/api.js?v=66";
+import { $, escapeHtml, isTyping } from "../core/dom.js?v=66";
+import { bindFaceStrip, mountFaceStrip } from "../faces/strip.js?v=66";
 
 //: Die gerade gezeigte Liste und die Stelle darin. Geschrieben nur von
 //: showLightbox, gelesen von openLightbox und den Tasten.

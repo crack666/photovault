@@ -13,7 +13,7 @@
    genau dann, wenn jemand einen Namen ändert. Das weiss der Aufrufer, nicht
    eine Uhr. */
 
-import { api } from "./api.js?v=65";
+import { api } from "./api.js?v=66";
 
 let cache = [];
 
