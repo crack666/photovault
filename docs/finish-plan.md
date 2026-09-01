@@ -463,6 +463,28 @@ neu anstiessen. Und die Weltgarantie ist asymptotisch (~D/2 nach 200
 Durchgängen), weshalb der wirksame Abstand aus der Sichtbarenzählung kommt,
 nicht aus der Theorie.
 
+### Nachtrag 3, 2026-09-01: zwei Regler-Befunde aus dem Nutzertest
+
+Beide vom Betrachter gemeldet, beide bestätigt und behoben (`fcc1d35`):
+
+- **„Kontinente auseinander" sprang bei jedem Reglerschritt** in eine neue
+  Anordnung — dieselbe Krankheit wie beim Abstoßen: eine Relaxation, die je
+  Wert von den Originalmittelpunkten neu jammt, ist nicht stetig. Medizin:
+  die Trennung wird **einmal je Anordnung bei vollen Radien** gelöst, der
+  Regler mischt nur noch — jeder Kontinent wandert auf einem festen Strahl.
+
+- **„Bilder abstoßen" tat über 1,0 nichts** — zu Recht beobachtet: die
+  Weltspreizung war bei 1,0 gedeckelt, die Fensterzählung blieb gleich, also
+  blieb der Abstand konstant (gemessen 35 px von 1,0 bis 2,5). Jetzt
+  verlängert der Regler über 1,0 die Spreizvektoren der Welt: 936 → 625
+  sichtbar, Abstand 35 → 42 px, alles bleibt gezeichnet.
+
+Die wiederkehrende Lehre dieses Tages, nun zum dritten Mal: **jede
+Relaxation, deren Eingabe ein Regler oder die Kamera ist, braucht entweder
+einen Startwert aus dem Vorzustand oder eine reglerunabhängige kanonische
+Lösung.** fanOut bekam den Startwert, die Weltspreizung läuft einmal, die
+Kontinent-Trennung ist jetzt kanonisch.
+
 ### Zwei weitere Flackerquellen, unabhaengig vom Regler
 
 - **Andere Modi flackern auch.** `scene.js:1030`: `if (capped && drawn >= budget) break;`
