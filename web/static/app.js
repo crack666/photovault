@@ -1,9 +1,13 @@
-import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=54";
-import { api, cropUrl } from "./core/api.js?v=54";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=54";
-import { feature, gate } from "./core/capabilities.js?v=54";
-import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=54";
-import { askConfirm, askText, notify } from "./core/modal.js?v=54";
+import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=55";
+import { api, cropUrl } from "./core/api.js?v=55";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=55";
+import { feature, gate } from "./core/capabilities.js?v=55";
+import {
+  CHANNEL_FILTERS, CHANNEL_LABEL, evDate, eventMeta, eventTitle, eventWhen,
+  faceStatsLine, monthLabel,
+} from "./core/format.js?v=55";
+import { mountFaceStrip, bindFaceStrip } from "./faces/strip.js?v=55";
+import { askConfirm, askText, notify } from "./core/modal.js?v=55";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -22,20 +26,20 @@ function showTab(name) {
 
 /* Der Atlas kommt als eigenes Modul und erst, wenn er gebraucht wird.
 
-   Das `?v=54` an jedem Import ist kein Schmuck: ein `import "./model.js"` ohne
+   Das `?v=55` an jedem Import ist kein Schmuck: ein `import "./model.js"` ohne
    Parameter liefert aus dem Browser-Cache beliebig lange die alte Fassung,
    auch wenn index.html schon die neue erwartet. Genau das ist passiert. Die
    Zahl gilt fuer alle Module gemeinsam und wird gemeinsam erhoeht.
    Die Lightbox wird ihm hineingereicht statt importiert -- sonst haengen
    app.js und atlas/ gegenseitig aneinander. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=54");
+  const { initAtlas } = await import("./atlas/index.js?v=55");
   await initAtlas({ showLightbox });
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=54");
+  const mod = await import("./trash/index.js?v=55");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash({ showLightbox });
 }
@@ -710,19 +714,6 @@ async function loadQueue() {
   renderCard();
 }
 
-function faceStatsLine(s) {
-  if (!s) return "";
-  const named = s.faces_named ?? s.faces_labeled ?? 0;
-  const parts = [`${named} von ${s.faces_total} mit Namen`];
-  if (s.faces_skipped) parts.push(`${s.faces_skipped} übersprungen`);
-  if (s.faces_ignored) parts.push(`${s.faces_ignored} ignoriert`);
-  if (s.faces_small) parts.push(`${s.faces_small} in Gruppen unter 10`);
-  else if (s.faces_unlabeled && !(s.faces_in_queue > 0)) {
-    parts.push(`${s.faces_unlabeled} unbenannt`);
-  }
-  return ` · ${parts.join(" · ")}`;
-}
-
 function progressLine() {
   return faceStatsLine(state.stats);
 }
@@ -930,56 +921,6 @@ async function loadPeople() {
 
 /* ---- Fotos einer Person, chronologisch ---- */
 
-const MONTHS = ["Januar","Februar","März","April","Mai","Juni",
-                "Juli","August","September","Oktober","November","Dezember"];
-
-const CHANNEL_LABEL = {
-  camera: "eigene Aufnahmen",
-  whatsapp: "empfangen",
-  "whatsapp-sent": "verschickt",
-  screenshot: "Screenshot",
-  download: "heruntergeladen",
-  document: "Dokument",
-};
-
-function monthLabel(ym) {
-  const [y, m] = ym.split("-");
-  return `${MONTHS[Number(m) - 1]} ${y}`;
-}
-
-function eventTitle(ev) {
-  const folder = (ev.folders && ev.folders.length ? ev.folders.join(" · ") : ev.folder_name)
-    || "Ohne Album";
-  if (!ev.date) return folder;
-  const [y, m, d] = ev.date.split("-");
-  const when = m && d ? `${Number(d)}. ${MONTHS[Number(m) - 1]} ${y}` : y;
-  return `${folder} · ${when}`;
-}
-
-// Uhrzeitspanne einer Serie. "14 Minuten, 122 Fotos" ist eine Fotoserie,
-// "10 Stunden, 151 Fotos" ein durchgemachter Abend -- der Unterschied ist die
-// nuetzlichste Information, die der Zeitstempel hergibt.
-function eventWhen(ev) {
-  if (ev.day_level || !ev.start) return "";
-  const t = (iso) => iso.slice(11, 16);
-  const span = ev.span_minutes;
-  const range = span > 0 ? `${t(ev.start)}–${t(ev.end)}` : t(ev.start);
-  if (!span) return range;
-  const dur = span >= 90 ? `${(span / 60).toFixed(1).replace(".", ",")} h` : `${span} min`;
-  return `${range} · ${dur}`;
-}
-
-function eventMeta(ev) {
-  const bits = [];
-  const when = eventWhen(ev);
-  if (when) bits.push(when);
-  bits.push(`${ev.photos.length} Foto${ev.photos.length === 1 ? "" : "s"}`);
-  if (ev.channel && ev.channel !== "camera") {
-    bits.push(CHANNEL_LABEL[ev.channel] || ev.channel);
-  }
-  return bits.join(" · ");
-}
-
 function peopleLine(ev) {
   const names = ev.person_names || [];
   if (!names.length) return "";
@@ -988,26 +929,10 @@ function peopleLine(ev) {
   return `<p class="ev-people">${shown}${more}</p>`;
 }
 
-// Kanalfilter. Vorgabe "camera": das ist die Bibliothek im engeren Sinn.
-// Empfangenes bleibt erreichbar, draengt sich aber nicht auf. Als
-// Gliederungsebene taugt der Kanal nicht -- niemand sucht "alle Screenshots
-// aus 2019" -- als Filter beantwortet er die Frage, die man wirklich hat.
-/* Herkunftsfilter fuer eine Galerie.
-
-   "Alle" steht vorn und ist die Voreinstellung. Vorher stand dort "Eigene
-   Aufnahmen": wer auf eine Person klickte, sah nur ihre Kamerafotos, waehrend
-   die Ueberschrift die volle Zahl nannte. Bei einem Archiv, das zu neun
-   Zehnteln aus Handy-Ordnern besteht, fehlte damit fast alles -- und nichts
-   sagte, dass gefiltert wird. Wer eine Person anklickt, will erst einmal
-   alles von ihr sehen; einschraenken kann man danach. */
-const CHANNEL_FILTERS = [
-  { key: "", label: "Alle" },
-  { key: "camera", label: "Eigene Aufnahmen" },
-  { key: "whatsapp", label: "Empfangen" },
-  { key: "whatsapp-sent", label: "Verschickt" },
-];
+//: Ansichtszustand der Galerie, kein Format -- deshalb hier und nicht in
+//: core/format.js. Dort waere es eine globale Schaltvariable, die jedes
+//: kuenftige Modul umlegen koennte.
 let channelFilter = "";
-
 let lbPhotos = [], lbIndex = 0;
 
 async function openPersonPhotos(p) {
@@ -1872,7 +1797,7 @@ $("qb-to-atlas").addEventListener("click", async () => {
 
   const satz = [data.conditions ? data.expression : "alle Fotos", data.scope,
                 frei ? `ähnlich zu „${frei}“` : ""].filter(Boolean).join(", ");
-  const { focusFromSearch } = await import("./atlas/index.js?v=54");
+  const { focusFromSearch } = await import("./atlas/index.js?v=55");
   focusFromSearch({
     ids: data.ids,
     label: satz,
@@ -1985,6 +1910,11 @@ loadQueue().catch((err) => {
    am höchsten ist — eine Serie mit 150 Fotos ordnet mehr als dreißig
    Zweiergrüppchen. */
 
+//: Was in der Serienliste steht, wenn eine Serie keine Uhrzeit hat. In der
+//: Galerie steht dort nichts -- deshalb der Text hier und nicht als Standard
+//: in eventWhen.
+const WHEN_UNKNOWN = { unknown: "Uhrzeit unbekannt" };
+
 let evChannel = "camera";
 let evTab = "unnamed";
 const EV_PAGE = 20;
@@ -2063,21 +1993,6 @@ function bindSizeFilters(hostId, current, onPick) {
     b.addEventListener("click", () => onPick(Number(b.dataset.min))));
 }
 
-function evWhen(ev) {
-  if (ev.day_level || !ev.start) return "Uhrzeit unbekannt";
-  const t = (iso) => iso.slice(11, 16);
-  const span = ev.span_minutes;
-  const dur = span >= 90 ? `${(span / 60).toFixed(1).replace(".", ",")} h`
-            : span > 0 ? `${span} min` : "";
-  return `${t(ev.start)}${span > 0 ? `–${t(ev.end)}` : ""}${dur ? ` · ${dur}` : ""}`;
-}
-
-function evDate(iso) {
-  if (!iso) return "ohne Datum";
-  const [y, m, d] = iso.split("-");
-  return `${Number(d)}. ${MONTHS[Number(m) - 1]} ${y}`;
-}
-
 async function loadEvents() {
   const host = $("ev-list");
   host.innerHTML = "<p class='muted'>Lade …</p>";
@@ -2130,7 +2045,7 @@ async function loadEvents() {
       <div class="serie-head">
         <div>
           <strong>${escapeHtml(ev.folders.join(" · ") || "Ohne Album")}</strong>
-          <span class="muted">${escapeHtml(evDate(ev.date))} · ${escapeHtml(evWhen(ev))} · ${ev.size} Fotos</span>
+          <span class="muted">${escapeHtml(evDate(ev.date))} · ${escapeHtml(eventWhen(ev, WHEN_UNKNOWN))} · ${ev.size} Fotos</span>
           ${ev.person_names.length
             ? `<span class="ev-people">${escapeHtml(ev.person_names.slice(0, 5).join(", "))}${ev.person_names.length > 5 ? ` +${ev.person_names.length - 5}` : ""}</span>`
             : ""}
@@ -2201,7 +2116,7 @@ async function loadNamed() {
       <div class="serie-head">
         <div>
           <strong>${escapeHtml(ev.name)}</strong>
-          <span class="muted">${escapeHtml(evDate(ev.date))} · ${escapeHtml(evWhen(ev))} · ${ev.size} Fotos
+          <span class="muted">${escapeHtml(evDate(ev.date))} · ${escapeHtml(eventWhen(ev, WHEN_UNKNOWN))} · ${ev.size} Fotos
             · ${escapeHtml((ev.folders || []).join(" · ") || "ohne Ordner")}</span>
           ${ev.person_names.length
             ? `<span class="ev-people">${escapeHtml(ev.person_names.slice(0, 5).join(", "))}${ev.person_names.length > 5 ? ` +${ev.person_names.length - 5}` : ""}</span>`
