@@ -2,6 +2,7 @@ import { $, escapeHtml, isTyping, num } from "./core/dom.js?v=55";
 import { api, cropUrl } from "./core/api.js?v=55";
 import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=55";
 import { feature, gate } from "./core/capabilities.js?v=55";
+import { refreshEventNames, refreshPersonNames } from "./core/names.js?v=55";
 import {
   CHANNEL_FILTERS, CHANNEL_LABEL, evDate, eventMeta, eventTitle, eventWhen,
   faceStatsLine, monthLabel,
@@ -2804,39 +2805,9 @@ async function loadCandidates() {
 }
 
 
-/* ---- Vorschlagslisten --------------------------------------------------
-   Ein Vertipper legt sonst still eine zweite Identitaet an: "Annika Wolf"
-   und "Annika Glass" waeren zwei Personen, und niemand bemerkt es, bis die
-   Fotos auf zwei Karten verteilt sind. Dasselbe bei Serien.
-
-   Bewusst <datalist> und kein erzwungenes Auswaehlen: neue Namen muessen
-   moeglich bleiben, das ist ja der Normalfall beim Benennen. */
-
-function fillDatalist(id, values) {
-  const el = $(id);
-  if (!el) return;
-  el.innerHTML = [...new Set(values.filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, "de")).map((v) => `<option value="${escapeHtml(v)}"></option>`).join("");
-}
-
-async function refreshPersonNames() {
-  try {
-    const d = await api("/api/persons");
-    const list = d.persons || d;
-    fillDatalist("dl-persons", (Array.isArray(list) ? list : [])
-      .map((p) => p.name)
-      // Ablagen fuer Aussortiertes sind keine Namensvorschlaege.
-      .filter((n) => n && n !== "Übersprungen" && n !== "Ignoriert"));
-  } catch (err) { /* Vorschlaege sind Komfort, kein Muss */ }
-}
-
-async function refreshEventNames() {
-  try {
-    const d = await api("/api/events/named?limit=500");
-    fillDatalist("dl-events", (d.events || []).map((e) => e.name));
-  } catch (err) { /* siehe oben */ }
-}
-
+/* Die Vorschlagslisten liegen in core/names.js. Der Startabruf steht hier
+   und nicht dort: stuende er im Modul, liefen zwei API-Aufrufe bei jedem
+   Import mit -- auch fuer Tabs, die keine Vorschlagsliste brauchen. */
 refreshPersonNames();
 refreshEventNames();
 
