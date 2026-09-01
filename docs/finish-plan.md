@@ -497,6 +497,20 @@ genau das, was der Warmstart nachzieht. Nachgemessen: Schwenk über 250 px auf
 der stürmischen Stufe, Unruhe durchgehend 0. Die Fußzeile zeigt seither den
 Maßstab, damit Zoomstufen benennbar sind.
 
+### Nachtrag 4, 2026-09-01: Haftreibung — Taschen ohne Lösung frieren ein
+
+Nach dem Schwenk-Fix blieb ein Rest: in gedrängten Bereichen zittern 20–30
+Bilder dauerhaft, weil die Aufgabe dort **unlösbar** ist (Signatur: mittlere
+Verschiebung 155 px bei 204 px Grenze — die Tasche drückt gegen den
+Anschlag). Kein Verfahren löst eine unlösbare Aufgabe; also verliert die
+Karte Geduld: steht die Kamera, wächst die Ruheschwelle (0,25 → 2,5 px über
+~4,5 s), bis auch die Tasche einfriert. Stehen schlägt perfekt; Kamera
+bewegen löst die Reibung (`2d4de35` → dieser: siehe Commit).
+
+Dazu Maßstab **und Weltmitte** in der Aufwand-Zeile plus
+`pvAtlas.springe(x, y, Maßstab)` — eine gemeldete Sicht ist jetzt exakt
+nachstellbar.
+
 ### Zwei weitere Flackerquellen, unabhaengig vom Regler
 
 - **Andere Modi flackern auch.** `scene.js:1030`: `if (capped && drawn >= budget) break;`
