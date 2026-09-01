@@ -99,6 +99,18 @@ const FAN_MIN_PX = 2;
    ohnehin jeder mit jedem in Beruehrung kommt -- der Haufen dehnt sich nur
    etwas langsamer aus. Und er wirkt genau dort, wo er muss: in duennen
    Gegenden hat kein Punkt so viele Nachbarn. */
+//: Wie weit eine Kachel je Frame ihrer neuen Sollage folgt. Ganz (1.0)
+//: heisst: jedes Frame die volle Loesung -- und weil die Relaxation bei
+//: Ueberfuellung keine Ruhelage hat, ist das genau das Zittern. Ein Drittel
+//: daempft die Schaukel weg und laesst das Nachziehen beim Schwenken weich
+//: aussehen, ohne dass es traege wirkt.
+const FAN_EASE = 0.34;
+
+//: Ab wann die Bewegung als beendet gilt, in Pixeln je Kachel und Frame.
+//: Darunter wird kein Frame mehr angefordert -- sonst laeuft die Schleife
+//: ewig weiter, um Hundertstelpixel zu verschieben.
+const FAN_RUHE = 0.08;
+
 const FAN_NEIGHBOURS = 12;
 
 /* Wieviel Zeit ein Bild kosten darf, und wie die Karte das selbst herausfindet.
@@ -226,6 +238,17 @@ export function createScene(canvas, model, hooks = {}) {
   let heldKey = "";             // Kamerazustand, zu dem die Zuteilung passt
   let heldGap = 0;              // eingefrorener Abstand dazu
   let heldBudget = 0;           // eingefrorene Bildzahl dazu
+
+  /* Die Verschiebungen des Abstossens, ueber den Frame hinaus.
+
+     Bewusst NICHT an den Kamerazustand gebunden -- anders als `held`. Genau
+     beim Schwenken sollen sie ja erhalten bleiben, sonst faengt das
+     Abstossen bei jedem Pixel von vorn an. Verworfen wird nur, wenn sich
+     aendert, *was* abgestossen wird oder *wie weit*. */
+  let fanned = new Map();       // index -> [dx, dy] gegen die wahre Lage
+  let fanKey = "";              // Einstellung, zu der die Verschiebungen passen
+  let unruhe = 0;               // mittlere Aenderung je Kachel und Frame, px
+
   let tileBox = 22;             // Kachelbreite des letzten Plans
   let selection = null; // Set<number> oder null
   let lassoPath = null;
@@ -821,13 +844,19 @@ export function createScene(canvas, model, hooks = {}) {
 
      Deterministisch, damit es beim Schwenken nicht zappelt: gleiche Kamera,
      gleiche Reihenfolge, gleiches Ergebnis. */
-  function fanOut(cand, minDist, w, h, limit) {
+  function fanOut(cand, minDist, w, h, limit, originX, originY) {
     const md2 = minDist * minDist;
     const n = cand.length;
     if (n < 2) return;
-    // Ausgangslage merken, um die Verschiebung begrenzen zu koennen.
-    const ox = new Float32Array(n), oy = new Float32Array(n);
-    for (let a = 0; a < n; a++) { ox[a] = cand[a][2]; oy[a] = cand[a][3]; }
+    /* Ausgangslage merken, um die Verschiebung begrenzen zu koennen.
+
+       Wird eine mitgegeben, gilt sie: seit die Relaxation mit der
+       Verschiebung des Vorframes startet, ist ihr eigener Startwert nicht
+       mehr die wahre Lage des Fotos, und gegen die muss die Begrenzung
+       rechnen -- sonst wandert eine Kachel ueber viele Frames beliebig weit
+       ab, jedes Mal um weniger als das Limit. */
+    const ox = originX || new Float32Array(n), oy = originY || new Float32Array(n);
+    if (!originX) for (let a = 0; a < n; a++) { ox[a] = cand[a][2]; oy[a] = cand[a][3]; }
 
     for (let it = 0; it < FAN_ITERATIONS; it++) {
       // Das Raster muss je Durchgang neu entstehen -- die Punkte sind ja
@@ -1026,6 +1055,14 @@ export function createScene(canvas, model, hooks = {}) {
     const gap = heldGap;
     const budget = heldBudget;
 
+    /* Was das Abstossen bestimmt -- ohne Kameralage. Aendert sich der Regler,
+       der Kachelmodus, die Anordnung oder die Auswahl, sind die alten
+       Verschiebungen sinnlos. Ein Schwenk dagegen ist genau der Fall, fuer
+       den sie da sind. */
+    const einstellung = [thumbMode, declutter, tileScale, layout, spread,
+                         maskVersion, Math.round(gap)].join("|");
+    if (einstellung !== fanKey) { fanKey = einstellung; fanned.clear(); unruhe = 0; }
+
     /* Was mit dem Abstand geschieht -- und das ist der Unterschied, um den
        es geht.
 
@@ -1115,10 +1152,77 @@ export function createScene(canvas, model, hooks = {}) {
          deshalb ist die Verschiebung in Weltkoordinaten begrenzt -- in der
          Uebersicht unsichtbar klein, beim Hineinzoomen waechst sie mit dem
          Platz, den das Zoomen schafft. Der Punkt darunter bleibt liegen. */
-      const cand = near.slice(0, budget);
+      /* Und zwar so, dass es dabei zur Ruhe kommt.
+
+         Bis hierher fing jeder Frame bei null an: `fanOut` startete an der
+         wahren Bildschirmlage und rechnete die ganze Wolke neu. Bei
+         stehender Kamera kommt zweimal dasselbe heraus -- deshalb steht ein
+         ruhendes Bild still. Sobald sich aber irgendetwas ruehrt, ist das
+         Ergebnis keine stetige Funktion der Eingabe mehr: die Reihenfolge
+         haengt am Abstand zur Bildmitte und permutiert bei jedem Pixel, das
+         Rasterfeld verschiebt sich gegen die Punkte, und der Nachbardeckel
+         schneidet nach Begegnungs- statt nach Naehereihenfolge ab. Jede der
+         drei Unstetigkeiten allein genuegt, damit ein Schwenk um ein Pixel
+         eine Kachel um zwanzig springen laesst.
+
+         Die Reparatur ist nicht, die Relaxation stetig zu machen -- das ist
+         sie ihrer Natur nach nicht. Sie besteht darin, ihr einen Startwert
+         zu geben: die Verschiebung aus dem Vorframe. Dann rechnet sie nicht
+         eine neue Loesung aus, sondern zieht die vorhandene nach, und aus
+         dem Sprung wird eine Bewegung.
+
+         Dasselbe Mittel, das der `spaced`-Zweig mit `held` schon benutzt --
+         nur dass es dort die Auswahl festhaelt und hier die Lage. */
+      const cand = near.slice(0, budget).map((t) => t.slice());
+      // Die wahre Lage getrennt halten: die Begrenzung der Verschiebung
+      // muss sich auf sie beziehen, nicht auf den mitgebrachten Startwert.
+      const trueX = new Float32Array(cand.length);
+      const trueY = new Float32Array(cand.length);
+      for (let a = 0; a < cand.length; a++) {
+        trueX[a] = cand[a][2]; trueY[a] = cand[a][3];
+        const d = fanned.get(cand[a][1]);
+        if (d) { cand[a][2] += d[0]; cand[a][3] += d[1]; }
+      }
       const tFan = performance.now();
-      fanOut(cand, gap, w, h, shift);
+      fanOut(cand, gap, w, h, shift, trueX, trueY);
       fanMs = performance.now() - tFan;
+
+      /* Gedaempft uebernehmen, nicht roh.
+
+         Der Startwert allein genuegt nicht. Ist mehr zu zeigen, als der
+         Abstand hergibt, findet die Relaxation gar keine Ruhelage: sie
+         schiebt auseinander, die Begrenzung auf `shift` zieht zurueck, und
+         im naechsten Frame beginnt dasselbe von der zurueckgezogenen Lage
+         aus. Gemessen waren das 5,5 px je Kachel und Frame bei voellig
+         stehender Kamera -- sichtbar als Zittern.
+
+         Also nur einen Teil des Weges gehen. Das nimmt der Schaukel die
+         Amplitude und macht aus dem Nachziehen beim Schwenken zugleich eine
+         weiche Bewegung statt eines Nachspringens. */
+      let unruheSumme = 0, unruheZahl = 0;
+      const naechste = new Map();
+      for (let a = 0; a < cand.length; a++) {
+        const zielX = cand[a][2] - trueX[a], zielY = cand[a][3] - trueY[a];
+        const vor = fanned.get(cand[a][1]);
+        let dx = zielX, dy = zielY;
+        if (vor) {
+          dx = vor[0] + (zielX - vor[0]) * FAN_EASE;
+          dy = vor[1] + (zielY - vor[1]) * FAN_EASE;
+          unruheSumme += Math.hypot(dx - vor[0], dy - vor[1]);
+          unruheZahl++;
+          // Was uebernommen wurde, muss auch gezeichnet werden.
+          cand[a][2] = trueX[a] + dx;
+          cand[a][3] = trueY[a] + dy;
+        }
+        naechste.set(cand[a][1], [dx, dy]);
+      }
+      fanned = naechste;
+      unruhe = unruheZahl ? unruheSumme / unruheZahl : 0;
+      // Solange sich noch etwas ruehrt, den naechsten Frame anfordern --
+      // sonst friert die Bewegung auf halbem Weg ein, wenn nichts anderes
+      // mehr zeichnen laesst.
+      if (unruhe > FAN_RUHE) schedule();
+
       for (const [, i, sx, sy] of cand) planTile(i, sx, sy);
     } else if (!spaced) {
       for (const [, i, sx, sy] of near) {
@@ -1161,6 +1265,7 @@ export function createScene(canvas, model, hooks = {}) {
     stats.gapReason = repel ? "abstoßend" : (spaced ? "Fläche" : "");
     stats.shift = repel ? Math.round(shift) : 0;
     stats.fanMs = Math.round(fanMs * 10) / 10;
+    stats.unruhe = repel ? Math.round(unruhe * 10) / 10 : 0;
   }
 
   /** Den Plan aufs Bild bringen -- und dabei messen, was es kostet. */

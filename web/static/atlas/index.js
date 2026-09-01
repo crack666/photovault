@@ -686,6 +686,10 @@ function paintStats() {
   const teile = [];
   if (s.imgMs) teile.push(`${s.imgMs} ms zeichnen`);
   if (s.fanMs) teile.push(`${s.fanMs} ms schieben`);
+  // Wie weit das Abstossen seine eigene Loesung je Frame umwirft. Nicht wie
+  // weit die Kacheln wandern -- beim Schwenken wandern sie zu Recht. Steht
+  // hier eine zweistellige Zahl, sieht man Flackern statt Bewegung.
+  if (s.unruhe) teile.push(`${s.unruhe} px Unruhe`);
   box.innerHTML = `${was} · ${s.ms} ms`
     + (teile.length ? ` (${teile.join(", ")})` : "")
     + ` · ${num(s.cached)} Bilder im Speicher (~${num(speicher)} MB)`
