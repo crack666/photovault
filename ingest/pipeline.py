@@ -134,6 +134,10 @@ class PhotoRecord:
     date_hint: Optional[str] = None
     date_hint_source: Optional[str] = None
     taken_at: Optional[str] = None
+    #: Papierkorb-Stempel. Steht in keiner Datei, nur im Index -- wird beim
+    #: Re-Ingest aus dem bestehenden Punkt uebernommen, damit ein Lauf mit
+    #: --no-resume Weggeworfenes nicht zurueckholt.
+    trashed_at: Optional[str] = None
     #: Volle Aufnahmezeit aus EXIF, falls vorhanden.
     exif_datetime: Optional[str] = None
     gps: Optional[list[float]] = None
@@ -194,6 +198,7 @@ class IngestPipeline:
         from ingest.qdrant_writer import QdrantWriter
         from ingest.scanner import NASScanner
         from ingest.scene_tagger import SceneTagger
+        from ingest.spaces import common_root
         from ingest.text_embedder import TextEmbedder
 
         sources = [self.config.source, *self.config.extra_sources]
@@ -208,7 +213,10 @@ class IngestPipeline:
             files = [f for f in files if needle in f.lower()]
             logger.info("Include filter %r: %d of %d files", self.config.include, len(files), found)
 
-        writer = QdrantWriter(self.config.qdrant_url, self.config.collection)
+        writer = QdrantWriter(
+            self.config.qdrant_url, self.config.collection,
+            space_root=common_root([str(s).rstrip("/") for s in sources]),
+        )
 
         from ingest.jobs import JobTracker
 
@@ -644,6 +652,14 @@ class IngestPipeline:
         "person_names",
         "event_name",
         "event_excluded",
+        # Der Papierkorb-Stempel existiert nur im Index -- in der Datei steht
+        # nichts davon. Ein Lauf mit --no-resume holte weggeworfene Fotos
+        # dadurch stillschweigend zurueck.
+        #
+        # `space` steht hier bewusst NICHT: es wird aus dem Pfad gerechnet.
+        # Weicht das Feld vom Pfad ab, ist das Feld falsch (ingest/spaces.py),
+        # und ein verschobenes Foto bekaeme seinen alten Bereich zurueck.
+        "trashed_at",
     )
 
     def _flush_batch(self, pending, text_emb, writer, t) -> None:
@@ -971,6 +987,9 @@ def _apply_prior(record: PhotoRecord, prior: dict | None) -> None:
     if prior.get("event_name"):
         record.event_name = prior["event_name"]
     record.event_excluded = bool(prior.get("event_excluded"))
+    # Nur weiterreichen, nie setzen: was im Papierkorb liegt, bleibt dort,
+    # auch wenn die Datei erneut eingelesen wird.
+    record.trashed_at = prior.get("trashed_at")
 
 
 def record_context(record: PhotoRecord) -> dict:

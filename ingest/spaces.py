@@ -20,6 +20,17 @@ import os
 UNKNOWN = "?"
 
 
+def _slash(path: str) -> str:
+    """Backslashes zu Schrägstrichen -- wie in normalizer, provenance, relocate.
+
+    Ohne das bekäme bei einem Ingest unter Windows jedes Foto den Bereich `?`:
+    die Zerlegung sucht `/`, findet in `D:\\Fotos\\Handys\\x.jpg` keinen, und
+    hält den ganzen Pfad für einen Dateinamen ohne Ordner. Es schlägt nichts
+    fehl, der Bereichs-Wähler der Suche wäre nur leer.
+    """
+    return (path or "").replace("\\", "/")
+
+
 def common_root(paths) -> str:
     """Das gemeinsame Elternverzeichnis aller Pfade.
 
@@ -27,7 +38,7 @@ def common_root(paths) -> str:
     `/mnt/photo/Fotos` und `/mnt/photo/Fun` das Stück `/mnt/photo/F` -- deshalb
     wird bis zum letzten Trenner zurückgeschnitten.
     """
-    paths = [p for p in paths if p]
+    paths = [_slash(p) for p in paths if p]
     if not paths:
         return ""
     prefix = os.path.commonprefix(paths)
@@ -42,6 +53,7 @@ def space_of(file_path: str, root: str) -> str:
     """Der Bereichsname für einen Pfad unterhalb von `root`."""
     if not file_path:
         return UNKNOWN
+    file_path, root = _slash(file_path), _slash(root)
     rest = (
         file_path[len(root):] if root and file_path.startswith(root) else file_path
     ).strip("/")

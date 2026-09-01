@@ -5,22 +5,46 @@ import logging
 import uuid
 
 from ingest.ollama_client import TEXT_VECTOR_SIZE
+from ingest.spaces import space_of
 
 logger = logging.getLogger(__name__)
 
 
 class QdrantWriter:
+    #: Feld -> Indextyp fuer die Fotos-Collection. Alles hier wird gefiltert.
+    #: `space` und der Papierkorb-Stempel fehlten und wurden per Hand
+    #: nachgetragen (tools/backfill_spaces.py) -- sie gehoeren hierher.
+    PHOTO_INDEXES = (
+        ("person_ids", "KEYWORD"),
+        ("scene_tags", "KEYWORD"),
+        ("annotations", "KEYWORD"),
+        ("folder_name", "KEYWORD"),
+        ("channel", "KEYWORD"),
+        ("location_key", "KEYWORD"),
+        ("location_lc", "KEYWORD"),
+        ("date", "KEYWORD"),
+        ("taken_at", "DATETIME"),
+        ("event_name", "KEYWORD"),
+        ("space", "KEYWORD"),
+        ("trashed_at", "DATETIME"),
+    )
+
     def __init__(
         self,
         url: str = "http://localhost:6333",
         collection: str = "photos",
         faces_collection: str = "faces",
+        space_root: str | None = None,
     ):
         from qdrant_client import QdrantClient
 
         self.client = QdrantClient(url=url)
         self.collection = collection
         self.faces_collection = faces_collection
+        # Gemeinsame Wurzel der Quellen -- daraus leitet sich je Foto der
+        # Bereich ab. Ohne sie bleibt das Feld leer, und der Bereichs-Waehler
+        # der Suche hat nichts zu zeigen.
+        self.space_root = space_root
         self._ensure_collection()
         self._ensure_faces_collection()
 
@@ -38,6 +62,14 @@ class QdrantWriter:
                     f"Collection '{self.collection}' text vector size is {size}, "
                     f"expected {TEXT_VECTOR_SIZE}. Recreate the collection."
                 )
+            # Bestehende Collection: Indizes trotzdem nachziehen.
+            #
+            # Vorher kehrte die Funktion hier zurueck, und die Index-Schleife
+            # unten lief nur beim *Anlegen*. Ein spaeter hinzugekommener
+            # Index erreichte damit keine bestehende Installation -- genau
+            # dafuer musste tools/backfill_spaces.py drei Stueck von Hand
+            # nachtragen. create_payload_index ist idempotent.
+            self._ensure_photo_indexes()
             return
         except RuntimeError:
             raise
@@ -52,20 +84,18 @@ class QdrantWriter:
                 "text": VectorParams(size=TEXT_VECTOR_SIZE, distance=Distance.COSINE),
             },
         )
-        for field, schema in (
-            ("person_ids", PayloadSchemaType.KEYWORD),
-            ("scene_tags", PayloadSchemaType.KEYWORD),
-            ("annotations", PayloadSchemaType.KEYWORD),
-            ("folder_name", PayloadSchemaType.KEYWORD),
-            ("channel", PayloadSchemaType.KEYWORD),
-            ("location_key", PayloadSchemaType.KEYWORD),
-            ("location_lc", PayloadSchemaType.KEYWORD),
-            ("date", PayloadSchemaType.KEYWORD),
-            ("taken_at", PayloadSchemaType.DATETIME),
-            ("event_name", PayloadSchemaType.KEYWORD),
-        ):
+        self._ensure_photo_indexes()
+
+    def _ensure_photo_indexes(self):
+        """Alle Payload-Indizes der Fotos-Collection sicherstellen."""
+        from qdrant_client.models import PayloadSchemaType
+
+        for field, schema in self.PHOTO_INDEXES:
             try:
-                self.client.create_payload_index(self.collection, field_name=field, field_schema=schema)
+                self.client.create_payload_index(
+                    self.collection, field_name=field,
+                    field_schema=getattr(PayloadSchemaType, schema),
+                )
             except Exception as e:
                 logger.debug("Payload index %s: %s", field, e)
 
@@ -120,6 +150,13 @@ class QdrantWriter:
             "gps": record.gps,
             "exif": record.exif,
             "folder_name": record.folder_name,
+            # Der Bereich: erste Ordnerebene unter der gemeinsamen Wurzel.
+            # Die Karte rechnet ihn beim Bauen aus dem Pfad, die Suche kann
+            # das nicht (Qdrant filtert Schluesselwoerter, keine Praefixe) --
+            # also dieselbe Rechnung einmal in den Payload. Fehlte er, war
+            # der Bereichs-Waehler nach einem frischen Ingest leer.
+            "space": space_of(record.file_path or "", self.space_root)
+            if self.space_root is not None else None,
             # Herkunftskanal -- trennt eigene Aufnahmen von Empfangenem,
             # Screenshots und Dokumenten. Aus dem Pfad abgeleitet, hier
             # gespeichert, damit sich danach filtern laesst.
@@ -148,6 +185,12 @@ class QdrantWriter:
             "file_warning": getattr(record, "file_warning", None),
             "ingested_at": record.ingested_at,
         }
+        # Nur setzen, wenn es einen gibt: `upsert` ersetzt das ganze Payload,
+        # und ein durchgereichtes None wuerde den Stempel loeschen -- also
+        # genau das Zurueckholen, das verhindert werden soll.
+        trashed = getattr(record, "trashed_at", None)
+        if trashed:
+            payload["trashed_at"] = trashed
         self.client.upsert(
             collection_name=self.collection,
             points=[PointStruct(id=point_id, vector=vectors, payload=payload)],
