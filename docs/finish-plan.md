@@ -12,6 +12,40 @@ angefasst gehoert und warum genau in dieser.
 
 **Fokus der Session: Benutzbarkeit und Gestaltung. Keine neuen Funktionen.**
 
+## Stand 2026-09-01
+
+| Stufe | Zustand |
+|---|---|
+| 0 — Vorarbeiten | **erledigt** (`842c21a`) |
+| 1 — Atlas, Zeit-Anordnung | **erledigt** (`a47d87b`). 1.3 entfiel: wenn x festgehalten wird, stimmen die Bänder von selbst |
+| 2 — Atlas, Flackern | **gebaut** (`f87fb73`), Nachmessung offen — siehe unten |
+| 3 — `app.js` schneiden | offen, eigene Sitzung |
+| 4 — Datenschicht | 4.1–4.6 **erledigt** (`aa846ec`, `45608fb`, `01c26d8`); 4.7 offen |
+| 5 — Gestaltung | **angefangen** (`863c863`): Tokens, Hauptknopf, Fingergrößen. Offen: Knopf-Bibliothek, Skalen, `jobs.html` |
+
+**Entwurfsentscheidung getroffen:** In der Zeit-Anordnung gehört x dem Datum.
+Ausgewichen wird nur senkrecht, und nur zwischen Kontinenten, die sich waagerecht
+überschneiden. Die Karte wird dadurch nicht höher — die Rückstauchung rechnet in dieser
+Anordnung nur über y, die Kontinente werden also senkrecht dünner.
+
+**Was in Stufe 2 noch fehlt:** die Nachmessung. Die neue Kennzahl *Unruhe* steht in der
+Aufwand-Anzeige (mittlere Änderung der Verschiebung je Kachel und Frame). Vor der Dämpfung
+stand sie bei **5,5 px trotz stehender Kamera**. Der Wert danach ist nicht abgenommen: die
+Vorschau war ausgeblendet, und ohne sichtbares Fenster feuert `requestAnimationFrame`
+nicht, der Canvas zeichnet also gar nicht. Prüfen: Atlas öffnen, *Aufwand* und *Bilder
+abstoßen* einschalten, ziehen. Bei stehender Kamera gehört die Zahl nahe null.
+
+**Was beim Bauen zusätzlich gefunden wurde** (stand nicht im Plan):
+
+- Das Blättern der Suche hätte gar nicht funktioniert. Der `offset` von `scroll` ist ein
+  Punkt-Cursor, keine Zahl — Seite zwei lieferte dieselben Fotos wie Seite eins. Ein Pager
+  davor hätte stumm nichts getan.
+- Der Startfehler bei `?tab=events` ist bestätigt, nicht nur hergeleitet: `queue-meta` blieb
+  leer, weil `loadQueue()` nie erreicht wurde.
+- Die gemeinsame Rückstauchung über beide Achsen ist in der Bedeutungs-Anordnung **kein**
+  Fehler, anders als hier zunächst notiert. Dort sind x und y zwei Richtungen derselben
+  Einbettung; wer sie einzeln staucht, verzerrt genau die Abstände, um die es geht.
+
 ## Herkunft und Geltung
 
 Alle Befunde stammen aus dem Lesen des Codes am 01.09.2026, keiner aus einem laufenden
