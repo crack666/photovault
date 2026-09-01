@@ -19,7 +19,7 @@ angefasst gehoert und warum genau in dieser.
 | 0 — Vorarbeiten | **erledigt** (`842c21a`) |
 | 1 — Atlas, Zeit-Anordnung | **erledigt** (`a47d87b`). 1.3 entfiel: wenn x festgehalten wird, stimmen die Bänder von selbst |
 | 2 — Atlas, Flackern | **gebaut** (`f87fb73`), Nachmessung offen — siehe unten |
-| 3 — `app.js` schneiden | offen, eigene Sitzung |
+| 3 — `app.js` schneiden | **3.1–3.3 erledigt** (`8468ff7`, `541fb64`, `df35faf`). app.js 2938 → 2491 Zeilen. Offen: 3.4 Galerie, 3.5 Serien, 3.6 Suche/Personen/Unbekannte |
 | 4 — Datenschicht | 4.1–4.6 **erledigt** (`aa846ec`, `45608fb`, `01c26d8`); 4.7 offen |
 | 5 — Gestaltung | **angefangen** (`863c863`): Tokens, Hauptknopf, Fingergrößen. Offen: Knopf-Bibliothek, Skalen, `jobs.html` |
 
@@ -34,6 +34,30 @@ stand sie bei **5,5 px trotz stehender Kamera**. Der Wert danach ist nicht abgen
 Vorschau war ausgeblendet, und ohne sichtbares Fenster feuert `requestAnimationFrame`
 nicht, der Canvas zeichnet also gar nicht. Prüfen: Atlas öffnen, *Aufwand* und *Bilder
 abstoßen* einschalten, ziehen. Bei stehender Kamera gehört die Zahl nahe null.
+
+### Zum Schnitt: die Reihenfolge ist enger als hier notiert
+
+Fünf parallel erhobene Spezifikationen waren einzeln sauber und zusammen nicht
+anwendbar — sie beschrieben alle `app.js` **wie es heute ist**, nicht wie es nach den
+vorherigen Schnitten aussieht. Echt zu entscheiden war nur zweierlei, und beides ist
+entschieden:
+
+- **Die reinen Textbausteine gehören `core/format.js`, nicht der Galerie.** Hauptaufrufer
+  zu sein begründet kein Eigentum; Reinheit tut es. Die Galerie importiert sie.
+- **`eventWhen` und `evWhen` werden zusammengelegt**, mit `{ unknown = "" }`. Der
+  Standard muss leer bleiben: die Galerie ruft die Funktion nur über `eventMeta`, und das
+  schiebt jede nichtleere Rückgabe in die Metazeile.
+
+Daraus folgt eine harte Reihenfolge, die im Plan fehlte: **3.4 Galerie muss vor 3.5
+Serien**, weil der Serien-Block `bindShotStrip` braucht und das bis dahin in `app.js`
+liegt. Andernfalls bräuchte 3.5 eine Injektion — genau die Sorte Umweg, die 3.3 gerade
+abgeschafft hat.
+
+**Drei Sicherheitsfehler, gefunden beim Schreiben der fehlenden Tests** (`cd66b7f`,
+`b51afa5`): der Papierkorb liess sich mit expliziten Kennungen vollständig überspringen;
+der Löschpfad gab den Pfad aus dem Payload ungeprüft an `unlink`; und die Albumliste
+hielt die Freigabe selbst für ein Album, dessen Umbenennen die ganze Sammlung verschoben
+hätte. Alle drei behoben, alle drei durch Tests abgedeckt.
 
 **Was beim Bauen zusätzlich gefunden wurde** (stand nicht im Plan):
 
