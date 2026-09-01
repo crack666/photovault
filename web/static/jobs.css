@@ -10,29 +10,29 @@
 
 .jobs { display: flex; flex-direction: column; gap: .75rem; max-width: 60rem; }
 .job {
-  border: 1px solid var(--line); border-radius: 10px;
+  border: 1px solid var(--line); border-radius: var(--r-m);
   padding: .9rem 1.05rem; display: flex; flex-direction: column; gap: .55rem;
   background: var(--card); position: relative;
 }
 .job-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
 .job-kind { font-weight: 600; }
-.job-src { font-size: .82rem; opacity: .6; font-family: ui-monospace, monospace;
+.job-src { font-size: var(--fs-m); opacity: .6; font-family: ui-monospace, monospace;
            overflow-wrap: anywhere; }
 .badge {
-  font-size: .66rem; letter-spacing: .08em; text-transform: uppercase;
-  padding: .16rem .48rem; border-radius: 999px; font-weight: 600;
+  font-size: var(--fs-xs); letter-spacing: .08em; text-transform: uppercase;
+  padding: .16rem .48rem; border-radius: var(--r-pill); font-weight: 600;
   font-family: ui-monospace, monospace;
 }
 .b-running { background: #123b46; color: #5cc8dc; }
 .b-done    { background: #123020; color: #5cbe8a; }
 .b-stale   { background: #3a2a0e; color: #d8ae4c; }
 .b-error   { background: #3a1c1b; color: #e88c89; }
-.bar { height: .5rem; border-radius: 999px; background: #2a2f36; overflow: hidden; }
+.bar { height: .5rem; border-radius: var(--r-pill); background: #2a2f36; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: #5cc8dc; transition: width .4s ease; }
 .bar.done > i { background: #5cbe8a; }
 .nums {
   display: flex; gap: 1.35rem; flex-wrap: wrap;
-  font-family: ui-monospace, monospace; font-size: .8rem; opacity: .82;
+  font-family: ui-monospace, monospace; font-size: var(--fs-m); opacity: .82;
   font-variant-numeric: tabular-nums;
 }
 .nums b { opacity: 1; }
@@ -42,8 +42,8 @@
 .job-forget {
   position: absolute; top: .5rem; right: .5rem;
   width: 26px; height: 26px; padding: 0;
-  border-radius: 7px; background: transparent; color: var(--muted);
-  border: 1px solid transparent; font-size: .7rem; opacity: 0;
+  border-radius: var(--r-s); background: transparent; color: var(--muted);
+  border: 1px solid transparent; font-size: var(--fs-s); opacity: 0;
   transition: opacity .12s;
 }
 .job:hover .job-forget, .job-forget:focus { opacity: 1; }
@@ -57,26 +57,26 @@
 }
 .starter {
   display: flex; flex-direction: column; gap: .4rem;
-  padding: .85rem 1rem; border-radius: 12px;
+  padding: .85rem 1rem; border-radius: var(--r-l);
   background: #161a1f; border: 1px solid #2a2f36;
 }
-.starter h3 { margin: 0; font-size: .95rem; }
-.starter p { margin: 0; font-size: .78rem; color: var(--muted); line-height: 1.45; }
+.starter h3 { margin: 0; font-size: var(--fs-xl); }
+.starter p { margin: 0; font-size: var(--fs-m); color: var(--muted); line-height: 1.45; }
 .starter .row { display: flex; gap: .4rem; margin-top: .25rem; flex-wrap: wrap; }
 .starter button {
-  min-height: 36px; padding: 0 .8rem; border-radius: 9px;
-  background: #232a36; border: 1px solid #3a4353; color: #ccd5e2; font-size: .82rem;
+  min-height: 36px; padding: 0 .8rem; border-radius: var(--r-m);
+  background: #232a36; border: 1px solid #3a4353; color: #ccd5e2; font-size: var(--fs-m);
 }
 .starter button:hover:not(:disabled) { background: #2f3847; color: var(--text); }
 /* .go steht jetzt in styles.css, gemeinsam mit .primary. */
 .starter button:disabled { opacity: .45; }
-.starter .gpu { font-size: .68rem; color: #d8ae4c; }
+.starter .gpu { font-size: var(--fs-xs); color: #d8ae4c; }
 /* Fehlt eine Voraussetzung, steht der Grund da statt eines Knopfs, der
    „gestartet" sagt und dann nichts tut. */
 .starter.blocked { border-color: #4a3a2a; }
 .starter .why {
-  font-size: .74rem; color: #e0a13c; line-height: 1.4;
-  background: #2a2214; border-radius: 7px; padding: .35rem .5rem;
+  font-size: var(--fs-s); color: #e0a13c; line-height: 1.4;
+  background: #2a2214; border-radius: var(--r-s); padding: .35rem .5rem;
 }
 
 .job-bar {
@@ -85,24 +85,24 @@
 }
 .job-bar .spacer { flex: 1; }
 .job-bar button {
-  min-height: 34px; padding: 0 .75rem; border-radius: 8px;
-  background: #232a36; border: 1px solid #3a4353; color: #ccd5e2; font-size: .8rem;
+  min-height: 34px; padding: 0 .75rem; border-radius: var(--r-s);
+  background: #232a36; border: 1px solid #3a4353; color: #ccd5e2; font-size: var(--fs-m);
 }
 .job-bar button:hover { background: #2f3847; color: var(--text); }
 .job-bar select {
   background: #232a36; color: #cdd5e1; border: 1px solid #2f3747;
-  border-radius: 7px; padding: 5px 8px; font-size: .8rem;
+  border-radius: var(--r-s); padding: 5px 8px; font-size: var(--fs-m);
 }
-#run-msg { margin: 0 0 1rem; font-size: .84rem; color: var(--accent); min-height: 1.2em; }
+#run-msg { margin: 0 0 1rem; font-size: var(--fs-l); color: var(--accent); min-height: 1.2em; }
 
 /* Was im Index fehlt. Nicht mitgezählt, sondern abgefragt -- ein Zähler
    gilt nur für einen Lauf, der Zustand gilt immer. */
 .gaps { max-width: 60rem; margin: 0 0 1.2rem; display: flex; flex-direction: column; gap: .4rem; }
 .gap {
   display: flex; gap: .7rem; align-items: baseline; flex-wrap: wrap;
-  padding: .55rem .8rem; border-radius: 9px;
-  background: #2a2214; border: 1px solid #4a3a2a; font-size: .82rem;
+  padding: .55rem .8rem; border-radius: var(--r-m);
+  background: #2a2214; border: 1px solid #4a3a2a; font-size: var(--fs-m);
 }
 .gap b { color: #e0a13c; font-variant-numeric: tabular-nums; }
 .gap span { color: #c9b8a0; }
-.gap i { font-style: normal; color: var(--muted); font-size: .76rem; }
+.gap i { font-style: normal; color: var(--muted); font-size: var(--fs-m); }

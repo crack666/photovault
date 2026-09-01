@@ -37,7 +37,7 @@ a.tab:hover { background: #2a3140; }
   flex-direction: column;
   background: #1a1f28;
   border: 1px solid #313a4a;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   box-shadow: 0 24px 70px #000b;
   color: var(--text);
 }
@@ -50,22 +50,22 @@ a.tab:hover { background: #2a3140; }
   gap: 12px;
   padding: 16px 16px 0;
 }
-.pv-modal h2 { margin: 0; font-size: 1.1rem; line-height: 1.3; }
+.pv-modal h2 { margin: 0; font-size: var(--fs-lead); line-height: 1.3; }
 .pv-modal-x {
   flex: none;
   width: 34px; height: 34px;
   padding: 0;
-  border-radius: 9px;
+  border-radius: var(--r-m);
   background: #232a36;
   color: var(--muted);
   border: 1px solid #313a4a;
-  font-size: .9rem;
+  font-size: var(--fs-xl);
 }
 .pv-modal-x:hover { background: #2f3847; color: var(--text); }
 
 .pv-modal-lead {
   margin: 8px 16px 0;
-  font-size: .84rem;
+  font-size: var(--fs-l);
   line-height: 1.45;
   color: #adb7c6;
 }
@@ -83,11 +83,11 @@ a.tab:hover { background: #2a3140; }
 .pv-modal footer button {
   min-height: 42px;
   padding: 0 18px;
-  border-radius: 10px;
+  border-radius: var(--r-m);
   background: #262e3b;
   color: #ccd5e2;
   border: 1px solid #3a4353;
-  font-size: .88rem;
+  font-size: var(--fs-l);
 }
 .pv-modal footer button:hover { background: #313a4a; color: var(--text); }
 /* Muss hier stehen bleiben: `.pv-modal footer button` setzt selbst einen
@@ -112,12 +112,12 @@ a.tab:hover { background: #2a3140; }
 .pv-text {
   width: 100%;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-m);
   background: #12161e;
   color: var(--text);
   border: 1px solid #313a4a;
   font: inherit;
-  font-size: .92rem;
+  font-size: var(--fs-xl);
   resize: vertical;
 }
 .pv-text:focus { outline: 0; border-color: var(--accent); }
@@ -130,15 +130,15 @@ a.tab:hover { background: #2a3140; }
   width: 100%;
   text-align: left;
   padding: 10px 12px;
-  border-radius: 11px;
+  border-radius: var(--r-m);
   background: #12161e;
   border: 1px solid #313a4a;
   color: #b8c2d1;
 }
 .mv-choice:hover { background: #1c222c; border-color: #46536a; }
 .mv-choice.on { background: #1d2735; border-color: var(--accent); }
-.mv-choice b { display: block; font-size: .92rem; color: var(--text); }
-.mv-choice b em { font-style: normal; font-weight: 400; color: var(--accent); font-size: .78rem; }
+.mv-choice b { display: block; font-size: var(--fs-xl); color: var(--text); }
+.mv-choice b em { font-style: normal; font-weight: 400; color: var(--accent); font-size: var(--fs-m); }
 .mv-choice span {
   display: block;
   margin: 2px 0 3px;
@@ -146,7 +146,7 @@ a.tab:hover { background: #2a3140; }
   color: #8e99a9;
   overflow-wrap: anywhere;
 }
-.mv-choice i { font-style: normal; font-size: .76rem; color: var(--muted); }
+.mv-choice i { font-style: normal; font-size: var(--fs-m); color: var(--muted); }
 .mv-choice.on i { color: #9db8e8; }
 
 .mv-path { margin-top: 14px; }
@@ -154,17 +154,17 @@ a.tab:hover { background: #2a3140; }
 .mv-hide {
   display: block;
   margin-top: 12px;
-  font-size: .84rem;
+  font-size: var(--fs-l);
   color: #b8c2d1;
   cursor: pointer;
 }
 .mv-hide input { margin-right: 6px; vertical-align: middle; }
-.mv-hide span { display: block; margin: 2px 0 0 22px; font-size: .74rem; color: var(--muted); }
+.mv-hide span { display: block; margin: 2px 0 0 22px; font-size: var(--fs-s); color: var(--muted); }
 .mv-hide.hidden { display: none; }
 .mv-plan {
   margin: 12px 0 0;
   min-height: 1.2em;
-  font-size: .82rem;
+  font-size: var(--fs-m);
   color: var(--accent);
 }
 
@@ -176,7 +176,7 @@ a.tab:hover { background: #2a3140; }
   align-items: center;
   gap: 2px;
   padding: 8px 10px;
-  border-radius: 11px;
+  border-radius: var(--r-m);
   background: #12161e;
   border: 1px solid #313a4a;
 }
@@ -184,7 +184,7 @@ a.tab:hover { background: #2a3140; }
 .pp-crumb {
   min-height: 32px;
   padding: 4px 9px;
-  border-radius: 8px;
+  border-radius: var(--r-s);
   background: #232a36;
   color: #cdd5e1;
   border: 1px solid transparent;
@@ -202,7 +202,7 @@ a.tab:hover { background: #2a3140; }
   min-width: 0;
   min-height: 42px;
   padding: 8px 11px;
-  border-radius: 10px;
+  border-radius: var(--r-m);
   background: #12161e;
   color: var(--text);
   border: 1px solid var(--accent);
@@ -212,18 +212,18 @@ a.tab:hover { background: #2a3140; }
 .pp-ok {
   flex: none;
   min-width: 44px;
-  border-radius: 10px;
+  border-radius: var(--r-m);
   background: var(--accent);
   color: var(--on-accent);
   border: 0;
-  font-size: 1rem;
+  font-size: var(--fs-body);
   font-weight: 700;
 }
-.pp-hint { margin: 6px 0 0; font-size: .76rem; color: var(--muted); }
+.pp-hint { margin: 6px 0 0; font-size: var(--fs-m); color: var(--muted); }
 
 @media (max-width: 560px) {
   .pv-modal-host { padding: 8px; align-items: flex-end; }
-  .pv-modal { max-height: 92vh; border-radius: 16px 16px 10px 10px; }
+  .pv-modal { max-height: 92vh; border-radius: var(--r-xl) 16px 10px 10px; }
   .pv-modal footer { position: sticky; bottom: 0; background: #1a1f28; }
   .pv-modal footer button { flex: 1; }
 }
@@ -233,7 +233,7 @@ a.tab:hover { background: #2a3140; }
 .trash-bar {
   display: flex; align-items: center; gap: .7rem; flex-wrap: wrap;
   margin: .8rem 0; padding: .6rem .8rem;
-  background: var(--card); border: 1px solid #2a3140; border-radius: 10px;
+  background: var(--card); border: 1px solid #2a3140; border-radius: var(--r-m);
   position: sticky; top: 8px; z-index: 2;
 }
 .trash-bar .spacer { flex: 1; }
@@ -245,7 +245,7 @@ a.tab:hover { background: #2a3140; }
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 .trash-item {
-  margin: 0; position: relative; border-radius: 10px; overflow: hidden;
+  margin: 0; position: relative; border-radius: var(--r-m); overflow: hidden;
   background: var(--card); border: 2px solid transparent; cursor: pointer;
 }
 /* Gewählt heißt hier „wird als Nächstes angefasst" -- deshalb warm, nicht blau. */
@@ -259,7 +259,7 @@ a.tab:hover { background: #2a3140; }
 }
 .trash-item figcaption {
   display: flex; flex-direction: column; gap: 1px;
-  padding: 5px 7px 7px; font-size: .7rem; line-height: 1.35;
+  padding: 5px 7px 7px; font-size: var(--fs-s); line-height: 1.35;
 }
 .trash-item .when { color: var(--muted); font-variant-numeric: tabular-nums; }
 .trash-item .who { color: var(--accent); font-weight: 600; }
@@ -288,7 +288,7 @@ a.tab:hover { background: #2a3140; }
 .scope-chip {
   min-height: 34px;
   padding: 4px 12px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid #313a4a;
   background: #1c2029;
   color: var(--muted);
@@ -334,7 +334,7 @@ a.tab:hover { background: #2a3140; }
   z-index: 60;
   max-width: min(640px, calc(100vw - 32px));
   padding: 11px 16px;
-  border-radius: 12px;
+  border-radius: var(--r-l);
   background: #1d2430f5;
   border: 1px solid #33405a;
   box-shadow: 0 14px 40px #000a;
@@ -356,7 +356,7 @@ a.tab:hover { background: #2a3140; }
   position: absolute;
   right: 6px; top: 6px;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid #3d4a5f;
   background: #131820e8;
   color: #cfe0f5;
@@ -389,7 +389,7 @@ a.tab:hover { background: #2a3140; }
   font: 600 11px/1.7 inherit;
   background: #14301fe8;
   border: 1px solid #2f6b47;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 2px 9px;
   backdrop-filter: blur(4px);
 }

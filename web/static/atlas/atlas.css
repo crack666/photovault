@@ -39,7 +39,7 @@
   align-items: center;
   gap: 20px 16px;
   padding: 8px 10px;
-  border-radius: 14px;
+  border-radius: var(--r-l);
   background: #171b22e6;
   backdrop-filter: blur(8px);
   border: 1px solid #2a3140;
@@ -59,7 +59,7 @@
   content: attr(data-group);
   position: absolute;
   top: -13px; left: 2px;
-  font-size: .58rem;
+  font-size: var(--fs-2xs);
   letter-spacing: .1em;
   text-transform: uppercase;
   color: #5d6773;
@@ -69,14 +69,14 @@
 .atlas-bar { padding-top: 18px; }
 
 /* „Genau eines" — zusammenhängender Umschalter, geteilter Rahmen. */
-.atlas-seg { border: 1px solid #333c4d; border-radius: 8px; overflow: hidden; }
+.atlas-seg { border: 1px solid #333c4d; border-radius: var(--r-s); overflow: hidden; }
 .atlas-seg .chip {
   background: transparent;
   color: #97a2b2;
   border: 0;
   border-radius: 0;
   padding: 5px 11px;
-  font-size: .84rem;
+  font-size: var(--fs-l);
   cursor: pointer;
 }
 .atlas-seg .chip + .chip { border-left: 1px solid #333c4d; }
@@ -88,9 +88,9 @@
   background: transparent;
   color: #8e99a9;
   border: 1px dashed #3a4353;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 4px 11px;
-  font-size: .82rem;
+  font-size: var(--fs-m);
   cursor: pointer;
 }
 .tog b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .8; }
@@ -111,12 +111,12 @@
   background: #1e2532;
   color: #b9c3d2;
   border: 1px solid #3d4759;
-  border-radius: 7px;
+  border-radius: var(--r-s);
   padding: 5px 10px;
-  font-size: .82rem;
+  font-size: var(--fs-m);
   cursor: pointer;
 }
-.tool i { font-style: normal; font-size: .95rem; line-height: 1; opacity: .75; }
+.tool i { font-style: normal; font-size: var(--fs-xl); line-height: 1; opacity: .75; }
 .tool:hover { background: #2a3342; color: var(--text); border-color: #55617a; }
 .tool.on {
   background: #3a3020;
@@ -130,13 +130,13 @@
   background: #232a36;
   color: #cdd5e1;
   border: 1px solid #2f3747;
-  border-radius: 6px;
+  border-radius: var(--r-s);
   padding: 5px 8px;
-  font-size: .82rem;
+  font-size: var(--fs-m);
   max-width: 210px;
 }
 
-.atlas-count { color: var(--muted); font-size: .84rem; }
+.atlas-count { color: var(--muted); font-size: var(--fs-l); }
 
 /* ---- Legende ----------------------------------------------------------- */
 
@@ -148,10 +148,10 @@
   gap: 6px 14px;
   max-width: 44vw;
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: var(--r-l);
   background: #171b22d9;
   border: 1px solid #2a3140;
-  font-size: .8rem;
+  font-size: var(--fs-m);
   color: #c3cbd8;
 }
 .atlas-legend .lg { display: flex; align-items: center; gap: 6px; }
@@ -161,7 +161,7 @@
   position: absolute;
   right: 14px; bottom: 14px;
   margin: 0;
-  font-size: .74rem;
+  font-size: var(--fs-s);
   opacity: .55;
 }
 
@@ -172,7 +172,7 @@
   display: flex;
   gap: 10px;
   padding: 8px;
-  border-radius: 12px;
+  border-radius: var(--r-l);
   background: #1b2029f2;
   border: 1px solid #2f3747;
   box-shadow: 0 10px 30px #0008;
@@ -182,12 +182,12 @@
 .atlas-hover img {
   width: 62px; height: 62px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--r-s);
   background: #000;
 }
 .atlas-hover div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.atlas-hover b { font-size: .88rem; }
-.atlas-hover span { font-size: .76rem; color: #b3bccb; }
+.atlas-hover b { font-size: var(--fs-l); }
+.atlas-hover span { font-size: var(--fs-m); color: #b3bccb; }
 .atlas-hover .muted { color: var(--muted); }
 .atlas-hover .who { color: var(--accent); font-weight: 600; }
 
@@ -203,7 +203,7 @@
   max-height: calc(100% - 96px);
   overflow-y: auto;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: #171b22f2;
   border: 1px solid #2a3140;
   box-shadow: 0 16px 44px #0009;
@@ -214,11 +214,11 @@
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.atlas-sel header b { font-size: 1.05rem; }
+.atlas-sel header b { font-size: var(--fs-lead); }
 .atlas-sel .link {
   padding: 0;
   color: var(--muted);
-  font-size: .8rem;
+  font-size: var(--fs-m);
   text-decoration: underline;
 }
 .atlas-sel .link:hover { color: var(--text); }
@@ -233,17 +233,17 @@
 .atlas-strip img {
   width: 48px; height: 48px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--r-s);
   background: #000;
 }
-.atlas-strip .more { color: var(--muted); font-size: .8rem; padding-left: 4px; }
+.atlas-strip .more { color: var(--muted); font-size: var(--fs-m); padding-left: 4px; }
 
 .atlas-sel dl {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 3px 12px;
   margin: 0 0 14px;
-  font-size: .82rem;
+  font-size: var(--fs-m);
 }
 .atlas-sel dt { color: var(--muted); }
 .atlas-sel dd { margin: 0; text-align: right; }
@@ -252,9 +252,9 @@
 .atlas-actions button {
   background: #232a36;
   border: 1px solid #2f3747;
-  border-radius: 10px;
+  border-radius: var(--r-m);
   padding: 8px 12px;
-  font-size: .86rem;
+  font-size: var(--fs-l);
   text-align: left;
 }
 .atlas-actions button:hover { background: #2c3444; }
@@ -273,11 +273,11 @@
 .atlas-refine button {
   text-align: left;
   padding: 5px 9px;
-  border-radius: 8px;
+  border-radius: var(--r-s);
   background: transparent;
   border: 1px solid #2f3747;
   color: #b3bccb;
-  font-size: .78rem;
+  font-size: var(--fs-m);
 }
 .atlas-refine button:hover { background: #232a36; color: var(--text); }
 .atlas-refine:empty { display: none; }
@@ -289,7 +289,7 @@
   right: 14px; bottom: 44px;
   width: 240px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: var(--r-l);
   background: #171b22f2;
   border: 1px solid #2a3140;
   box-shadow: 0 16px 44px #0009;
@@ -299,7 +299,7 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: .78rem;
+  font-size: var(--fs-m);
   color: #b3bccb;
   margin-bottom: 3px;
 }
@@ -311,9 +311,9 @@
 .atlas-controls input[type="range"] { width: 100%; accent-color: var(--accent); }
 .atlas-controls .chip {
   background: #232a36;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 4px 10px;
-  font-size: .76rem;
+  font-size: var(--fs-m);
   color: var(--muted);
 }
 .atlas-controls .chip:hover { color: var(--text); }
@@ -331,20 +331,20 @@
 }
 .atlas-actions .danger-action:hover { background: #3a2422; color: #ffd7d4; }
 
-.atlas-hover .hint { opacity: .7; font-size: .7rem; }
-.atlas-hover .warn { color: #e0703c; font-size: .72rem; }
+.atlas-hover .hint { opacity: .7; font-size: var(--fs-s); }
+.atlas-hover .warn { color: #e0703c; font-size: var(--fs-s); }
 
 .atlas-reembed {
   display: block;
   margin-top: 12px;
-  font-size: .78rem;
+  font-size: var(--fs-m);
   color: #b3bccb;
 }
-.atlas-reembed .muted { display: block; margin-top: 2px; font-size: .72rem; }
+.atlas-reembed .muted { display: block; margin-top: 2px; font-size: var(--fs-s); }
 
 .atlas-sel .atlas-note {
   margin: 10px 0 0;
-  font-size: .78rem;
+  font-size: var(--fs-m);
   color: var(--accent);
   min-height: 1em;
 }
@@ -356,7 +356,7 @@
   top: calc(var(--atlas-bar-h, 56px) + 24px); left: 14px;
   width: 320px;
   padding: 16px 16px 12px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: #171b22f2;
   border: 1px solid #2a3140;
   box-shadow: 0 16px 44px #0009;
@@ -377,28 +377,28 @@
   vertical-align: 1px;
 }
 
-.atlas-brief h2 { margin: 0 0 4px; font-size: 1.05rem; }
-.atlas-brief > p { margin: 0 0 12px; font-size: .8rem; }
+.atlas-brief h2 { margin: 0 0 4px; font-size: var(--fs-lead); }
+.atlas-brief > p { margin: 0 0 12px; font-size: var(--fs-m); }
 .atlas-brief ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .atlas-brief li button {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 5px; border-radius: 10px; background: transparent; text-align: left;
+  padding: 5px; border-radius: var(--r-m); background: transparent; text-align: left;
 }
 .atlas-brief li button:hover { background: #232a36; }
-.atlas-brief li img { width: 38px; height: 38px; object-fit: cover; border-radius: 7px; background: #000; }
+.atlas-brief li img { width: 38px; height: 38px; object-fit: cover; border-radius: var(--r-s); background: #000; }
 .atlas-brief li span { display: flex; flex-direction: column; min-width: 0; }
-.atlas-brief li b { font-size: .84rem; }
-.atlas-brief li em { font-style: normal; font-size: .74rem; color: var(--muted); }
+.atlas-brief li b { font-size: var(--fs-l); }
+.atlas-brief li em { font-style: normal; font-size: var(--fs-s); color: var(--muted); }
 .atlas-brief .brief-next { margin: 10px 0 0; }
 .atlas-brief .brief-next button {
   width: 100%; text-align: left; padding: 7px 10px;
-  border-radius: 10px; background: #232a36; font-size: .82rem;
+  border-radius: var(--r-m); background: #232a36; font-size: var(--fs-m);
 }
 .atlas-brief .brief-next button:hover { background: #2c3444; }
 
 .atlas-brief footer {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; margin-top: 10px; font-size: .72rem;
+  gap: 8px; margin-top: 10px; font-size: var(--fs-s);
 }
 
 /* ---- Zustaende --------------------------------------------------------- */
@@ -416,7 +416,7 @@
   pointer-events: auto;
   background: var(--card);
   border: 1px solid #2a3140;
-  border-radius: 14px;
+  border-radius: var(--r-l);
   padding: 20px 24px;
   color: #cdd5e1;
   font: 13px/1.6 ui-monospace, monospace;
@@ -440,7 +440,7 @@
   bottom: 10px;
   z-index: 4;
   padding: 5px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-s);
   background: #12151ad8;
   border: 1px solid #2a3140;
   color: #9aa3b2;
@@ -459,7 +459,7 @@
   gap: 8px;
   width: 100%;
   padding: 6px 9px;
-  border-radius: 9px;
+  border-radius: var(--r-m);
   border: 1px solid transparent;
   background: #1d222c;
   color: var(--text);
@@ -469,19 +469,19 @@
 }
 .brief-jobs button:hover { background: #262c38; border-color: var(--accent); }
 .brief-jobs b { font-variant-numeric: tabular-nums; min-width: 3.4em; text-align: right; }
-.brief-jobs span { color: var(--muted); font-size: .85rem; }
-.brief-where { margin: 0 0 6px !important; font-size: .78rem; }
+.brief-jobs span { color: var(--muted); font-size: var(--fs-l); }
+.brief-where { margin: 0 0 6px !important; font-size: var(--fs-m); }
 
 /* Was der letzte Lassozug getan hat. Steht ueber den Zahlen, weil es die
    Zahlen erklaert -- und verschwindet mit dem naechsten Handgriff. */
 .atlas-lasso-hint {
   margin: -4px 0 10px;
   padding: 6px 9px;
-  border-radius: 8px;
+  border-radius: var(--r-s);
   background: #1d2430;
   border-left: 2px solid var(--accent);
   color: var(--muted);
-  font-size: .78rem;
+  font-size: var(--fs-m);
   line-height: 1.45;
 }
 
@@ -502,7 +502,7 @@
   flex-wrap: wrap;
   max-width: calc(100% - 40px);
   padding: 7px 10px 7px 14px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: #1b2434f2;
   border: 1px solid #33456a;
   box-shadow: 0 10px 30px #0008;

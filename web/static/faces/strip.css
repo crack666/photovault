@@ -21,7 +21,7 @@
 }
 .fs-open {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: #3a2f1c;
   color: #f0c477;
 }
@@ -29,7 +29,7 @@
 .fs-err {
   margin: 6px 0;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-s);
   background: #3a2226;
   color: #ffbfc6;
   font-size: 12px;
@@ -49,7 +49,7 @@
   width: 76px;
   padding: 4px 4px 5px;
   border: 2px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--r-l);
   background: #20252f;
   color: var(--text);
   cursor: pointer;
@@ -59,7 +59,7 @@
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--r-s);
   display: block;
   background: #14171d;
 }
@@ -85,7 +85,7 @@
 .fs-form {
   margin-top: 10px;
   padding: 10px;
-  border-radius: 12px;
+  border-radius: var(--r-l);
   background: #191d25;
   border: 1px solid #2a3140;
   font-size: 13px;
@@ -99,7 +99,7 @@
   gap: 7px;
   padding: 5px 10px 5px 5px;
   border: 1px solid #313a4a;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: #232936;
   color: var(--text);
   cursor: pointer;
@@ -129,7 +129,7 @@
   flex: 1 1 150px;
   min-height: 38px;
   padding: 6px 9px;
-  border-radius: 9px;
+  border-radius: var(--r-m);
   border: 1px solid #313a4a;
   background: #14171d;
   color: var(--text);
@@ -138,7 +138,7 @@
 .fs-new button, .fs-acts button {
   min-height: 38px;
   padding: 6px 12px;
-  border-radius: 9px;
+  border-radius: var(--r-m);
   border: 1px solid #313a4a;
   background: #2a3140;
   color: var(--text);
