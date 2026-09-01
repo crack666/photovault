@@ -20,6 +20,56 @@ import os
 UNKNOWN = "?"
 
 
+#: Die Quellenliste, aus der sich die Wurzel ergibt. Dieselbe Datei, die auch
+#: der Ingest liest -- es soll nicht zwei Wahrheiten darüber geben, was zur
+#: Sammlung gehört.
+SOURCES_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sources.txt"
+)
+
+
+def photo_root() -> str:
+    """Das gemeinsame Elternverzeichnis der indizierten Quellen, oder `""`.
+
+    Zwei Stellen brauchen das als Schranke, und beide fassen Dateien an:
+
+    * Das endgültige Löschen nimmt den Pfad aus dem Payload. Ohne Prüfung
+      löscht ein Punkt mit fremdem `file_path` eine beliebige Datei.
+    * Die Albumliste steigt über Sammelordner nach oben. Ohne Wurzel landet
+      eine lose Datei in `/mnt/photo/Fotos` beim „Album" `/mnt/photo` -- und
+      ein Umbenennen träfe die Freigabe selbst.
+
+    Nicht die Quellen einzeln, sondern ihr gemeinsames Elternverzeichnis:
+    Fotos, die unter keiner aktiven Quelle liegen, gehören trotzdem zur
+    Sammlung (der Bereich „Sonstiges") und dürfen nicht plötzlich
+    unantastbar werden. `/etc/passwd` gehört nicht dazu.
+    """
+    if (override := os.environ.get("PHOTOVAULT_PHOTO_ROOT", "").strip()):
+        return _slash(override).rstrip("/")
+    try:
+        from ingest.scanner import load_sources
+
+        include, _ = load_sources(SOURCES_FILE)
+        return common_root([p.rstrip("/") for p in include])
+    except Exception:
+        return ""
+
+
+def under_root(path: str, root: str) -> bool:
+    """Liegt `path` wirklich unterhalb von `root`?
+
+    Zeichenweise reicht nicht: `/mnt/photo-alt/x.jpg` beginnt mit
+    `/mnt/photo` und gehört trotzdem nicht dazu -- also auf Segmentgrenze
+    prüfen. `..` wird vorher aufgelöst, sonst führt
+    `/mnt/photo/../etc/passwd` an der Schranke vorbei.
+    """
+    if not path or not root:
+        return False
+    p = _slash(os.path.normpath(_slash(path)))
+    r = _slash(os.path.normpath(_slash(root))).rstrip("/")
+    return p == r or p.startswith(r + "/")
+
+
 def _slash(path: str) -> str:
     """Backslashes zu Schrägstrichen -- wie in normalizer, provenance, relocate.
 

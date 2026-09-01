@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from api.qdrant_util import PHOTOS, client, visible
 from ingest.folder_parser import album_dir
 from ingest.relocate import album_name_ok, plan_album_rename, rename_album
+from ingest.spaces import photo_root
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,6 +33,14 @@ def list_albums(limit: int = 400) -> dict:
     from ingest.events import is_generic_album
 
     q = client()
+    # Ohne Wurzel steigt album_dir ueber Sammelordner hinaus: "Fotos" gilt als
+    # Sammelordner (folder_parser.RE_CAMERA_DIR), also landet eine lose Datei
+    # in /mnt/photo/Fotos beim "Album" /mnt/photo -- der Freigabe selbst. Ein
+    # Umbenennen dieses Eintrags verschoebe die ganze Sammlung. Der Ingest
+    # reicht die Wurzel laengst durch (folder_parser.py:41-52), die Liste
+    # bisher nicht.
+    wurzel = photo_root()
+    wurzel = Path(wurzel) if wurzel else None
     groups: dict[str, dict] = {}
     offset = None
     while True:
@@ -45,7 +54,7 @@ def list_albums(limit: int = 400) -> dict:
             path = payload.get("file_path") or ""
             if not path:
                 continue
-            album = album_dir(Path(path))
+            album = album_dir(Path(path), root=wurzel)
             key = str(album)
             rec = groups.setdefault(
                 key,

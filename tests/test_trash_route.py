@@ -639,7 +639,7 @@ class TestWurzelschranke:
     def test_ohne_wurzel_wird_gar_nichts_geloescht(self, wire, tmp_path, monkeypatch):
         # Lieber laut verweigern als im Zweifel loeschen.
         monkeypatch.setenv("PHOTOVAULT_PHOTO_ROOT", "")
-        monkeypatch.setattr(trash, "SOURCES_FILE", tmp_path / "gibtsnicht.txt")
+        monkeypatch.setattr("ingest.spaces.SOURCES_FILE", str(tmp_path / "gibtsnicht.txt"))
         f, payload = _foto(tmp_path, "a.jpg")
         wire(_Q({"a": payload}))
         with pytest.raises(HTTPException) as exc:

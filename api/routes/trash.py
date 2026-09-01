@@ -8,7 +8,6 @@ einer von drei Routen sichtbar war.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,52 +35,10 @@ router = APIRouter()
 
 TRASH_LOG = Path(__file__).resolve().parent.parent.parent / "logs"
 
-#: Woher die Bibliothekswurzel kommt. Dieselbe Liste, aus der auch der Ingest
-#: liest -- es soll nicht zwei Wahrheiten darüber geben, was zur Sammlung
-#: gehört.
-SOURCES_FILE = Path(__file__).resolve().parent.parent.parent / "sources.txt"
-
-
-def photo_root() -> str:
-    """Das gemeinsame Elternverzeichnis der indizierten Quellen, oder "".
-
-    Gebraucht wird das als Schranke fürs Löschen. Der Pfad einer Datei kommt
-    aus dem Payload, und das Payload ist nichts, worauf man ein `unlink`
-    setzen sollte, ohne zu prüfen, wohin es zeigt: wer auf irgendeinem Weg
-    einen Punkt mit fremdem `file_path` in den Index bekommt, löscht sonst
-    eine beliebige Datei auf der Maschine.
-
-    Nicht die Quellen einzeln, sondern ihr gemeinsames Elternverzeichnis:
-    im Index stehen 13 Fotos, die unter keiner der aktiven Quellen liegen
-    (Bereich „Sonstiges"). Sie gehören zur Sammlung und müssen löschbar
-    bleiben -- `/etc/passwd` nicht.
-    """
-    if (override := os.environ.get("PHOTOVAULT_PHOTO_ROOT", "").strip()):
-        return override.replace("\\", "/").rstrip("/")
-    try:
-        from ingest.scanner import load_sources
-        from ingest.spaces import common_root
-
-        include, _ = load_sources(str(SOURCES_FILE))
-        return common_root([p.rstrip("/") for p in include])
-    except Exception as e:
-        logger.warning("Bibliothekswurzel nicht bestimmbar: %s", e)
-        return ""
-
-
-def under_root(path: str, root: str) -> bool:
-    """Liegt `path` wirklich unterhalb von `root`?
-
-    Zeichenweise reicht nicht: `/mnt/photo-alt/x.jpg` beginnt mit
-    `/mnt/photo` und gehört trotzdem nicht dazu. Also auf Segmentgrenze
-    prüfen. `..` wird vorher aufgelöst, sonst führt
-    `/mnt/photo/../etc/passwd` an der Schranke vorbei.
-    """
-    if not path or not root:
-        return False
-    p = os.path.normpath(path.replace("\\", "/")).replace("\\", "/")
-    r = os.path.normpath(root.replace("\\", "/")).replace("\\", "/").rstrip("/")
-    return p == r or p.startswith(r + "/")
+# Die Wurzel und die Schranke liegen in ingest/spaces.py -- dort steht schon
+# die Rechnung, was zur Sammlung gehoert, und die Albumliste braucht sie
+# ebenfalls. Zwei Fassungen davon waeren zwei Wahrheiten.
+from ingest.spaces import photo_root, under_root  # noqa: E402
 
 
 class TrashRequest(BaseModel):
