@@ -6,17 +6,17 @@
    Zug eine Notiz. Genau das kann der Explorer nicht, weil er Aehnlichkeit
    nicht kennt. */
 
-import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=33";
-import { api, thumbUrl } from "../core/api.js?v=33";
-import { askText, openModal } from "../core/modal.js?v=33";
-import { createPathPick } from "../core/pathpick.js?v=33";
-import { feature, gate } from "../core/capabilities.js?v=33";
+import { $, escapeHtml, isTyping, num } from "../core/dom.js?v=54";
+import { api, thumbUrl } from "../core/api.js?v=54";
+import { askText, openModal } from "../core/modal.js?v=54";
+import { createPathPick } from "../core/pathpick.js?v=54";
+import { feature, gate } from "../core/capabilities.js?v=54";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, tidiness, visibleMask,
-} from "./model.js?v=33";
-import { createScene } from "./scene.js?v=33";
+} from "./model.js?v=54";
+import { createScene } from "./scene.js?v=54";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
@@ -149,8 +149,10 @@ function saveHidden() {
    sind mit der Tastatur bedienbar. Steht beides auf „alle", ist der Filter
    aus und kostet nichts. */
 
-const TAG0 = Date.UTC(1970, 0, 1);
-const jahrVon = (t) => new Date(TAG0 + t * 86400000).getUTCFullYear();
+/* Das Jahr steht fertig in model.year und wird dort einmal richtig
+   gerechnet. Die eigene Fassung hier rechnete stur weiter und machte aus
+   dem -1 fuer "kein Datum" das Jahr 1969; die Wahrheitspruefungen daneben
+   warfen ausserdem den 1.1.1970 hinaus, weil t dort 0 ist. */
 
 let vonJahr = null;
 let bisJahr = null;
@@ -159,7 +161,7 @@ function buildYearPick() {
   const box = $("atlas-years");
   if (!box) return;
   const jahre = new Set();
-  for (let i = 0; i < model.n; i++) if (model.t[i]) jahre.add(jahrVon(model.t[i]));
+  for (let i = 0; i < model.n; i++) if (model.year[i] > 0) jahre.add(model.year[i]);
   const liste = [...jahre].sort();
   if (liste.length < 2) { box.classList.add("hidden"); return; }
 
@@ -189,9 +191,8 @@ function buildYearPick() {
 /** Trifft dieses Foto den gewählten Zeitraum? */
 function inYears(i) {
   if (vonJahr === null && bisJahr === null) return true;
-  const t = model.t[i];
-  if (!t) return false;          // ohne Datum gehört es in keinen Zeitraum
-  const j = jahrVon(t);
+  const j = model.year[i];
+  if (j < 0) return false;       // ohne Datum gehört es in keinen Zeitraum
   return (vonJahr === null || j >= vonJahr) && (bisJahr === null || j <= bisJahr);
 }
 

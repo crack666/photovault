@@ -198,6 +198,14 @@ const CHANNEL_COLOR = {
   download: "#7c8794",
 };
 
+//: Blau (alt) bis Gelb (neu). Der Bestand beginnt heute genau bei 2002 und
+//: liegt damit auf der Kante -- ein einziges aelteres Foto reicht sonst.
+const YEAR_LO = 2002, YEAR_HI = 2026;
+function yearHue(y) {
+  const t = Math.min(1, Math.max(0, (y - YEAR_LO) / (YEAR_HI - YEAR_LO)));
+  return 205 - t * 195;
+}
+
 export function colorFor(model, i, mode) {
   switch (mode) {
     case "zustand":
@@ -207,8 +215,10 @@ export function colorFor(model, i, mode) {
     case "jahr": {
       const y = model.year[i];
       if (y < 0) return "#5c5c5c";
-      const span = Math.max(1, 2026 - 2002);
-      const h = 205 - ((y - 2002) / span) * 195; // blau (alt) -> gelb (neu)
+      // Geklemmt, nicht offen: ohne Grenze laeuft der Farbton ueber Blau
+      // hinaus ins Violette weiter, und ein Scan von 1990 saehe damit
+      // *neuer* aus als die blauen 2002er.
+      const h = yearHue(y);
       return `hsl(${h.toFixed(0)} 58% 58%)`;
     }
     default: {
@@ -229,7 +239,7 @@ export function legendFor(model, mode) {
       return model.channels.map((c) => ({ color: CHANNEL_COLOR[c] || "#8a8a8a", label: c }));
     case "jahr":
       return [2005, 2012, 2018, 2024].map((y) => ({
-        color: `hsl(${(205 - ((y - 2002) / 24) * 195).toFixed(0)} 58% 58%)`,
+        color: `hsl(${yearHue(y).toFixed(0)} 58% 58%)`,
         label: String(y),
       }));
     default:

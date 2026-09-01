@@ -8,8 +8,8 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js?v=33";
-import { thumbUrl } from "../core/api.js?v=33";
+import { colorFor, spreadPoint } from "./model.js?v=54";
+import { thumbUrl } from "../core/api.js?v=54";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
@@ -509,28 +509,53 @@ export function createScene(canvas, model, hooks = {}) {
   let spreadDx = null;
   let spreadDy = null;
 
+  /* In der Zeit-Anordnung ist die Waagerechte das Aufnahmedatum.
+
+     Damit ist sie keine Bildschirmrichtung mehr, sondern eine Aussage. Ein
+     Kontinent, der nach rechts ausweicht, behauptet ein spaeteres Datum --
+     und die Jahresbaender darunter widersprechen ihm. Gemessen lag rund die
+     Haelfte der gesamten Ausweichbewegung auf dieser Achse, und bei Regler
+     0,5 stand die Mehrheit der Fotos unter einem fremden Band.
+
+     Also: in "zeit" wird x festgehalten. Ausgewichen wird nur senkrecht --
+     die Senkrechte traegt hier ohnehin nichts, sie kommt unveraendert aus
+     der Bedeutungs-Anordnung (model.js, byTime gibt `y: m.y` durch). Damit
+     stimmen die Baender ohne eigene Umrechnung, weil an x nichts geschieht. */
+  function timeLocked() { return layout === "zeit"; }
+
   function clusterRadii(cc) {
     // Wie weit ein Kontinent reicht: quadratisches Mittel der Abstaende
     // seiner Fotos vom eigenen Mittelpunkt. Robuster als das Maximum, das
     // ein einzelner Ausreisser sonst aufblaeht.
+    //
+    // Getrennt nach Achsen, weil die Kontinente in der Zeit-Anordnung breit
+    // und flach liegen: gemessen 0,146 waagerecht gegen 0,049 senkrecht. Ein
+    // einziger runder Radius fordert senkrecht dreimal mehr Luft, als sie
+    // dort einnehmen -- und weil sie die nicht bekommen, weichen sie
+    // waagerecht aus. Genau durch die Chronologie.
     const k = cc.length / 2;
-    const sum = new Float64Array(k);
+    const sx = new Float64Array(k), sy = new Float64Array(k);
     const cnt = new Float64Array(k);
     for (let i = 0; i < model.n; i++) {
       const c = model.cl[i];
       const dx = toX[i] - cc[c * 2], dy = toY[i] - cc[c * 2 + 1];
-      sum[c] += dx * dx + dy * dy;
+      sx[c] += dx * dx; sy[c] += dy * dy;
       cnt[c]++;
     }
-    const r = new Float64Array(k);
-    for (let c = 0; c < k; c++) r[c] = cnt[c] ? Math.sqrt(sum[c] / cnt[c]) : 0;
-    return r;
+    const rx = new Float64Array(k), ry = new Float64Array(k), r = new Float64Array(k);
+    for (let c = 0; c < k; c++) {
+      rx[c] = cnt[c] ? Math.sqrt(sx[c] / cnt[c]) : 0;
+      ry[c] = cnt[c] ? Math.sqrt(sy[c] / cnt[c]) : 0;
+      r[c] = Math.hypot(rx[c], ry[c]);
+    }
+    return { rx, ry, r };
   }
 
   function buildSpread(strength) {
     const cc = model.layouts[layout].centroids;
     const k = cc.length / 2;
-    const rad = clusterRadii(cc);
+    const { rx, ry, r } = clusterRadii(cc);
+    const locked = timeLocked();
     // Nach dem Zusammenziehen ist jeder Kontinent um denselben Faktor
     // kleiner -- die Kreise, die einander ausweichen muessen, also auch.
     const shrink = 1 / (1 + strength);
@@ -541,15 +566,37 @@ export function createScene(canvas, model, hooks = {}) {
       let moved = 0;
       for (let a = 0; a < k; a++) {
         for (let b = a + 1; b < k; b++) {
-          const want = (rad[a] + rad[b]) * shrink * SPREAD_AIR;
+          // Der kleinere Kontinent weicht mehr aus: sonst schiebt ein
+          // Haeufchen von zwoelf Fotos einen mit dreitausend beiseite.
+          if (locked) {
+            /* Nur senkrecht -- und nur, wenn sie sich waagerecht ueberhaupt
+               ins Gehege kommen. Zwei Kontinente aus 2003 und 2023 stehen
+               nebeneinander, nicht uebereinander; sie muessen einander nicht
+               ausweichen, und wer sie trotzdem trennt, verbraucht Hoehe fuer
+               nichts. */
+            const overlapX = (rx[a] + rx[b]) * shrink * SPREAD_AIR;
+            if (Math.abs(x[b] - x[a]) >= overlapX) continue;
+            const want = (ry[a] + ry[b]) * shrink * SPREAD_AIR;
+            let dy = y[b] - y[a];
+            const d = Math.abs(dy);
+            if (d >= want) continue;
+            // Genau uebereinander: eine Richtung muss her, und sie muss bei
+            // jedem Durchgang dieselbe sein.
+            if (d < 1e-9) dy = (a % 2 ? -1 : 1) * 1e-9;
+            const wa = ry[b] / (ry[a] + ry[b] || 1);
+            const push = (want - d) * Math.sign(dy || 1);
+            y[a] -= push * wa;
+            y[b] += push * (1 - wa);
+            moved++;
+            continue;
+          }
+          const want = (r[a] + r[b]) * shrink * SPREAD_AIR;
           let dx = x[b] - x[a], dy = y[b] - y[a];
           let d2 = dx * dx + dy * dy;
           if (d2 >= want * want) continue;
           if (d2 < 1e-12) { const ang = a * 2.399963; dx = Math.cos(ang); dy = Math.sin(ang); d2 = 1; }
           const d = Math.sqrt(d2);
-          // Der kleinere Kontinent weicht mehr aus: sonst schiebt ein
-          // Haeufchen von zwoelf Fotos einen mit dreitausend beiseite.
-          const wa = rad[b] / (rad[a] + rad[b] || 1);
+          const wa = r[b] / (r[a] + r[b] || 1);
           const push = (want - d);
           const ux = dx / d, uy = dy / d;
           x[a] -= ux * push * wa; y[a] -= uy * push * wa;
@@ -560,16 +607,40 @@ export function createScene(canvas, model, hooks = {}) {
       if (!moved) break;
     }
 
-    // Zurueck ins Bild: das Auseinanderschieben macht die Karte groesser,
-    // und niemand will danach erst herauszoomen.
-    let lo = Infinity, hi = -Infinity;
-    for (let c = 0; c < k; c++) {
-      lo = Math.min(lo, x[c] - rad[c] * shrink, y[c] - rad[c] * shrink);
-      hi = Math.max(hi, x[c] + rad[c] * shrink, y[c] + rad[c] * shrink);
-    }
-    const span = Math.max(hi - lo, 1e-6);
     spreadDx = new Float32Array(k);
     spreadDy = new Float32Array(k);
+
+    /* Zurueck ins Bild: das Auseinanderschieben macht die Karte groesser,
+       und niemand will danach erst herauszoomen.
+
+       In der Bedeutungs-Anordnung wird dafuer *ein* gemeinsames lo/span ueber
+       beide Achsen benutzt. Das ist Absicht und kein Fehler: dort sind x und
+       y zwei Richtungen derselben Einbettung, und wer sie einzeln staucht,
+       verzerrt die Abstaende, um die es in dieser Karte gerade geht.
+
+       In der Zeit-Anordnung ist es genau umgekehrt. x gehoert den
+       Jahresbaendern und wird gar nicht angefasst; nur die Senkrechte wird
+       zurueckgeholt, und die darf das, weil sie nichts behauptet. */
+    if (locked) {
+      let lo = Infinity, hi = -Infinity;
+      for (let c = 0; c < k; c++) {
+        lo = Math.min(lo, y[c] - ry[c] * shrink);
+        hi = Math.max(hi, y[c] + ry[c] * shrink);
+      }
+      const span = Math.max(hi - lo, 1e-6);
+      for (let c = 0; c < k; c++) {
+        spreadDx[c] = 0;
+        spreadDy[c] = (y[c] - lo) / span - cc[c * 2 + 1];
+      }
+      return;
+    }
+
+    let lo = Infinity, hi = -Infinity;
+    for (let c = 0; c < k; c++) {
+      lo = Math.min(lo, x[c] - r[c] * shrink, y[c] - r[c] * shrink);
+      hi = Math.max(hi, x[c] + r[c] * shrink, y[c] + r[c] * shrink);
+    }
+    const span = Math.max(hi - lo, 1e-6);
     for (let c = 0; c < k; c++) {
       // Verschiebung *und* Stauchung in einem: wo der Mittelpunkt nach dem
       // Zurueckstauchen liegt, minus wo er vorher lag.
@@ -593,17 +664,39 @@ export function createScene(canvas, model, hooks = {}) {
   function spreadAt(bx, by, c) {
     if (!spread) return [bx, by];
     ensureSpread();
-    return [spreadPoint(bx, model.layouts[layout].centroids[c * 2], spread) + spreadDx[c],
-            spreadPoint(by, model.layouts[layout].centroids[c * 2 + 1], spread) + spreadDy[c]];
+    const cc = model.layouts[layout].centroids;
+    // In "zeit" bleibt die Waagerechte, wie sie ist -- auch das
+    // Zusammenziehen zum Schwerpunkt faellt weg. Es zoege jeden Kontinent
+    // auf sein mittleres Aufnahmedatum zusammen und machte aus vierzehn
+    // Jahren sieben.
+    const x = timeLocked() ? bx : spreadPoint(bx, cc[c * 2], spread) + spreadDx[c];
+    return [x, spreadPoint(by, cc[c * 2 + 1], spread) + spreadDy[c]];
+  }
+
+  /* Wo der Name eines Kontinents steht -- in der Anordnung, die gerade gilt.
+
+     Bisher stand hier c.x/c.y aus atlas.json, und das ist das UMAP-Ergebnis,
+     also die Bedeutungs-Anordnung. In "zeit" zeigte der Name damit auf eine
+     Stelle, die dieser Kontinent nur in der *anderen* Karte hat: gemessen im
+     Mittel 0,274 Kartenbreiten daneben, nach der Bandbelegung rund zehn
+     Jahre. Die Hoehe stimmte zufaellig, weil byTime dieselbe y-Achse
+     durchreicht -- das Jahr nicht. Und weil der Regler daran nichts aendert,
+     war es schon in der Grundeinstellung falsch.
+
+     Der Schwerpunkt je Anordnung liegt fertig vor (model.js, centroidsOf). */
+  function clusterAnchor(ci) {
+    const cc = model.layouts[layout].centroids;
+    return spreadAt(cc[ci * 2], cc[ci * 2 + 1], ci);
   }
 
   function applySpread() {
     if (!spread) return;
     ensureSpread();
     const cc = model.layouts[layout].centroids;
+    const locked = timeLocked();
     for (let i = 0; i < model.n; i++) {
       const c = model.cl[i];
-      px[i] = spreadPoint(px[i], cc[c * 2], spread) + spreadDx[c];
+      if (!locked) px[i] = spreadPoint(px[i], cc[c * 2], spread) + spreadDx[c];
       py[i] = spreadPoint(py[i], cc[c * 2 + 1], spread) + spreadDy[c];
     }
   }
@@ -619,7 +712,10 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.fillStyle = "#12151a";
     ctx.fillRect(0, 0, w, h);
 
-    if (layout === "zeit" && mix > 0.5) drawYearBands();
+    // Nicht in der Serien-Ebene: dort liegen die Kacheln auf den
+    // UMAP-Koordinaten ihres Ereignisses und tragen gar kein Datum. Eine
+    // beschriftete Jahresachse darunter ist nicht ungenau, sie gilt nicht.
+    if (layout === "zeit" && mix > 0.5 && mode !== "serien") drawYearBands();
 
     const r = mode === "serien" ? 1 : Math.max(1.1, Math.min(7, cam.scale / 900));
     // `selection` ist null, solange nichts gewaehlt wurde. In der Serien-Ebene
@@ -929,7 +1025,6 @@ export function createScene(canvas, model, hooks = {}) {
     }
     const gap = heldGap;
     const budget = heldBudget;
-    const fits = Math.ceil((w + 2 * gap) / gap) * Math.ceil((h + 2 * gap) / gap);
 
     /* Was mit dem Abstand geschieht -- und das ist der Unterschied, um den
        es geht.
@@ -1138,7 +1233,7 @@ export function createScene(canvas, model, hooks = {}) {
   function labelAt(sx, sy) {
     if (mode === "serien" || cam.scale > 6000) return -1;
     for (const c of model.clusters) {
-      const [wx, wy] = spreadAt(c.x, c.y, c.i);
+      const [wx, wy] = clusterAnchor(c.i);
       const cx = toScreenX(wx), cy = toScreenY(wy);
       const label = model.clusterLabel[c.i];
       const half = label.length * 3.6 + 8;
@@ -1168,7 +1263,7 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (const c of model.clusters) {
-      const [wx, wy] = spreadAt(c.x, c.y, c.i);
+      const [wx, wy] = clusterAnchor(c.i);
       const sx = toScreenX(wx), sy = toScreenY(wy);
       if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
       const label = model.clusterLabel[c.i];
@@ -1378,9 +1473,14 @@ export function createScene(canvas, model, hooks = {}) {
     get layout() { return layout; },
     setLayout(name) {
       if (name === layout) return;
+      /* Aus den *rohen* Koordinaten der bisherigen Anordnung starten, nicht
+         aus px. In px steckt die Spreizung schon drin, und positions() legt
+         nach dem Mischen noch einmal applySpread darueber -- die Spreizung
+         wirkte also doppelt, sichtbar als Sprung zu Beginn des Uebergangs.
+         Bei Regler 0 fiel das nicht auf, weil applySpread dann nichts tut. */
+      fromX = Float32Array.from(model.layouts[layout].x);
+      fromY = Float32Array.from(model.layouts[layout].y);
       layout = name;
-      fromX = Float32Array.from(px);
-      fromY = Float32Array.from(py);
       toX = model.layouts[name].x;
       toY = model.layouts[name].y;
       mix = 0;
@@ -1407,7 +1507,12 @@ export function createScene(canvas, model, hooks = {}) {
     setMinEventSize(n) { minEventSize = n; schedule(); },
     get mode() { return mode; },
     setLassoMode(on) { lassoMode = on; canvas.classList.toggle("lasso", on); },
-    focusCluster(c) { flyTo(c.x, c.y, 5200); },
+    focusCluster(c) {
+      // Denselben Anker wie Beschriftung und Trefferpruefung, sonst fliegt
+      // die Kamera woandershin, als der Name steht.
+      const [wx, wy] = clusterAnchor(c.i);
+      flyTo(wx, wy, 5200);
+    },
     focusSet(indices) { flyToSet(indices); },
     reset() { fitAll(); scene.setLayout("bedeutung"); schedule(); },
     resize() { resize(); schedule(); },
