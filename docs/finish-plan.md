@@ -485,6 +485,18 @@ einen Startwert aus dem Vorzustand oder eine reglerunabhängige kanonische
 Lösung.** fanOut bekam den Startwert, die Weltspreizung läuft einmal, die
 Kontinent-Trennung ist jetzt kanonisch.
 
+**Und ein viertes Mal** (`2d4de35`), als Spiegelbild: der Warmstart nützt
+nichts, wenn ihn jemand wegwirft. Im Verwerf-Schlüssel der Verschiebungen
+stand der gerundete wirksame Abstand — der auf dicht belegten Zoomstufen an
+der Sichtbarenzahl hängt und beim Schwenken laufend springt. Jeder Sprung
+warf alles weg, die Karte jammte sich sichtbar neu fest; auf wunschgebundenen
+Stufen war Ruhe. Gemeldet als „auf bestimmten Zoomstufen, aber nicht auf
+allen". Der Schlüssel enthält jetzt nur noch echte Entscheidungen (Regler,
+Modus, Anordnung, Auswahl) — ein wandernder Abstand ist kein Bruch, sondern
+genau das, was der Warmstart nachzieht. Nachgemessen: Schwenk über 250 px auf
+der stürmischen Stufe, Unruhe durchgehend 0. Die Fußzeile zeigt seither den
+Maßstab, damit Zoomstufen benennbar sind.
+
 ### Zwei weitere Flackerquellen, unabhaengig vom Regler
 
 - **Andere Modi flackern auch.** `scene.js:1030`: `if (capped && drawn >= budget) break;`
