@@ -134,6 +134,14 @@ kannst.
 
 Beim nächsten Mal genügt derselbe Doppelklick; die Antworten sind gemerkt.
 
+> **`start.sh` ist ein Einrichtungsassistent, kein Starter.** Er baut einen
+> eigenen Docker-Verbund mit eigenem Qdrant und hängt den Fotoordner als
+> `/photos` hinein. Wer stattdessen die Installation aus [Ohne Docker
+> entwickeln](#ohne-docker-entwickeln) betreibt — venv, Qdrant aus einem
+> anderen Verbund, Fotos unter einem echten Pfad — nimmt **`start-local.sh`**.
+> Beide zu mischen ergibt zwei verschieden konfigurierte Stapel, deren
+> Indizes auf unterschiedliche Pfade zeigen.
+
 > **Nichts verlässt deinen Rechner.** Weder Fotos noch Gesichter noch Namen.
 > Es gibt keinen Server, bei dem man sich anmeldet.
 
@@ -531,6 +539,33 @@ Prüfen, dass die Gesichtserkennung wirklich auf der GPU landet — ohne
 ```bash
 ~/.venvs/photovault/bin/python -c "import onnxruntime;print(onnxruntime.get_available_providers())"
 ```
+
+### Starten, ohne etwas zu beantworten
+
+`start-local.sh` ist der Starter für diesen Modus: er prüft, statt zu fragen,
+und tut nichts doppelt.
+
+```bash
+./start-local.sh            # starten (oder melden, dass es schon läuft)
+./start-local.sh status     # nur nachsehen
+./start-local.sh restart    # beenden und neu starten
+./start-local.sh logs 60    # die letzten Zeilen
+```
+
+Von Windows aus: Doppelklick auf **`start-local.bat`** — das ruft dasselbe
+Skript in WSL auf und öffnet danach den Browser.
+
+Geprüft wird der Reihe nach: venv, der Foto-Mount, Qdrant, Ollama. Fehlt der
+Mount (`nofail` in `/etc/fstab`, nach einem WSL-Neustart ohne NAS also weg),
+holt das Skript ihn nach und sagt vorher, warum es das sudo-Passwort braucht.
+Fehlt Qdrant, versucht es `docker start qdrant` — der Container gehört zum
+ai-stack, nicht zu PhotoVault. Fehlt Ollama, läuft alles außer
+Bildbeschreibungen und Freitextsuche weiter, und das steht dann dabei.
+
+Abweichende Pfade über Umgebungsvariablen: `PHOTO_DIR`, `API_PORT`,
+`QDRANT_URL`, `OLLAMA_URL`, `VENV`.
+
+Von Hand geht es weiterhin:
 
 ```bash
 # API
