@@ -582,11 +582,18 @@ async function pickFolder(start = "/mnt/photo") {
       return;
     }
     hier = d.path;
-    const teile = d.path.split("/").filter(Boolean);
+    // Die Brotkrumen fangen an der Bibliothekswurzel an, nicht bei `/`.
+    // Vorher stand hier ein festes `/`, und damit war von dieser Seite aus
+    // die ganze Maschine durchsuchbar -- die Schranke im Server weist das
+    // jetzt ab, also darf die Oberflaeche es auch nicht mehr anbieten.
+    const wurzel = (d.root || "").replace(/\/+$/, "");
+    const rest = wurzel && d.path.startsWith(wurzel)
+      ? d.path.slice(wurzel.length) : d.path;
+    const teile = rest.split("/").filter(Boolean);
     box.innerHTML = `
       <div class="pick-crumbs">
-        <button type="button" data-go="/">/</button>
-        ${teile.map((t, i) => `<button type="button" data-go="/${
+        <button type="button" data-go="${esc(wurzel || "/")}">${esc(wurzel || "/")}</button>
+        ${teile.map((t, i) => `<button type="button" data-go="${esc(wurzel)}/${
           teile.slice(0, i + 1).join("/")}">${esc(t)}</button>`).join("<span>/</span>")}
       </div>
       <p class="pick-here">Gewählt: <b>${esc(d.path)}</b></p>

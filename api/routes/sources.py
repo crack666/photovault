@@ -36,6 +36,40 @@ router = APIRouter()
 
 FILE = os.environ.get("PHOTOVAULT_SOURCES", "sources.txt")
 
+
+def _in_der_bibliothek(pfad: str) -> str:
+    """Den Pfad zurueckgeben -- oder abweisen, weil er draussen liegt.
+
+    `browse` nahm jeden absoluten Pfad. Die Brotkrumen im Waehler bieten
+    ausdruecklich `/` an, also war von der Jobs-Seite aus die ganze Maschine
+    durchsuchbar: `/home/<name>/.ssh` listet sich genauso wie ein
+    Fotoordner. Und `add` nahm ebenso jeden Pfad -- damit haette der
+    naechste Lauf die ganze Platte eingelesen.
+
+    Die Schranke ist nicht neu, sie wurde hier nur nicht benutzt:
+    `photo_root()` gibt es fuer das endgueltige Loeschen und fuer die
+    Albumliste, und ihr Docstring nennt `/etc/passwd` als das, was nicht
+    dazugehoert. Erreichbar ueber CORS ist die Schnittstelle fuer
+    `localhost:3000` mit -- ein Lesezugriff von aussen ist also nicht bloss
+    theoretisch.
+
+    Ist keine Wurzel bestimmbar, wird durchgelassen. Anders als beim
+    Loeschen waere fail-closed hier der Einrichtungstod: ohne Quellen gibt
+    es keine Wurzel, und ohne Waehler kaeme man nie zur ersten Quelle.
+    Wer eine zweite Bibliothek woanders hat, setzt `PHOTOVAULT_PHOTO_ROOT`
+    -- die Variable gibt es schon.
+    """
+    from ingest.spaces import photo_root, under_root
+
+    root = photo_root()
+    if not root:
+        return pfad
+    if not under_root(pfad, root):
+        raise HTTPException(
+            403, f"Ausserhalb der Bibliothek ({root}): {pfad}. "
+                 f"PHOTOVAULT_PHOTO_ROOT verschiebt die Grenze.")
+    return pfad
+
 #: Obergrenze fuer den Trockenlauf. Ein Zaehllauf ueber ein NAS kostet Zeit;
 #: mehr als das braucht niemand, um eine Entscheidung zu treffen.
 PREVIEW_CAP = 200_000
@@ -116,7 +150,7 @@ def toggle_source(req: ToggleRequest) -> dict:
 
 @router.post("/add")
 def add_source(req: AddRequest) -> dict:
-    p = req.path.rstrip("/")
+    p = _in_der_bibliothek(req.path.rstrip("/"))
     if not Path(p).is_dir():
         raise HTTPException(400, f"Kein Verzeichnis: {p}")
     s = src.read(FILE)
@@ -171,7 +205,7 @@ BROWSE_CAP = 400
 
 
 @router.get("/browse")
-def browse(path: str = "/") -> dict:
+def browse(path: str = "") -> dict:
     """Unterordner eines Pfades -- damit man nicht tippen muss, was existiert.
 
     Der eigentliche Grund ist nicht Bequemlichkeit: von 34 Zeilen dieser
@@ -182,7 +216,12 @@ def browse(path: str = "/") -> dict:
     Je Ordner steht dabei, wieviele Bilder direkt darin liegen und ob es
     Unterordner gibt -- sonst klickt man sich blind durch einen Baum.
     """
-    p = Path(path or "/")
+    from ingest.spaces import photo_root
+
+    # Ohne Pfad nicht `/`, sondern die Bibliothekswurzel: das ist der Ort,
+    # an dem der Waehler anfangen soll, und `/` war nie eine sinnvolle
+    # Antwort auf "welchen Fotoordner meinst du".
+    p = Path(_in_der_bibliothek(path) if path else (photo_root() or "/"))
     if not p.is_absolute():
         raise HTTPException(400, "Absoluter Pfad erwartet")
     if not p.is_dir():
@@ -224,9 +263,19 @@ def browse(path: str = "/") -> dict:
         d["listed"] = None if e is None else ("exclude" if e.exclude else "include")
         d["enabled"] = None if e is None else e.enabled
 
+    # `root` mitgeben und `parent` an der Wurzel abschneiden: sonst zeigt
+    # die Oberflaeche einen Weg nach oben, den die Schranke gleich mit 403
+    # beantwortet. Ein Knopf, der zuverlaessig scheitert, ist schlimmer als
+    # keiner.
+    root = photo_root()
+    oben = None if p.parent == p else str(p.parent)
+    if root and str(p).rstrip("/") == root.rstrip("/"):
+        oben = None
+
     return {
         "path": str(p),
-        "parent": None if p.parent == p else str(p.parent),
+        "parent": oben,
+        "root": root or None,
         "dirs": dirs,
         "cap": BROWSE_CAP,
     }
