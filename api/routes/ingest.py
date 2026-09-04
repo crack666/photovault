@@ -1,11 +1,15 @@
 """Ingest Routes: Progress, Start, Status."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.qdrant_util import PHOTOS, client
 from ingest.jobs import list_jobs
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -99,3 +103,62 @@ def index_state() -> dict:
                 "means": means, "remedy": remedy,
             })
     return {"total": total, "gaps": gaps}
+
+
+@router.get("/gaps/{vector}")
+def gap_files(vector: str, limit: int = 200) -> dict:
+    """Welche Fotos diesem Vektor fehlen -- namentlich.
+
+    Die Zustandszeile sagte "59 von 14.593 Fotos ohne clip-Vektor" und daneben
+    "Datei pruefen: meist beschaedigt oder nicht lesbar". Das ist ein Hinweis,
+    mit dem man nichts anfangen kann: welche 59? Ohne die Liste ist die
+    Meldung nicht mehr als "es gibt ein Problem, finde es selbst heraus".
+
+    Also die Pfade, und dazu was der Index sonst ueber sie weiss -- die
+    Dateigroesse und ein etwaiger Warnvermerk sagen meist schon, woran es
+    liegt: 0 Bytes, abgeschnittenes JPEG, oder eine Datei, die es nicht mehr
+    gibt.
+    """
+    from qdrant_client.models import Filter, HasVectorCondition
+
+    bekannt = {name for name, _m, _r in _GAPS}
+    if vector not in bekannt:
+        raise HTTPException(404, f"Kein solcher Vektor: {vector}. "
+                                 f"Bekannt: {', '.join(sorted(bekannt))}")
+
+    q = client()
+    fehlend, offset = [], None
+    try:
+        while len(fehlend) < limit:
+            batch, offset = q.scroll(
+                collection_name=PHOTOS, limit=256, offset=offset,
+                with_payload=["file_path", "file_size", "file_warning", "date",
+                              "folder_name", "content_sha256"],
+                with_vectors=False,
+                scroll_filter=Filter(must_not=[HasVectorCondition(has_vector=vector)]),
+            )
+            for p in batch:
+                pl = p.payload or {}
+                fehlend.append({
+                    "id": str(p.id),
+                    "file_path": pl.get("file_path"),
+                    "file_size": pl.get("file_size"),
+                    "warning": pl.get("file_warning"),
+                    "date": pl.get("date"),
+                    "folder_name": pl.get("folder_name"),
+                    # Kein Inhalts-Hash heisst: die Datei war beim Nachtragen
+                    # nicht lesbar. Das ist oft dieselbe Ursache.
+                    "hashed": bool(pl.get("content_sha256")),
+                })
+            if offset is None:
+                break
+    except Exception as e:
+        logger.exception("Luecken-Liste fehlgeschlagen")
+        raise HTTPException(502, f"Nicht abrufbar: {type(e).__name__}: {e}") from e
+
+    return {
+        "vector": vector,
+        "returned": len(fehlend[:limit]),
+        "photos": fehlend[:limit],
+        "truncated": offset is not None,
+    }

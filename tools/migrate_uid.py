@@ -37,8 +37,14 @@ logger = logging.getLogger(__name__)
 BATCH = 512
 
 
+#: Felder, die die Umstellung braucht. `photo_uid` fuer das Wiedererkennen,
+#: `file_path` fuer die Frage "wer liegt an diesem Pfad" -- die ist seit der
+#: eingefrorenen Kennung eine echte Suche und kein Ausrechnen mehr.
+NEEDED_INDEXES = ("photo_uid", "file_path")
+
+
 def ensure_index(q, dry_run: bool) -> str:
-    """Den Index auf `photo_uid` anlegen.
+    """Die Indizes der Umstellung anlegen.
 
     Er entsteht sonst erst beim naechsten Ingest-Lauf (`PHOTO_INDEXES`), und
     bis dahin waere das Wiedererkennen einer verschobenen Datei ein Full Scan
@@ -46,19 +52,23 @@ def ensure_index(q, dry_run: bool) -> str:
     """
     try:
         info = q.get_collection(PHOTOS)
-        vorhanden = "photo_uid" in (getattr(info, "payload_schema", None) or {})
+        da = set((getattr(info, "payload_schema", None) or {}).keys())
     except Exception as e:
         return f"Sammlung nicht lesbar: {e}"
-    if vorhanden:
-        return "war schon da"
+    fehlt = [f for f in NEEDED_INDEXES if f not in da]
+    if not fehlt:
+        return "waren schon da"
     if dry_run:
-        return "fehlt noch"
-    try:
-        q.create_payload_index(collection_name=PHOTOS, field_name="photo_uid",
-                               field_schema="keyword", wait=True)
-        return "angelegt"
-    except Exception as e:
-        return f"FEHLGESCHLAGEN: {type(e).__name__}: {e}"
+        return f"fehlen noch: {', '.join(fehlt)}"
+    gemacht = []
+    for f in fehlt:
+        try:
+            q.create_payload_index(collection_name=PHOTOS, field_name=f,
+                                   field_schema="keyword", wait=True)
+            gemacht.append(f)
+        except Exception as e:
+            gemacht.append(f"{f} FEHLGESCHLAGEN ({type(e).__name__})")
+    return "angelegt: " + ", ".join(gemacht)
 
 
 def load(q) -> list[tuple[str, str, str]]:

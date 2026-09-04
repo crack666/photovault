@@ -62,9 +62,13 @@ def _trifft(point, scroll_filter) -> bool:
 class _Q:
     """Minimal-Qdrant: blättert in Häppchen aus und merkt sich jeden Schreibzugriff."""
 
-    def __init__(self, points=(), upsert_error=None):
+    def __init__(self, points=(), upsert_error=None, write_error=None):
         self.points = list(points)
         self.upsert_error = upsert_error
+        # `migrate_photo` schreibt seit der eingefrorenen Kennung kein
+        # Upsert mehr, sondern ein set_payload -- ein Ausfall muss also dort
+        # eingespritzt werden, sonst prueft der Test nichts mehr.
+        self.write_error = write_error
         self.calls = []
         self.writes = []
 
@@ -93,6 +97,8 @@ class _Q:
 
     def set_payload(self, collection_name, payload, points, wait=True):
         self.writes.append(("set_payload", list(points)))
+        if self.write_error is not None and collection_name == "photos":
+            raise self.write_error
 
     def delete(self, collection_name, points_selector, wait=True):
         self.writes.append(("delete", list(points_selector)))
@@ -453,7 +459,7 @@ class TestDerEchteLaufScheitertNachGruenerProbe:
         q = _Q(
             [_Point(pid, {"file_path": str(foto), "photo_id": photo_id_for(str(foto)),
                           "folder_name": "GC 07"})],
-            upsert_error=RuntimeError("Qdrant nicht erreichbar"),
+            write_error=RuntimeError("Qdrant nicht erreichbar"),
         )
         monkeypatch.setattr(albums, "client", lambda: q)
         monkeypatch.setattr("ingest.reembed.rebuild_text_vectors", lambda *a, **k: {"updated": 0})

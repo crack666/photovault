@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Jobs</title>
-  <link rel="stylesheet" href="/static/styles.css?v=71" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=71" />
-  <link rel="stylesheet" href="/static/jobs.css?v=71" />
+  <link rel="stylesheet" href="/static/styles.css?v=72" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=72" />
+  <link rel="stylesheet" href="/static/jobs.css?v=72" />
 </head>
 <body>
   <header class="top">
@@ -55,8 +55,8 @@
   </main>
 
 <script type="module">
-import { renderNav } from "/static/core/nav.js?v=71";
-import { notify, openModal } from "/static/core/modal.js?v=71";
+import { renderNav } from "/static/core/nav.js?v=72";
+import { notify, openModal } from "/static/core/modal.js?v=72";
 
 renderNav(document.getElementById("nav"), { active: "jobs" });
 
@@ -286,14 +286,69 @@ async function renderGaps() {
     box.classList.toggle("hidden", !gaps.length);
     box.innerHTML = gaps.map(g => `
       <div class="gap">
-        <b>${g.missing.toLocaleString("de-DE")}</b>
-        <span>von ${s.total.toLocaleString("de-DE")} Fotos ohne ${esc(g.vector)}-Vektor
-          — ${esc(g.means)}</span>
-        <i>${esc(g.remedy)}</i>
+        <button type="button" class="gap-head" data-gap="${esc(g.vector)}"
+                title="Zeigen, welche Dateien betroffen sind">
+          <b>${g.missing.toLocaleString("de-DE")}</b>
+          <span>von ${s.total.toLocaleString("de-DE")} Fotos ohne ${esc(g.vector)}-Vektor
+            — ${esc(g.means)}</span>
+          <i>${esc(g.remedy)}</i>
+          <em class="gap-more">welche?</em>
+        </button>
+        <div class="gap-list hidden" id="gap-list-${esc(g.vector)}"></div>
       </div>`).join("");
+    box.querySelectorAll("[data-gap]").forEach(b => {
+      b.addEventListener("click", () => zeigeLuecke(b.dataset.gap));
+    });
   } catch (e) {
     box.classList.add("hidden");
   }
+}
+
+/* Welche Dateien fehlen -- nicht nur wieviele.
+
+   Die Zeile sagte "59 von 14.593 Fotos ohne clip-Vektor" und daneben "Datei
+   pruefen: meist beschaedigt oder nicht lesbar". Damit kann man nichts
+   anfangen: welche 59? Ohne die Liste ist die Meldung nicht mehr als "es
+   gibt ein Problem, finde es selbst heraus".
+
+   Gruppiert nach Ordner, weil dort die Antwort liegt. An diesem Bestand
+   kommen 56 der 59 aus einem einzigen Ordner -- das ist ein Ordnerproblem
+   (eine abgebrochene Kopie), keine 59 Einzelfaelle. Eine flache Liste
+   haette das verborgen. */
+async function zeigeLuecke(vector) {
+  const box = document.getElementById(`gap-list-${vector}`);
+  if (!box) return;
+  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  box.innerHTML = "lädt …";
+  let d;
+  try {
+    d = await api(`/api/ingest/gaps/${encodeURIComponent(vector)}?limit=300`);
+  } catch (e) {
+    box.innerHTML = `<p class="muted">Nicht abrufbar: ${esc(String(e.message || e))}</p>`;
+    return;
+  }
+  const nachOrdner = new Map();
+  for (const p of d.photos) {
+    const ordner = (p.file_path || "").replace(/\/[^/]*$/, "") || "(ohne Pfad)";
+    if (!nachOrdner.has(ordner)) nachOrdner.set(ordner, []);
+    nachOrdner.get(ordner).push(p);
+  }
+  const sortiert = [...nachOrdner.entries()].sort((a, b) => b[1].length - a[1].length);
+  const kb = (b) => b ? `${(b / 1024).toFixed(0)} KB` : "—";
+  box.innerHTML = `
+    ${d.truncated ? `<p class="muted">Die ersten ${d.returned} — es sind mehr.</p>` : ""}
+    ${sortiert.map(([ordner, fotos]) => `
+      <div class="gap-folder">
+        <h4>${esc(ordner)} <em>${fotos.length}</em></h4>
+        <ul>${fotos.map(p => `
+          <li>
+            <span class="gf-name">${esc((p.file_path || "").split("/").pop())}</span>
+            <span class="gf-size">${kb(p.file_size)}</span>
+            ${p.warning ? `<span class="gf-warn">${esc(p.warning)}</span>` : ""}
+            ${p.date ? `<span class="gf-date">${esc(p.date)}</span>` : ""}
+          </li>`).join("")}</ul>
+      </div>`).join("")}`;
 }
 
 async function tick() {
@@ -428,7 +483,7 @@ async function removeSource(line, btn) {
   // einen Ordner zeigt den es nicht gibt, ist Muell -- dafuer einen Dialog
   // aufzumachen waere Zeremonie.
   if (e.exists) {
-    const { askConfirm } = await import("/static/core/modal.js?v=71");
+    const { askConfirm } = await import("/static/core/modal.js?v=72");
     const drin = e.photos > 0 ? ` ${num(e.photos)} Fotos aus diesem Ordner bleiben im Index.` : "";
     if (!await askConfirm({
       title: `Zeile entfernen`,

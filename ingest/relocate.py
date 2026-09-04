@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from ingest.filetimes import rename_same_volume
-from ingest.identity import photo_id_for, point_id_for
+from ingest.identity import photo_id_for, point_id_for, uid_of
 from ingest.spaces import root_from_index
 
 logger = logging.getLogger(__name__)
@@ -43,67 +43,99 @@ def replace_prefix(path: str, old_dir: str, new_dir: str) -> str:
     return path
 
 
+def _at_path(client, photos: str, path: str):
+    """Welcher Punkt liegt (noch) an diesem Pfad?
+
+    Vor Stufe 1 war die Punkt-ID aus dem Pfad gebildet, ein `retrieve`
+    genuegte. Seit die Kennung eingefroren ist, passt sie nach dem ersten
+    Verschieben nicht mehr zum Pfad -- die Frage ist jetzt wirklich "wer
+    liegt hier", und die beantwortet nur eine Suche.
+    """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    filt = Filter(must=[FieldCondition(key="file_path", match=MatchValue(value=path))])
+    batch, _ = client.scroll(
+        collection_name=photos, scroll_filter=filt, limit=2,
+        with_payload=True, with_vectors=False,
+    )
+    if batch:
+        return batch[0]
+    # Rueckfall fuer Punkte, die noch nie migriert wurden: dort stimmt die
+    # alte Rechnung noch.
+    got = client.retrieve(
+        collection_name=photos, ids=[point_id_for(photo_id_for(path))],
+        with_payload=True, with_vectors=False,
+    )
+    return got[0] if got else None
+
+
 def migrate_photo(client, *, old_path: str, new_path: str, folder_name: str | None,
                   photos: str = _PHOTOS, faces: str = _FACES,
                   space_root: str | None = None) -> dict:
-    """Einen Foto-Punkt auf den neuen Pfad-Hash legen, Faces umhängen.
+    """Einen verschobenen Punkt nachziehen -- ohne ihn zu bewegen.
 
-    `space_root` ist die Wurzel, unter der Bereiche gezählt werden. Ohne sie
-    bleibt das Feld `space` stehen wie es war -- und genau das wäre nach einem
-    Verschieben aus dem Dump in die Bibliothek falsch. Die Aufrufer bestimmen
-    die Wurzel einmal je Vorgang und geben sie durch.
+    Vorher war das eine Operation an vier Stellen: den Punkt mit allen drei
+    Vektoren holen, unter einer neuen ID neu schreiben, alle Gesichter
+    umhaengen, den alten loeschen. Nur weil die Kennung `sha256(Pfad)` war
+    und ein Verschieben sie aenderte.
+
+    Seit sie eingefroren ist, bleibt der Punkt, wo er ist. Was sich aendert,
+    ist der Pfad -- und was daran haengt: Albumname und Bereich. Die
+    Gesichter behalten ihre Kennung und brauchen nur den neuen Pfad, weil
+    ihre Zuschnitte aus der Datei kommen.
+
+    Kein Vektor-Rundlauf (512 + 768 + 1024 Fliesskommazahlen je Foto), kein
+    Upsert, kein Loeschen, kein Umhaengen. Und der Vorschaubild-Cache bleibt
+    gueltig, weil er seit Stufe 3 am Inhalt haengt.
+
+    `space_root` ist die Wurzel, unter der Bereiche gezaehlt werden. Ohne sie
+    bliebe `space` stehen wie es war -- und genau das waere nach einem
+    Verschieben aus dem Dump in die Bibliothek falsch.
     """
-    from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-    old_hash = photo_id_for(old_path)
-    new_hash = photo_id_for(new_path)
-    old_id = point_id_for(old_hash)
-    new_id = point_id_for(new_hash)
-    found = client.retrieve(
-        collection_name=photos, ids=[old_id], with_payload=True, with_vectors=True
-    )
-    if not found:
+    punkt = _at_path(client, photos, old_path)
+    if punkt is None:
         raise KeyError(f"Foto nicht im Index: {old_path}")
-    payload = dict(found[0].payload or {})
-    payload["file_path"] = new_path
-    payload["photo_id"] = new_hash
+    payload = dict(punkt.payload or {})
+    uid = uid_of(payload)
+
+    neu_payload = {"file_path": new_path}
     if folder_name:
-        payload["folder_name"] = folder_name
+        neu_payload["folder_name"] = folder_name
     if space_root is not None:
         from ingest.spaces import space_of
 
-        payload["space"] = space_of(new_path, space_root)
-    vectors = found[0].vector
-    if not vectors:
-        vectors = {}
-    client.upsert(
-        collection_name=photos, wait=True,
-        points=[PointStruct(id=new_id, vector=vectors, payload=payload)],
-    )
-    face_hits = []
-    offset = None
-    filt = Filter(must=[FieldCondition(key="photo_id", match=MatchValue(value=old_hash))])
+        neu_payload["space"] = space_of(new_path, space_root)
+    client.set_payload(collection_name=photos, payload=neu_payload,
+                       points=[punkt.id], wait=True)
+
+    # Die Gesichter: ihre Kennung bleibt, nur der Pfad zieht mit. Gesucht
+    # wird ueber die Kennung -- sie ist der Fremdschluessel, und genau
+    # deshalb darf sie sich nicht bewegen.
+    face_hits, offset = [], None
+    filt = Filter(must=[FieldCondition(key="photo_id", match=MatchValue(value=uid))])
     while True:
         batch, offset = client.scroll(
             collection_name=faces, scroll_filter=filt, limit=64,
-            offset=offset, with_payload=True, with_vectors=False,
+            offset=offset, with_payload=False, with_vectors=False,
         )
         face_hits.extend(batch)
         if offset is None:
             break
     if face_hits:
         client.set_payload(
-            collection_name=faces,
-            payload={"photo_id": new_hash, "file_path": new_path},
-            points=[f.id for f in face_hits],
-            wait=True,
+            collection_name=faces, payload={"file_path": new_path},
+            points=[f.id for f in face_hits], wait=True,
         )
-    if old_id != new_id:
-        client.delete(collection_name=photos, points_selector=[old_id], wait=True)
     return {
-        "old_id": old_id,
-        "new_id": new_id,
+        # Beide gleich: der Punkt ist derselbe. Die Felder bleiben, weil
+        # Aufrufer `new_id` fuer ihre Rueckmeldung benutzen.
+        "old_id": punkt.id,
+        "new_id": punkt.id,
+        "uid": uid,
         "faces": len(face_hits),
+        "moved_point": False,
     }
 
 

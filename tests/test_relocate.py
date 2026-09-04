@@ -107,26 +107,79 @@ class FakeClient:
         return items, None
 
 
-def test_migrate_photo_moves_the_point_and_keeps_face_ids():
-    old = "/p/GC 07/a.jpg"
-    new = "/p/Games Convention 2007/a.jpg"
-    old_hash = photo_id_for(old)
-    old_id = point_id_for(old_hash)
-    face = _Point("face-1", {"photo_id": old_hash, "file_path": old})
+def _verschoben(old, new, **kw):
+    """Ein Foto mit einem Gesicht, an den neuen Ort gezogen."""
+    uid = photo_id_for(old)
+    pid = point_id_for(uid)
     client = FakeClient(
-        photos={old_id: _Point(old_id, {"file_path": old, "photo_id": old_hash, "folder_name": "GC 07"},
-                               {"clip": [1.0]})},
-        faces={"face-1": face},
+        photos={pid: _Point(pid, {"file_path": old, "photo_id": uid, "photo_uid": uid,
+                                  "folder_name": "GC 07"}, {"clip": [1.0]})},
+        faces={"face-1": _Point("face-1", {"photo_id": uid, "file_path": old})},
     )
-    out = migrate_photo(client, old_path=old, new_path=new, folder_name="Games Convention 2007")
-    new_id = point_id_for(photo_id_for(new))
-    assert out["new_id"] == new_id
-    assert old_id not in client.photos
-    assert client.photos[new_id].payload["file_path"] == new
-    assert client.photos[new_id].payload["folder_name"] == "Games Convention 2007"
-    assert "face-1" in client.faces
-    assert client.faces["face-1"].payload["photo_id"] == photo_id_for(new)
+    out = migrate_photo(client, old_path=old, new_path=new, **kw)
+    return client, out, pid, uid
+
+
+def test_migrate_photo_laesst_den_punkt_wo_er_ist():
+    """Seit die Kennung eingefroren ist, wandert der Punkt nicht mehr.
+
+    Vorher war ein Verschieben eine Operation an vier Stellen: Punkt mit
+    allen drei Vektoren holen, unter neuer ID schreiben, Gesichter umhaengen,
+    alten loeschen -- nur weil die Kennung `sha256(Pfad)` war. Jetzt aendert
+    sich der Pfad und sonst nichts.
+    """
+    old, new = "/p/GC 07/a.jpg", "/p/Games Convention 2007/a.jpg"
+    client, out, pid, uid = _verschoben(old, new, folder_name="Games Convention 2007")
+
+    assert out["old_id"] == out["new_id"] == pid
+    assert out["moved_point"] is False
+    assert client.deleted == []                      # nichts geloescht
+    assert list(client.photos) == [pid]              # kein zweiter Punkt
+    assert client.photos[pid].payload["file_path"] == new
+    assert client.photos[pid].payload["folder_name"] == "Games Convention 2007"
+    # Die Kennung bleibt -- daran haengen Gesichter, Cache und Labels.
+    assert client.photos[pid].payload["photo_uid"] == uid
+
+
+def test_migrate_photo_laesst_die_gesichtskennung_stehen():
+    """Der Fremdschluessel bewegt sich nicht -- nur der Pfad zieht mit.
+
+    Die Zuschnitte kommen aus der Datei, deshalb braucht das Gesicht den
+    neuen Pfad. Seine Kennung zu aendern waere dagegen genau das, was die
+    Umstellung abschafft.
+    """
+    old, new = "/p/GC 07/a.jpg", "/p/Neu/a.jpg"
+    client, out, _pid, uid = _verschoben(old, new, folder_name="Neu")
+
+    assert out["faces"] == 1
+    assert client.faces["face-1"].payload["photo_id"] == uid
     assert client.faces["face-1"].payload["file_path"] == new
+
+
+def test_migrate_photo_findet_ein_schon_einmal_verschobenes_foto():
+    """Nach dem ersten Verschieben passt die Kennung nicht mehr zum Pfad.
+
+    Genau deshalb wird der Punkt gesucht statt ausgerechnet -- sonst waere
+    das zweite Verschieben desselben Fotos ein "nicht im Index".
+    """
+    erst, dann, drittens = "/p/A/a.jpg", "/p/B/a.jpg", "/p/C/a.jpg"
+    uid = photo_id_for(erst)
+    pid = point_id_for(uid)
+    client = FakeClient(
+        photos={pid: _Point(pid, {"file_path": dann, "photo_id": uid, "photo_uid": uid},
+                            {"clip": [1.0]})},
+        faces={},
+    )
+    out = migrate_photo(client, old_path=dann, new_path=drittens, folder_name="C")
+    assert out["new_id"] == pid
+    assert client.photos[pid].payload["file_path"] == drittens
+
+
+def test_migrate_photo_meldet_ein_unbekanntes_foto():
+    client = FakeClient(photos={}, faces={})
+    with pytest.raises(KeyError, match="nicht im Index"):
+        migrate_photo(client, old_path="/p/weg.jpg", new_path="/p/neu.jpg",
+                      folder_name=None)
 
 
 def test_rename_album_is_a_directory_rename(tmp_path, monkeypatch):

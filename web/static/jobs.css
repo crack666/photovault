@@ -208,3 +208,38 @@
   color: #9fb4d0;
   line-height: 1.45;
 }
+
+/* ---- Welche Dateien fehlen -------------------------------------------
+   Die Zeile sagte nur wieviele. "59 von 14.593" plus "Datei pruefen" ist
+   ein Hinweis, mit dem man nichts anfangen kann -- also aufklappbar, und
+   nach Ordner gruppiert, weil dort die Antwort liegt: an diesem Bestand
+   kommen 56 der 59 aus einem einzigen. */
+
+.gap-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  width: 100%; padding: 0; border: 0; background: transparent;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.gap-head:hover .gap-more { color: var(--text); border-color: var(--accent); }
+.gap-more {
+  font-style: normal; font-size: .72rem; color: var(--muted);
+  border: 1px solid #4a4433; border-radius: 999px; padding: 1px 8px;
+  white-space: nowrap;
+}
+.gap-list { margin-top: 12px; }
+.gap-list.hidden { display: none; }
+.gap-folder { margin-bottom: 12px; }
+.gap-folder h4 {
+  margin: 0 0 4px; font-size: .78rem; font-weight: 600;
+  font-family: ui-monospace, monospace; word-break: break-all;
+}
+.gap-folder h4 em { font-style: normal; color: var(--accent); margin-left: 6px; }
+.gap-folder ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
+.gap-folder li {
+  display: flex; gap: 10px; align-items: baseline;
+  font-size: .76rem; padding: 1px 0;
+}
+.gf-name { font-family: ui-monospace, monospace; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.gf-size { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gf-warn { color: #ffbfc6; white-space: nowrap; }
+.gf-date { color: var(--muted); white-space: nowrap; }
