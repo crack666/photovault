@@ -1,8 +1,14 @@
 """Dateien verschieben und den Index mitziehen.
 
-Physisch immer `rename` auf demselben Volume. Der Qdrant-Punkt wandert auf die
-neue Pfad-ID, Gesichter behalten ihre ID (nur `photo_id`/`file_path` ändern
-sich) — sonst zerbrechen Crop-URLs und Personen-Zuordnungen.
+Physisch immer `rename` auf demselben Volume. Der Qdrant-Punkt bleibt, wo er
+ist — seit `photo_uid` eingefroren ist, hängt die Identität nicht mehr am
+Pfad, und ein Umzug schreibt nur noch `file_path`, `folder_name` und `space`
+um. Gesichter behalten ihre ID ohnehin; sonst zerbrechen Crop-URLs und
+Personen-Zuordnungen.
+
+Die andere Richtung deckt `recognize_moved` ab: eine Datei, die *ausserhalb*
+von PhotoVault verschoben wurde. Ihr Inhalt sagt, dass sie dieselbe ist, ihr
+Pfad nicht.
 """
 from __future__ import annotations
 
@@ -137,6 +143,101 @@ def migrate_photo(client, *, old_path: str, new_path: str, folder_name: str | No
         "faces": len(face_hits),
         "moved_point": False,
     }
+
+
+def orphaned_by_content(client, photos: str = _PHOTOS, exists=None) -> dict[str, list]:
+    """{Inhalts-Hash: Punkte}, deren Datei nicht mehr an ihrem Pfad liegt.
+
+    Der Einstieg in die Wiedererkennung, und zwar von dieser Seite aus statt
+    von den neuen Dateien -- aus Kostengruenden. Wuerde man jede unbekannte
+    Datei hashen, kostete ein Erstlauf 14.593 volle Lesevorgaenge ueber das
+    Netzlaufwerk (gemessen 35,8 ms bei kaltem Seiten-Cache, also rund neun
+    Minuten) und faende garantiert nichts, weil der Index leer ist.
+
+    Umgekehrt ist es ein Scroll plus ein `exists` je Punkt. Ist das Ergebnis
+    leer -- der Normalfall -- wird keine einzige Datei gehasht.
+    """
+    import os
+
+    exists = exists or os.path.exists
+    out: dict[str, list] = {}
+    offset = None
+    while True:
+        batch, offset = client.scroll(
+            collection_name=photos, limit=1024, offset=offset,
+            with_payload=["file_path", "content_sha256"], with_vectors=False,
+        )
+        for p in batch:
+            pl = p.payload or {}
+            h, fp = pl.get("content_sha256"), pl.get("file_path")
+            if not h or not fp or exists(fp):
+                continue
+            out.setdefault(h, []).append(p)
+        if offset is None:
+            return out
+
+
+def recognize_moved(client, files: list[str], *, photos: str = _PHOTOS,
+                    faces: str = _FACES, space_root: str | None = None,
+                    exists=None) -> tuple[list[str], list[dict]]:
+    """Unter unbekannten Dateien die erkennen, die nur verschoben wurden.
+
+    Zurueck kommt (`bleibt`, `erkannt`): die Dateien, die wirklich neu sind,
+    und die Umzuege, die stattdessen eingetragen wurden.
+
+    Bis hierher war eine von aussen verschobene Datei ein *neues* Foto. Name,
+    Beschreibung, Notizen, Bewertung und Gesichter blieben am alten Punkt
+    haengen, dessen Datei es nicht mehr gab -- und niemand merkte es, weil
+    beide Eintraege fuer sich plausibel aussahen. Das ist der Fall, den
+    `photo_uid` loesen sollte; ohne diesen Schritt bliebe die Zusage in
+    `ingest/identity.py` eine Absicht.
+
+    Zwei Regeln, beide gegen stille Datenverluste:
+
+    *Nur ein verwaister Kandidat wird uebernommen.* Liegen mehrere Punkte mit
+    demselben Inhalt verwaist da, ist nicht entscheidbar, welcher gemeint
+    ist. Dann wird die Datei als neu aufgenommen -- ein Eintrag zuviel ist
+    reparierbar, zwei zusammengeworfene Historien nicht.
+
+    *Ein Kandidat, dessen Datei noch existiert, wird nicht angefasst.* Dann
+    ist die neue Datei eine Kopie, kein Umzug. Wuerde man den Punkt
+    uebernehmen, verloere das noch vorhandene Original seinen Eintrag.
+    """
+    from ingest.identity import content_hash
+
+    verwaist = orphaned_by_content(client, photos, exists=exists)
+    if not verwaist:
+        return files, []
+
+    bleibt, erkannt = [], []
+    for f in files:
+        h = content_hash(f)
+        kandidaten = verwaist.get(h or "") or []
+        if len(kandidaten) != 1:
+            if len(kandidaten) > 1:
+                logger.info(
+                    "%s: %d verwaiste Punkte mit gleichem Inhalt -- als neu "
+                    "aufgenommen, statt zu raten", f, len(kandidaten))
+            bleibt.append(f)
+            continue
+        alt = kandidaten[0]
+        alt_pfad = (alt.payload or {}).get("file_path") or ""
+        try:
+            info = migrate_photo(
+                client, old_path=alt_pfad, new_path=f,
+                folder_name=Path(f).parent.name, photos=photos, faces=faces,
+                space_root=space_root,
+            )
+        except Exception as e:
+            logger.warning("Umzug %s -> %s nicht eingetragen: %s", alt_pfad, f, e)
+            bleibt.append(f)
+            continue
+        # Verbraucht: derselbe Punkt darf nicht zwei neue Pfade bekommen.
+        verwaist.pop(h, None)
+        erkannt.append({"old_path": alt_pfad, "new_path": f, "uid": info.get("uid"),
+                        "faces": info.get("faces", 0)})
+        logger.info("wiedererkannt: %s liegt jetzt unter %s", alt_pfad, f)
+    return bleibt, erkannt
 
 
 def plan_album_rename(src: Path, new_name: str) -> dict:

@@ -237,6 +237,12 @@ class IngestPipeline:
             files = self._drop_already_indexed(writer, files)
             self.progress.skipped += before - len(files)
             logger.info("Resume: %d already indexed, %d to process", before - len(files), len(files))
+            # Und unter dem Rest die, die nur ausserhalb von PhotoVault
+            # verschoben wurden. Ohne diesen Schritt entsteht daraus ein
+            # zweites Foto, waehrend Name, Notizen und Gesichter am alten
+            # Punkt haengen bleiben, dessen Datei es nicht mehr gibt.
+            if files:
+                files = self._recognize_moved(writer, files)
 
         if self.config.limit is not None:
             files = files[: self.config.limit]
@@ -791,6 +797,29 @@ class IngestPipeline:
                 logger.warning("Resume lookup failed, processing all: %s", e)
                 return files
         return [f for f, pid in zip(files, ids) if pid not in existing]
+
+    def _recognize_moved(self, writer, files: list[str]) -> list[str]:
+        """Verschobene Dateien am Inhalt erkennen, statt sie neu aufzunehmen.
+
+        Schlaegt der Schritt fehl, wird normal weiterindiziert: ein Foto
+        doppelt im Index ist ein Aergernis, ein abgebrochener Lauf kostet
+        Stunden.
+        """
+        from ingest.relocate import recognize_moved
+
+        try:
+            bleibt, erkannt = recognize_moved(
+                writer.client, files, photos=self.config.collection,
+                space_root=getattr(writer, "space_root", None),
+            )
+        except Exception as e:
+            logger.warning("Wiedererkennung uebersprungen: %s", e)
+            return files
+        if erkannt:
+            self.progress.skipped += len(erkannt)
+            logger.info("%d Datei(en) als verschoben wiedererkannt, nicht neu aufgenommen",
+                        len(erkannt))
+        return bleibt
 
 
 def _dry_run(sources: list[str], exclude: list[str]) -> None:

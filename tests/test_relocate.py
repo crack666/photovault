@@ -274,3 +274,136 @@ def test_move_photos_takes_only_the_series(tmp_path, monkeypatch):
     assert (dest / "hutte.jpg").read_bytes() == b"go"
     assert keep.is_file()
     assert not move.exists()
+
+
+class TestRecognizeMoved:
+    """Eine ausserhalb von PhotoVault verschobene Datei ist dieselbe Datei.
+
+    Bis Stufe 4b wurde daraus ein *zweites* Foto: der neue Pfad kam als
+    Neuaufnahme in den Index, waehrend Name, Beschreibung, Notizen,
+    Bewertung und Gesichter am alten Punkt hingen, dessen Datei es nicht
+    mehr gab. Beide Eintraege sahen fuer sich plausibel aus -- deshalb fiel
+    es nicht auf.
+    """
+
+    def _index(self, eintraege):
+        """eintraege: [(pfad, inhalts_hash)] -- ein Punkt je Eintrag."""
+        photos, faces = {}, {}
+        for i, (pfad, h) in enumerate(eintraege):
+            uid = photo_id_for(pfad)
+            pid = point_id_for(uid)
+            photos[pid] = _Point(pid, {"file_path": pfad, "photo_id": uid,
+                                       "photo_uid": uid, "content_sha256": h,
+                                       "person_names": ["Sophie"]})
+            faces[f"face-{i}"] = _Point(f"face-{i}", {"photo_id": uid, "file_path": pfad})
+        return FakeClient(photos=photos, faces=faces)
+
+    def test_verschobene_datei_behaelt_ihren_punkt(self, tmp_path, monkeypatch):
+        from ingest import relocate
+
+        neu = tmp_path / "Alben" / "GC 07" / "a.jpg"
+        neu.parent.mkdir(parents=True)
+        neu.write_bytes(b"bild")
+        client = self._index([("/alt/a.jpg", "hash-a")])
+        monkeypatch.setattr(relocate, "_PHOTOS", "photos")
+        monkeypatch.setattr("ingest.identity.content_hash", lambda p, **kw: "hash-a")
+
+        bleibt, erkannt = relocate.recognize_moved(client, [str(neu)])
+
+        assert bleibt == []
+        assert len(erkannt) == 1 and erkannt[0]["old_path"] == "/alt/a.jpg"
+        # Derselbe Punkt, neuer Pfad -- und die Zuordnung ist noch dran.
+        punkt = next(iter(client.photos.values()))
+        assert punkt.payload["file_path"] == str(neu)
+        assert punkt.payload["person_names"] == ["Sophie"]
+        assert client.faces["face-0"].payload["file_path"] == str(neu)
+
+    def test_kopie_wird_nicht_uebernommen(self, tmp_path, monkeypatch):
+        """Liegt das Original noch da, ist die neue Datei eine Kopie.
+
+        Wuerde der Punkt mitwandern, verlore das vorhandene Original seinen
+        Eintrag -- ein stiller Verlust an der Stelle, die niemand ansieht.
+        """
+        from ingest import relocate
+
+        alt = tmp_path / "alt" / "a.jpg"
+        alt.parent.mkdir(parents=True)
+        alt.write_bytes(b"bild")
+        neu = tmp_path / "neu" / "a.jpg"
+        neu.parent.mkdir(parents=True)
+        neu.write_bytes(b"bild")
+        client = self._index([(str(alt), "hash-a")])
+        monkeypatch.setattr("ingest.identity.content_hash", lambda p, **kw: "hash-a")
+
+        bleibt, erkannt = relocate.recognize_moved(client, [str(neu)])
+
+        assert bleibt == [str(neu)] and erkannt == []
+        assert client.photos[point_id_for(photo_id_for(str(alt)))].payload["file_path"] == str(alt)
+
+    def test_mehrdeutigkeit_wird_nicht_geraten(self, tmp_path, monkeypatch):
+        """Zwei verwaiste Punkte mit gleichem Inhalt: nicht entscheidbar.
+
+        Ein Eintrag zuviel ist reparierbar, zwei zusammengeworfene
+        Historien nicht.
+        """
+        from ingest import relocate
+
+        neu = tmp_path / "a.jpg"
+        neu.write_bytes(b"bild")
+        client = self._index([("/weg/eins.jpg", "hash-a"), ("/weg/zwei.jpg", "hash-a")])
+        monkeypatch.setattr("ingest.identity.content_hash", lambda p, **kw: "hash-a")
+
+        bleibt, erkannt = relocate.recognize_moved(client, [str(neu)])
+
+        assert bleibt == [str(neu)] and erkannt == []
+
+    def test_ohne_verwaiste_punkte_wird_nichts_gehasht(self, tmp_path, monkeypatch):
+        """Der Normalfall darf nichts kosten.
+
+        Von den neuen Dateien aus gedacht waere ein Erstlauf 14.593 volle
+        Lesevorgaenge ueber das Netzlaufwerk -- rund neun Minuten, um
+        garantiert nichts zu finden.
+        """
+        from ingest import relocate
+
+        alt = tmp_path / "a.jpg"
+        alt.write_bytes(b"bild")
+        client = self._index([(str(alt), "hash-a")])
+        gehasht = []
+        monkeypatch.setattr("ingest.identity.content_hash",
+                            lambda p, **kw: gehasht.append(p) or "hash-x")
+
+        bleibt, erkannt = relocate.recognize_moved(client, ["/neu/b.jpg"])
+
+        assert bleibt == ["/neu/b.jpg"] and erkannt == []
+        assert gehasht == []
+
+    def test_unlesbare_datei_bleibt_neu(self, tmp_path, monkeypatch):
+        from ingest import relocate
+
+        client = self._index([("/weg/a.jpg", "hash-a")])
+        monkeypatch.setattr("ingest.identity.content_hash", lambda p, **kw: None)
+
+        bleibt, erkannt = relocate.recognize_moved(client, ["/neu/b.jpg"])
+
+        assert bleibt == ["/neu/b.jpg"] and erkannt == []
+
+    def test_ein_punkt_bekommt_nicht_zwei_neue_pfade(self, tmp_path, monkeypatch):
+        """Zwei bitidentische neue Dateien, ein verwaister Punkt.
+
+        Der erste Treffer verbraucht den Punkt; die zweite Datei ist neu.
+        Ohne das bekaeme derselbe Punkt zweimal einen neuen Pfad, und der
+        zuerst eingetragene waere wieder verloren.
+        """
+        from ingest import relocate
+
+        a = tmp_path / "a.jpg"
+        b = tmp_path / "b.jpg"
+        a.write_bytes(b"bild")
+        b.write_bytes(b"bild")
+        client = self._index([("/weg/x.jpg", "hash-a")])
+        monkeypatch.setattr("ingest.identity.content_hash", lambda p, **kw: "hash-a")
+
+        bleibt, erkannt = relocate.recognize_moved(client, [str(a), str(b)])
+
+        assert len(erkannt) == 1 and bleibt == [str(b)]
