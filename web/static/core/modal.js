@@ -11,6 +11,25 @@
 
 let host = null;
 let escHandler = null;
+let keyHandler = null;
+let rueckgabe = null;
+
+/* Was in einem Dialog die Tastatur annimmt.
+
+   `footer button` allein genuegt nicht: der Rumpf traegt Eingabefelder, der
+   Kopf das Kreuz zum Schliessen, und der Ordnerwaehler legt eine ganze
+   Liste von Knoepfen hinein. Was nicht in dieser Liste steht, ist mit Tab
+   nicht erreichbar -- und was `disabled` ist, soll es auch nicht sein
+   (`setBusy` schaltet die Fussknoepfe waehrend eines Laufs ab). */
+const NIMMT_FOKUS = [
+  "a[href]", "button:not([disabled])", "input:not([disabled])",
+  "select:not([disabled])", "textarea:not([disabled])", "[tabindex]",
+].join(",");
+
+function fokussierbare(root) {
+  return [...root.querySelectorAll(NIMMT_FOKUS)]
+    .filter((el) => el.tabIndex !== -1 && el.offsetParent !== null);
+}
 
 function ensureHost() {
   if (host) return host;
@@ -52,7 +71,18 @@ export function openModal({ title, lead = "", body = "", buttons = [] }) {
     h.classList.add("hidden");
     h.innerHTML = "";
     if (escHandler) document.removeEventListener("keydown", escHandler);
+    if (keyHandler) document.removeEventListener("keydown", keyHandler, true);
     escHandler = null;
+    keyHandler = null;
+    // Den Fokus dorthin zurueck, wo er herkam. Ohne das landet er nach dem
+    // Schliessen auf <body>, und der naechste Tab faengt oben in der
+    // Navigationsleiste an -- wer den Dialog aus einer Liste weit unten
+    // geoeffnet hat, sucht seine Stelle von Hand wieder.
+    const zurueck = rueckgabe;
+    rueckgabe = null;
+    if (zurueck && zurueck.isConnected && typeof zurueck.focus === "function") {
+      zurueck.focus();
+    }
     if (settle) { const s = settle; settle = null; s(answer); }
   }
 
@@ -67,6 +97,40 @@ export function openModal({ title, lead = "", body = "", buttons = [] }) {
   escHandler = (e) => { if (e.key === "Escape") close(null); };
   document.addEventListener("keydown", escHandler);
 
+  // `aria-modal="true"` steht oben im Markup -- das ist ein Versprechen an
+  // Vorlesewerkzeuge, dass ausserhalb dieses Dialogs nichts erreichbar ist.
+  // Fuer die Tastatur galt es nicht: Tab lief aus dem Dialog heraus in die
+  // Seite dahinter, wo man Knoepfe bedienen konnte, die der Dialog gerade
+  // verdeckt. Ein Markup, das etwas behauptet, was die Bedienung nicht
+  // einhaelt, ist schlimmer als eines, das nichts behauptet.
+  //
+  // In der Erfassungsphase (`true`), damit ein Aufrufer mit eigenem
+  // Tab-Handler im Rumpf nicht vorher abbricht.
+  keyHandler = (e) => {
+    if (e.key !== "Tab") return;
+    const kette = fokussierbare(root);
+    if (!kette.length) return;
+    const erste = kette[0];
+    const letzte = kette[kette.length - 1];
+    // Auch der Fall "Fokus liegt draussen": dann hereinholen, statt den
+    // Sprung ins Nichts zuzulassen.
+    if (!root.contains(document.activeElement)) {
+      e.preventDefault();
+      (e.shiftKey ? letzte : erste).focus();
+      return;
+    }
+    if (e.shiftKey && document.activeElement === erste) {
+      e.preventDefault();
+      letzte.focus();
+    } else if (!e.shiftKey && document.activeElement === letzte) {
+      e.preventDefault();
+      erste.focus();
+    }
+  };
+  document.addEventListener("keydown", keyHandler, true);
+
+  // Vor dem ersten `focus()` merken, wohin es zurueckgeht.
+  rueckgabe = document.activeElement;
   const first = root.querySelector("input, select, textarea, footer button");
   if (first) first.focus();
 
