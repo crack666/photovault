@@ -9,10 +9,10 @@
    benannter Mensch ist. Das ist die Arbeit, die mitverloren geht — und man
    soll es vorher wissen, nicht hinterher. */
 
-import { $, escapeHtml, num } from "../core/dom.js?v=66";
-import { api, thumbUrl } from "../core/api.js?v=66";
-import { openModal } from "../core/modal.js?v=66";
-import { showLightbox } from "../lightbox/index.js?v=66";
+import { $, escapeHtml, num } from "../core/dom.js";
+import { api, thumbUrl } from "../core/api.js";
+import { openModal } from "../core/modal.js";
+import { showLightbox } from "../lightbox/index.js";
 
 const PAGE = 60;
 

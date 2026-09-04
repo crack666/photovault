@@ -1,14 +1,14 @@
-import { api, cropUrl } from "./core/api.js?v=66";
-import { $, escapeHtml } from "./core/dom.js?v=66";
-import { faceStatsLine } from "./core/format.js?v=66";
-import { refreshEventNames, refreshPersonNames } from "./core/names.js?v=66";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js?v=66";
-import { forgetPeopleList } from "./core/people.js?v=66";
-import { bindEvents, loadEventTab } from "./events/index.js?v=66";
-import { bindLightbox } from "./lightbox/index.js?v=66";
-import { bindPeople, loadPeople } from "./people/index.js?v=66";
-import { bindSearch, loadPersonPicker } from "./search/index.js?v=66";
-import { bindUnknown, loadCandidates, loadUnknown } from "./unknown/index.js?v=66";
+import { api, cropUrl } from "./core/api.js";
+import { $, escapeHtml } from "./core/dom.js";
+import { faceStatsLine } from "./core/format.js";
+import { refreshEventNames, refreshPersonNames } from "./core/names.js";
+import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js";
+import { forgetPeopleList } from "./core/people.js";
+import { bindEvents, loadEventTab } from "./events/index.js";
+import { bindLightbox } from "./lightbox/index.js";
+import { bindPeople, loadPeople } from "./people/index.js";
+import { bindSearch, loadPersonPicker } from "./search/index.js";
+import { bindUnknown, loadCandidates, loadUnknown } from "./unknown/index.js";
 
 const state = { clusters: [], index: 0, remaining: 0 };
 
@@ -27,7 +27,7 @@ function showTab(name) {
 
 /* Der Atlas kommt als eigenes Modul und erst, wenn er gebraucht wird.
 
-   Das `?v=66` an jedem Import ist kein Schmuck: ein `import "./model.js"` ohne
+   Das `` an jedem Import ist kein Schmuck: ein `import "./model.js"` ohne
    Parameter liefert aus dem Browser-Cache beliebig lange die alte Fassung,
    auch wenn index.html schon die neue erwartet. Genau das ist passiert. Die
    Zahl gilt fuer alle Module gemeinsam und wird gemeinsam erhoeht.
@@ -36,13 +36,13 @@ function showTab(name) {
    und app.js nichts exportiert. Seit sie ein eigenes Modul ist, importiert
    er sie selbst -- der deps-Umweg ist ersatzlos entfallen. */
 async function openAtlas() {
-  const { initAtlas } = await import("./atlas/index.js?v=66");
+  const { initAtlas } = await import("./atlas/index.js");
   await initAtlas();
 }
 
 let trashBound = false;
 async function openTrash() {
-  const mod = await import("./trash/index.js?v=66");
+  const mod = await import("./trash/index.js");
   if (!trashBound) { mod.bindTrash(); trashBound = true; }
   await mod.initTrash();
 }

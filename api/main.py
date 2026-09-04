@@ -91,6 +91,19 @@ class FreshStatic(StaticFiles):
     `no-cache` heisst nicht "nicht speichern", sondern "vorher nachfragen".
     StaticFiles beantwortet die Nachfrage mit 304, solange sich nichts
     geaendert hat -- es kostet also einen lokalen Rundlauf, keine Uebertragung.
+
+    **Deshalb gibt es keine `?v=`-Stempel mehr.** Es waren 80 in 16 Dateien,
+    von Hand gepflegt -- und sie standen auf zwei verschiedenen Werten (74
+    auf 66, 6 auf 72). Eine Schutzmassnahme, die niemand mehr nachzieht,
+    schuetzt nicht, sie taeuscht: an einer nicht erhoehten Zahl sieht man
+    nicht, ob sie stimmt oder vergessen wurde. Dazu kam, dass sie das
+    Problem gar nicht deckten, um das es hier geht -- ein Modul-Import ohne
+    Stempel laedt trotzdem die alte Fassung. Das loest nur dieser Header,
+    und er loest es fuer alle Dateien gleich.
+
+    Wer statische Dateien einmal hinter einen Cache stellt, der `no-cache`
+    ignoriert, braucht wieder einen Stempel -- dann aber einen berechneten,
+    keinen getippten.
     """
 
     async def get_response(self, path: str, scope):
