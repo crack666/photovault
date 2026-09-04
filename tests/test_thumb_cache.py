@@ -113,3 +113,106 @@ class TestAtlasGroessen:
         # 1280 fuer alle waeren 2,4 GB fuer eine Ansicht, die man je Foto
         # einmal aufmacht -- die entsteht bei Bedarf.
         assert thumbs.ATLAS_SIZES == (160, 320)
+
+
+class TestSchluessel:
+    """Stufe 3: der Cache haengt am Inhalt, nicht am Pfad.
+
+    Das ist die Stelle, an der die 14.858 Waisen entstanden sind: der
+    Schluessel war `sha256(pfad)`, und ein Verschieben machte jede Kachel
+    ungueltig. Mit dem Inhalts-Hash macht es gar nichts -- gleiche Bytes,
+    gleiche Kachel.
+
+    Der Pfad-Schluessel bleibt *lesbar*, bis `--rekey` die vorhandenen 295 MB
+    umbenannt hat. Eine Umstellung, die ein Neurechnen ueber das
+    Netzlaufwerk ausloest, waere schlimmer als das Problem.
+    """
+
+    def test_ohne_hash_bleibt_der_pfad(self):
+        from api.thumbs import cache_keys
+
+        schreiben, suchen = cache_keys("/foto/a.jpg")
+        assert schreiben == "/foto/a.jpg"
+        assert suchen == ["/foto/a.jpg"]
+
+    def test_mit_hash_wird_der_inhalt_geschrieben(self):
+        from api.thumbs import cache_keys
+
+        schreiben, suchen = cache_keys("/foto/a.jpg", content_hash="abc")
+        assert schreiben == "sha256:abc"
+        # Der Pfad bleibt in der Suche -- sonst waeren die vorhandenen
+        # Kacheln von einem Moment auf den anderen unsichtbar.
+        assert suchen == ["sha256:abc", "/foto/a.jpg"]
+
+    def test_verschieben_aendert_den_schreibschluessel_nicht(self):
+        from api.thumbs import cache_keys
+
+        vorher, _ = cache_keys("/alt/a.jpg", content_hash="abc")
+        nachher, _ = cache_keys("/neu/tief/a.jpg", content_hash="abc")
+        assert vorher == nachher
+
+    def test_bitidentische_dateien_teilen_die_kachel(self):
+        from api.thumbs import cache_keys
+
+        a, _ = cache_keys("/foto/a.jpg", content_hash="gleich")
+        b, _ = cache_keys("/foto/kopie.jpg", content_hash="gleich")
+        assert a == b
+
+    def test_gesichtszuschnitt_haengt_am_kasten(self):
+        from api.thumbs import cache_keys
+
+        ganz, _ = cache_keys("/a.jpg", content_hash="abc")
+        eins, _ = cache_keys("/a.jpg", box=[1, 2, 3, 4], content_hash="abc")
+        zwei, _ = cache_keys("/a.jpg", box=[9, 9, 9, 9], content_hash="abc")
+        assert ganz != eins != zwei
+        assert eins.startswith("sha256:abc|")
+
+    def test_pad_geht_in_den_schluessel_ein(self):
+        from api.thumbs import cache_keys
+
+        a, _ = cache_keys("/a.jpg", box=[1, 2, 3, 4], pad=0.2, content_hash="x")
+        b, _ = cache_keys("/a.jpg", box=[1, 2, 3, 4], pad=0.5, content_hash="x")
+        assert a != b
+
+    def test_leerer_hash_gilt_als_keiner(self):
+        from api.thumbs import cache_keys
+
+        # Ein noch nicht nachgetragenes Foto darf nicht unter "sha256:"
+        # landen -- das waere ein Schluessel fuer alle.
+        schreiben, suchen = cache_keys("/a.jpg", content_hash="")
+        assert schreiben == "/a.jpg" and suchen == ["/a.jpg"]
+
+
+class TestFindCached:
+    def test_findet_unter_dem_ersten_treffer(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        lege(tmp_path, "/a.jpg", 160)
+        assert th._find_cached(["sha256:x", "/a.jpg"], 160) is not None
+
+    def test_nimmt_den_inhalt_vor_dem_pfad(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        lege(tmp_path, "sha256:x", 160, b"neu")
+        lege(tmp_path, "/a.jpg", 160, b"alt")
+        f = th._find_cached(["sha256:x", "/a.jpg"], 160)
+        assert f.read_bytes() == b"neu"
+
+    def test_nichts_da(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        assert th._find_cached(["sha256:x"], 160) is None
+
+    def test_leere_schluessel_werden_uebersprungen(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        lege(tmp_path, "/a.jpg", 160)
+        assert th._find_cached(["", None, "/a.jpg"], 160) is not None

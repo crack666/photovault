@@ -356,7 +356,7 @@ class IngestPipeline:
                         # Jetzt gleich, solange die Datei ohnehin gelesen wird --
                         # sonst zahlt die erste Suche 48 SMB-Reads auf einmal.
                         with t.stage("thumb"):
-                            _make_thumb(fp, rgb)
+                            _make_thumb(fp, rgb, record.content_sha256)
 
                     with t.stage("normalize"):
                         normalizer.normalize(record)
@@ -519,7 +519,7 @@ class IngestPipeline:
                         record._caption_b64 = jpeg_b64(fp, image=rgb)
                 if cfg.thumbs:
                     with _Timed(clock, "  io:thumb"):
-                        _make_thumb(fp, rgb)
+                        _make_thumb(fp, rgb, record.content_sha256)
 
                 # Beides ist reine CPU-Arbeit und gehoert deshalb hierher, nicht
                 # in den GPU-Thread: die BGR-Kopie kostet bei 12 MP rund 36 MB,
@@ -961,12 +961,12 @@ def _load_image(file_path: str):
         return None, None, "unreadable"
 
 
-def _make_thumb(file_path: str, image=None) -> None:
+def _make_thumb(file_path: str, image=None, content_hash: str | None = None) -> None:
     """Vorschaubild in den Cache legen. Ein Fehler hier darf den Ingest nie stoppen."""
     try:
         from api.thumbs import get_thumb
 
-        get_thumb(file_path, size=320, image=image)
+        get_thumb(file_path, size=320, image=image, content_hash=content_hash)
     except Exception as e:
         logger.debug("Thumb generation failed for %s: %s", file_path, e)
 

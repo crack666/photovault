@@ -53,19 +53,33 @@ def _cache_path(key: str, size: int) -> Path:
     return CACHE_DIR / _rel(key, size)
 
 
-def _find_cached(key: str, size: int) -> Path | None:
-    """Ein vorhandenes Vorschaubild -- neuer Ort zuerst, alter als Rueckfall.
+def _find_cached(keys: str | list[str], size: int) -> Path | None:
+    """Ein vorhandenes Vorschaubild zu einem der Schluessel.
 
-    Ohne den Rueckfall waere der Umzug des Cache-Ortes ein stiller Neuaufbau
-    von 651 MB ueber das Netzlaufwerk. So merkt man ihn nicht.
+    Zwei Rueckfaelle, jeder aus demselben Grund: eine Umstellung darf nicht
+    heissen, dass 295 MB ueber das Netzlaufwerk neu entstehen.
+
+    *Ueber die Schluessel*, weil Stufe 3 den Cache vom Pfad auf den
+    Inhalts-Hash umstellt. Der Pfad-Schluessel bleibt lesbar, bis
+    `tools/thumbs.py --rekey` die Kacheln umbenannt hat -- umbenennen ist
+    billig, neu rechnen nicht.
+
+    *Ueber die Orte*, weil der Cache vom Heimatverzeichnis ins
+    Arbeitsverzeichnis gezogen ist.
     """
-    rel = _rel(key, size)
-    neu = CACHE_DIR / rel
-    if neu.is_file():
-        return neu
-    alt = LEGACY_CACHE / rel
-    if LEGACY_CACHE != CACHE_DIR and alt.is_file():
-        return alt
+    if isinstance(keys, str):
+        keys = [keys]
+    for key in keys:
+        if not key:
+            continue
+        rel = _rel(key, size)
+        neu = CACHE_DIR / rel
+        if neu.is_file():
+            return neu
+        if LEGACY_CACHE != CACHE_DIR:
+            alt = LEGACY_CACHE / rel
+            if alt.is_file():
+                return alt
     return None
 
 
@@ -79,14 +93,36 @@ def get_thumb(
     box: list | None = None,
     pad: float = 0.35,
     image=None,
+    content_hash: str | None = None,
 ) -> bytes:
     """JPEG liefern; beim ersten Mal erzeugen. `box` schneidet ein Gesicht aus.
 
     `image` ist ein bereits geladenes PIL-Image -- der Ingest reicht es durch,
     statt die Datei ein weiteres Mal zu dekodieren.
     """
-    data, _warn = make_thumb(file_path, size=size, box=box, pad=pad, image=image)
+    data, _warn = make_thumb(file_path, size=size, box=box, pad=pad, image=image,
+                             content_hash=content_hash)
     return data
+
+
+def cache_keys(file_path: str, box=None, pad: float = 0.35,
+               content_hash: str | None = None) -> tuple[str, list[str]]:
+    """(Schluessel zum Schreiben, Schluessel zum Suchen).
+
+    Geschrieben wird unter dem Inhalts-Hash, sobald er bekannt ist -- gleiche
+    Bytes heissen dann gleiche Kachel, und ein Verschieben macht nichts
+    ungueltig. Gesucht wird zusaetzlich unter dem Pfad, solange noch Kacheln
+    aus der Zeit davor liegen.
+
+    Der Zuschnitt eines Gesichts haengt am Kasten, nicht nur am Bild --
+    deshalb geht er in beide Schluessel ein.
+    """
+    zusatz = f"|{box}|{pad}" if box else ""
+    pfad_key = f"{file_path}{zusatz}"
+    if not content_hash:
+        return pfad_key, [pfad_key]
+    inhalt_key = f"sha256:{content_hash}{zusatz}"
+    return inhalt_key, [inhalt_key, pfad_key]
 
 
 def make_thumb(
@@ -95,11 +131,12 @@ def make_thumb(
     box: list | None = None,
     pad: float = 0.35,
     image=None,
+    content_hash: str | None = None,
 ) -> tuple[bytes, str | None]:
     """Wie get_thumb, plus Warnung wenn die Datei unvollständig oder unlesbar ist."""
     size = normalize_size(size)
-    key = f"{file_path}|{box}|{pad}" if box else file_path
-    vorhanden = _find_cached(key, size)
+    key, suchen = cache_keys(file_path, box, pad, content_hash)
+    vorhanden = _find_cached(suchen, size)
     if vorhanden is not None:
         try:
             return vorhanden.read_bytes(), None

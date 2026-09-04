@@ -185,6 +185,69 @@ def move() -> int:
     return n
 
 
+def rekey(sizes) -> int:
+    """Vorhandene Kacheln vom Pfad- auf den Inhalts-Schluessel umbenennen.
+
+    Stufe 3 stellt den Cache-Schluessel um. Ohne diesen Lauf lesen alte
+    Kacheln weiter (der Rueckfall in `_find_cached` sorgt dafuer), aber jede
+    Verschiebung wuerde ab dann eine zweite Kachel erzeugen. Umbenennen ist
+    ein Verzeichniseintrag; neu rechnen waeren 295 MB ueber das
+    Netzlaufwerk.
+
+    Fotos ohne Inhalts-Hash bleiben unberuehrt -- fuer sie gibt es noch
+    keinen neuen Schluessel. `tools/backfill_hash.py` holt das nach.
+    """
+    from api.thumbs import _rel, cache_keys
+
+    q = client()
+    paare, offset = [], None
+    while True:
+        batch, offset = q.scroll(
+            collection_name=PHOTOS, limit=512, offset=offset,
+            with_payload=["file_path", "content_sha256"], with_vectors=False,
+        )
+        for p in batch:
+            pl = p.payload or {}
+            fp, h = pl.get("file_path"), pl.get("content_sha256")
+            if fp and h:
+                paare.append((fp, h))
+        if offset is None:
+            break
+
+    if not paare:
+        print("Kein Foto hat einen Inhalts-Hash -- erst tools/backfill_hash.py.")
+        return 0
+
+    umbenannt = schon = fehlt = 0
+    for fp, h in paare:
+        neu_key, _ = cache_keys(fp, None, 0.35, h)
+        alt_key = fp
+        for s_ in sizes:
+            ziel = CACHE_DIR / _rel(neu_key, s_)
+            if ziel.is_file():
+                schon += 1
+                continue
+            quelle = None
+            for basis in (CACHE_DIR, LEGACY_CACHE):
+                kandidat = basis / _rel(alt_key, s_)
+                if kandidat.is_file():
+                    quelle = kandidat
+                    break
+            if quelle is None:
+                fehlt += 1
+                continue
+            try:
+                ziel.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(quelle), str(ziel))
+                umbenannt += 1
+            except OSError as e:
+                logger.debug("konnte %s nicht umbenennen: %s", quelle, e)
+                fehlt += 1
+    print(f"{umbenannt} Kacheln umbenannt, {schon} lagen schon richtig, "
+          f"{fehlt} nicht gefunden.")
+    return umbenannt
+
+
 def warm(zus, sizes) -> int:
     q = client()
     nach_digest = {digest(p): p for p in indexed_paths(q)}
@@ -207,7 +270,7 @@ def warm(zus, sizes) -> int:
         except Exception as e:
             logger.debug("%s (%s px): %s", p, s, e)
         if i % 200 == 0:
-            print(f"  {i}/{len(todo)}")
+            print(f"  {i}/{len(todo)}", flush=True)
     print(f"{fertig} von {len(todo)} erzeugt.")
     return fertig
 
@@ -218,6 +281,8 @@ def main(argv=None) -> int:
     ap.add_argument("--prune", action="store_true", help="verwaiste Kacheln loeschen")
     ap.add_argument("--move", action="store_true", help="vom alten Ort herueberschieben")
     ap.add_argument("--warm", action="store_true", help="fehlende Kacheln erzeugen")
+    ap.add_argument("--rekey", action="store_true",
+                    help="vom Pfad- auf den Inhalts-Schluessel umbenennen")
     ap.add_argument("--sizes", default=",".join(str(s) for s in ATLAS_SIZES),
                     help="welche Groessen, mit Komma getrennt")
     args = ap.parse_args(argv)
@@ -228,6 +293,9 @@ def main(argv=None) -> int:
     sizes = [int(x) for x in args.sizes.split(",") if x.strip()]
     if args.move:
         move()
+        print()
+    if args.rekey:
+        rekey(sizes)
         print()
     zus = report(sizes)
     if args.prune:

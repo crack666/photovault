@@ -340,7 +340,8 @@ def photo_thumb(point_id: str, size: int = 320):
     q = client()
     try:
         points = q.retrieve(
-            collection_name=PHOTOS, ids=[point_id], with_payload=["file_path", "file_warning"]
+            collection_name=PHOTOS, ids=[point_id],
+            with_payload=["file_path", "file_warning", "content_sha256"],
         )
     except Exception as e:
         raise HTTPException(404, f"Foto nicht gefunden: {e}") from e
@@ -351,7 +352,12 @@ def photo_thumb(point_id: str, size: int = 320):
     if not path:
         raise HTTPException(404, "Foto hat keinen Pfad")
     try:
-        data, warn = make_thumb(path, size=size)
+        # Der Inhalts-Hash als Cache-Schluessel: gleiche Bytes, gleiche
+        # Kachel. Fehlt er (noch nicht nachgetragen), faellt make_thumb auf
+        # den Pfad zurueck -- die Umstellung ist damit nicht stufenweise
+        # kaputt, sondern stufenweise besser.
+        data, warn = make_thumb(path, size=size,
+                                content_hash=payload.get("content_sha256"))
     except FileNotFoundError:
         _stamp_file_warning(q, point_id, payload, "missing")
         raise HTTPException(404, f"Datei fehlt: {path}") from None

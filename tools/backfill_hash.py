@@ -37,6 +37,10 @@ from ingest.identity import content_hash
 logger = logging.getLogger(__name__)
 BATCH = 256
 
+#: Fortschritt wird sofort ausgegeben. Als Hintergrundlauf landet stdout in
+#: einer Datei, und gepuffert steht dort minutenlang nichts -- bei einem Lauf
+#: ueber neun Minuten sieht das aus wie ein haengender Prozess.
+
 
 def load(q) -> list[tuple[str, str, str]]:
     """(Punkt-ID, Pfad, vorhandener Hash) für alle Fotos."""
@@ -123,7 +127,7 @@ def main(argv=None) -> int:
             puffer.clear()
             rate = i / max(time.time() - t0, 0.001)
             rest = (len(offen) - i) / max(rate, 0.001) / 60
-            print(f"  {i}/{len(offen)}  ({rate:.0f}/s, noch {rest:.1f} min)")
+            print(f"  {i}/{len(offen)}  ({rate:.0f}/s, noch {rest:.1f} min)", flush=True)
 
     # Die Schreibvorgaenge liefen mit wait=False. Einmal am Ende auf die
     # Sammlung zugreifen genuegt, damit Qdrant sie festgeschrieben hat --
