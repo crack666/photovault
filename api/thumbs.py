@@ -25,12 +25,63 @@ logger = logging.getLogger(__name__)
 #: immer aus dem Projektordner gestartet, und ein Cache, der je nach Aufruf
 #: woanders liegt, ist kein Cache.
 DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data" / "thumbs"
-CACHE_DIR = Path(os.environ.get("PHOTOVAULT_THUMB_CACHE", DEFAULT_CACHE))
 
 #: Der alte Ort. Wird beim Lesen weiter beruecksichtigt, damit ein Umzug
 #: nicht bedeutet, dass 651 MB neu gerechnet werden -- `tools/thumbs.py
 #: --move` schiebt sie herueber.
 LEGACY_CACHE = Path.home() / ".cache" / "photovault-thumbs"
+
+
+def _resolve_cache() -> Path:
+    """Wo der Cache liegt -- *eine* Entscheidung, nicht eine je Prozess.
+
+    Vorher stand hier nur `environ.get(..., DEFAULT_CACHE)`. Das sieht
+    harmlos aus, war aber eine Falle: `start-local.sh` setzt die Variable
+    fuer den Server, ein direkt gestartetes `python -m tools.thumbs` erbt
+    sie nicht -- und faellt auf einen *anderen* Ort zurueck. Genau das ist
+    passiert: der Umbenennungslauf hat 29.083 Kacheln (353 MB) aus dem
+    schnellen Cache auf das Projektlaufwerk geschoben, wo der Server sie
+    nicht mehr fand. Zwei Prozesse, zwei Wahrheiten, 14.593 Bilder wieder
+    ueber die Leitung.
+
+    Deshalb entscheidet nicht mehr die Startart, sondern der Befund:
+
+    *Variable gesetzt* -- die gilt, ohne Widerrede. Der Container gibt sie
+    mit, und wer sie setzt, meint sie.
+
+    *Sonst der Merkzettel* `data/thumbs.path`. Den schreibt der Launcher
+    einmal hin, und ab dann liest ihn jeder Prozess -- auch der, der ohne
+    dessen Umgebung gestartet wurde. Das ist die eigentliche Reparatur:
+    die Wahl liegt neben den Daten, nicht in einer Shell-Sitzung.
+
+    *Sonst: liegt schon ein Cache am alten Ort*, ist er der Ort. Ein
+    bestehender Cache wiegt mehr als eine Voreinstellung; umziehen bleibt
+    eine ausdrueckliche Handlung (`--move`).
+
+    *Sonst* das Arbeitsverzeichnis -- richtig fuer den Container und fuer
+    eine frische Installation.
+    """
+    gesetzt = os.environ.get("PHOTOVAULT_THUMB_CACHE")
+    if gesetzt:
+        return Path(gesetzt)
+    merk = DEFAULT_CACHE.parent / "thumbs.path"
+    try:
+        zeile = merk.read_text(encoding="utf-8").strip()
+        if zeile:
+            return Path(zeile)
+    except OSError:
+        pass
+    try:
+        # Ein Eintrag genuegt als Beweis; glob ist trage, das laeuft nicht
+        # ueber 30.000 Dateien.
+        if next(LEGACY_CACHE.glob("*/*.jpg"), None) is not None:
+            return LEGACY_CACHE
+    except OSError:
+        pass
+    return DEFAULT_CACHE
+
+
+CACHE_DIR = _resolve_cache()
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
 ALLOWED_SIZES = (160, 320, 640, 1280)
 

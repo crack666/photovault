@@ -23,6 +23,10 @@ class QdrantWriter:
         # verschobenen Datei danach sucht -- und weil "welche Fotos sind
         # bitidentisch" damit eine Abfrage statt eines Durchlaufs ist.
         ("content_sha256", "KEYWORD"),
+        # "Wer liegt an diesem Pfad" ist seit Stufe 4 eine echte Frage:
+        # die Kennung ist eingefroren und passt nach dem ersten
+        # Verschieben nicht mehr zum Pfad. Ohne Index ein Full Scan.
+        ("file_path", "KEYWORD"),
         ("person_ids", "KEYWORD"),
         ("scene_tags", "KEYWORD"),
         ("annotations", "KEYWORD"),
@@ -259,6 +263,11 @@ class QdrantWriter:
                 "face_id": fid,
                 "photo_id": record.photo_id,
                 "file_path": record.file_path,
+                # Damit der Zuschnitt seinen Cache-Schluessel selbst kennt.
+                # Ohne das brauchte die Route je Gesicht einen zweiten
+                # Qdrant-Zugriff -- und beim Benennen werden sie in Serie
+                # angefordert.
+                "content_sha256": getattr(record, "content_sha256", None),
                 "box": face.get("box") or [],
                 "score": face.get("score"),
                 "landmarks": face.get("landmarks"),

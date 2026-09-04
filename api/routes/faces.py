@@ -55,7 +55,8 @@ def face_crop(face_id: str, pad: float = 0.35, size: int = 320):
     try:
         # Ueber den Thumbnail-Cache: beim Labeling wird derselbe Ausschnitt
         # immer wieder angefordert, und die Originale liegen auf dem NAS.
-        data = get_thumb(path, size=size, box=box, pad=pad)
+        data = get_thumb(path, size=size, box=box, pad=pad,
+                         content_hash=payload.get("content_sha256"))
     except FileNotFoundError:
         raise HTTPException(404, "image missing") from None
     except Exception as e:

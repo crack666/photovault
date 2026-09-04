@@ -29,7 +29,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from api.qdrant_util import PHOTOS, client
+from api.qdrant_util import FACES, PHOTOS, client
 from api.thumbs import CACHE_DIR, LEGACY_CACHE, get_thumb
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,107 @@ def digest(path: str) -> str:
     return hashlib.sha256(path.encode("utf-8")).hexdigest()
 
 
+#: Der Wert, mit dem die Oberflaeche Gesichtsausschnitte anfordert. Ein
+#: anderer `pad` erzeugt einen anderen Schluessel; nur diesen einen koennen
+#: wir zuordnen, und nur diesen fordert die Oberflaeche.
+FACE_PAD = 0.35
+
+
+def cache_soll(q, faces: str = FACES) -> tuple[list[tuple[str, list[str]]], set[str]]:
+    """Welche Cache-Schluessel zu lebenden Daten gehoeren.
+
+    Zurueck kommt (`je_foto`, `gueltig`):
+
+    *`je_foto`* ist je Foto (Schreib-Digest, Such-Digests) -- dieselbe
+    Reihenfolge wie in `api.thumbs.cache_keys`, also Inhalt vor Pfad.
+    Daraus entsteht "vorhanden" und "fehlt", und zwar *je Foto*: ein Foto
+    mit zwei moeglichen Schluesseln fehlt nicht zweimal.
+
+    *`gueltig`* ist alles, was einem lebenden Foto oder Gesicht zuzuordnen
+    ist. Was nicht darin steht, gehoert zu nichts mehr -- das und nur das
+    ist eine Waise.
+
+    Diese Funktion gab es vorher nicht, und ihr Fehlen war teuer. Der
+    Bericht rechnete in `digest(file_path)`, also im Schluessel *vor* Stufe
+    3. Nach der Umbenennung auf den Inhalts-Hash passte kein einziger
+    Schluessel mehr: 29.068 arbeitende Kacheln standen als "verwaist",
+    295 MB, und `--prune` haette den ganzen Cache geloescht -- gefolgt von
+    `--warm`, das 14.593 Originale wieder ueber das Netzlaufwerk geholt
+    haette.
+
+    Gesichter stehen aus demselben Grund darin, nur schon laenger: ihr
+    Schluessel enthaelt den Kasten (`cache_keys(..., box=...)`), also war er
+    dem Bericht nie bekannt. Sie liegen bei 320 px, mitten im betrachteten
+    Bereich, und wurden bei jedem `--prune` mitgeloescht.
+    """
+    from api.thumbs import cache_keys
+
+    je_foto = []
+    gueltig: set[str] = set()
+
+    offset = None
+    while True:
+        batch, offset = q.scroll(
+            collection_name=PHOTOS, limit=1024, offset=offset,
+            with_payload=["file_path", "content_sha256"], with_vectors=False,
+        )
+        for p in batch:
+            pl = p.payload or {}
+            fp = pl.get("file_path")
+            if not fp:
+                continue
+            schreib, suchen = cache_keys(fp, None, 0.35, pl.get("content_sha256"))
+            such_d = [digest(k) for k in suchen]
+            je_foto.append((digest(schreib), such_d))
+            gueltig.update(such_d)
+        if offset is None:
+            break
+
+    offset = None
+    while True:
+        try:
+            batch, offset = q.scroll(
+                collection_name=faces, limit=1024, offset=offset,
+                with_payload=["file_path", "box", "content_sha256"],
+                with_vectors=False,
+            )
+        except Exception as e:
+            # Ohne Gesichter-Sammlung ist die Liste nur kuerzer. Der Bericht
+            # soll trotzdem laufen.
+            logger.debug("Gesichter nicht lesbar: %s", e)
+            break
+        for p in batch:
+            pl = p.payload or {}
+            fp, box = pl.get("file_path"), pl.get("box")
+            if not fp or not box or len(box) != 4:
+                continue
+            _, suchen = cache_keys(fp, box, FACE_PAD, pl.get("content_sha256"))
+            gueltig.update(digest(k) for k in suchen)
+        if offset is None:
+            break
+
+    return je_foto, gueltig
+
+
+def zaehle(hier: dict, je_foto, gueltig: set[str]) -> dict:
+    """Eine Groesse auszaehlen: vorhanden, fehlend, doppelt, verwaist."""
+    gut, fehlt, belegt = {}, set(), set()
+    for schreib_d, such_d in je_foto:
+        treffer = next((d for d in such_d if d in hier), None)
+        if treffer is None:
+            fehlt.add(schreib_d)
+            continue
+        gut[treffer] = hier[treffer]
+        belegt.add(treffer)
+        # Die restlichen Such-Schluessel dieses Fotos liegen ggf. auch noch
+        # da -- Reste aus der Zeit vor der Umbenennung.
+        belegt.update(d for d in such_d if d in hier)
+    doppelt = {d: v for d, v in hier.items()
+               if d in belegt and d not in gut}
+    muell = {d: v for d, v in hier.items() if d not in gueltig}
+    return {"gut": gut, "fehlt": fehlt, "doppelt": doppelt, "muell": muell}
+
+
 def scan(base: Path, sizes) -> dict[int, dict[str, tuple[Path, int]]]:
     """{groesse: {digest: (Pfad, Bytes)}} -- was im Cache liegt."""
     out = {s: {} for s in sizes}
@@ -83,39 +184,42 @@ def scan(base: Path, sizes) -> dict[int, dict[str, tuple[Path, int]]]:
 
 def report(sizes) -> dict:
     q = client()
-    paths = indexed_paths(q)
-    soll = {digest(p) for p in paths}
+    je_foto, gueltig = cache_soll(q)
     da = scan(CACHE_DIR, sizes)
     alt = scan(LEGACY_CACHE, sizes) if LEGACY_CACHE != CACHE_DIR else {s: {} for s in sizes}
 
     print(f"Cache:      {CACHE_DIR}")
     if any(alt.values()):
         print(f"alter Ort:  {LEGACY_CACHE}   (wird beim Lesen noch benutzt)")
-    print(f"Fotos im Index: {len(paths)}")
+    print(f"Fotos im Index: {len(je_foto)}")
     print()
-    print(f"{'px':>5} {'vorhanden':>10} {'MB':>8} {'fehlt':>7} {'verwaist':>9} {'MB':>8}")
-    zus = {"missing": {}, "orphans": {}, "bytes_orphan": 0, "bytes_used": 0,
-           "avg": {}}
+    print(f"{'px':>5} {'vorhanden':>10} {'MB':>8} {'fehlt':>7} {'doppelt':>8} "
+          f"{'verwaist':>9} {'MB':>8}")
+    zus = {"missing": {}, "orphans": {}, "dupes": {}, "bytes_orphan": 0,
+           "bytes_used": 0, "avg": {}}
+    doppelt_ges = 0
     for s in sizes:
         hier = da[s] | alt[s]        # neuer Ort gewinnt nicht, wir zaehlen nur
-        gut = {d: v for d, v in hier.items() if d in soll}
-        muell = {d: v for d, v in hier.items() if d not in soll}
-        fehlt = soll - set(hier)
+        z = zaehle(hier, je_foto, gueltig)
+        gut, muell, fehlt, doppelt = z["gut"], z["muell"], z["fehlt"], z["doppelt"]
         b_gut = sum(v[1] for v in gut.values())
-        b_muell = sum(v[1] for v in muell.values())
+        b_muell = sum(v[1] for v in muell.values()) + sum(v[1] for v in doppelt.values())
         zus["missing"][s] = fehlt
-        zus["orphans"][s] = muell
+        zus["orphans"][s] = muell | doppelt   # beides ist wegwerfbar
+        zus["dupes"][s] = doppelt
         zus["bytes_orphan"] += b_muell
         zus["bytes_used"] += b_gut
+        doppelt_ges += len(doppelt)
         # Mittelwert je Groesse, aus den vorhandenen dieser Groesse. Vorher
         # stand hier der Gesamtverbrauch geteilt durch die Zahl im *neuen*
         # Verzeichnis -- das ist leer, und die Schaetzung meldete 34 GB fuer
         # 118 Kacheln.
         zus["avg"][s] = b_gut / len(gut) if gut else 0
-        print(f"{s:5d} {len(gut):10d} {b_gut/MB:8.1f} {len(fehlt):7d} {len(muell):9d} {b_muell/MB:8.1f}")
+        print(f"{s:5d} {len(gut):10d} {b_gut/MB:8.1f} {len(fehlt):7d} "
+              f"{len(doppelt):8d} {len(muell):9d} {b_muell/MB:8.1f}")
     # Was sonst noch im Verzeichnis liegt. Ohne diese Zeile wundert man
     # sich, warum nach --prune immer noch mehr belegt ist als "gebraucht":
-    # Grossansicht (1280) und Gesichtsausschnitte zaehlen hier nicht mit.
+    # die Grossansicht (1280) zaehlt hier nicht mit.
     rest_n = rest_b = 0
     for basis in {CACHE_DIR, LEGACY_CACHE}:
         if not basis.is_dir():
@@ -137,8 +241,12 @@ def report(sizes) -> dict:
     print(f"gebraucht: {zus['bytes_used']/MB:.0f} MB   verwaist: {zus['bytes_orphan']/MB:.0f} MB")
     if rest_n:
         print(f"dazu {rest_n} Kacheln anderer Groessen ({rest_b/MB:.0f} MB) -- "
-              f"Grossansicht und Gesichter, hier nicht betrachtet.")
+              f"Grossansicht, hier nicht betrachtet.")
         print("            --sizes 160,320,640,1280 nimmt sie mit hinein.")
+    if doppelt_ges:
+        print(f"doppelt:   {doppelt_ges} Kacheln liegen zusaetzlich unter ihrem "
+              f"alten Pfad-Schluessel")
+        print("            (Rest der Umbenennung; --prune raeumt sie mit weg).")
     if zus["bytes_orphan"] > 0:
         print("            --prune gibt den verwaisten Platz frei.")
     fehlend = sum(len(v) for v in zus["missing"].values())
@@ -250,22 +358,48 @@ def rekey(sizes) -> int:
 
 def warm(zus, sizes) -> int:
     q = client()
-    nach_digest = {digest(p): p for p in indexed_paths(q)}
+    # Mit Inhalts-Hash, nicht nur mit Pfad: sonst legt gerade dieser Lauf --
+    # der Job "Vorschaubilder anlegen" -- wieder Kacheln unter dem alten
+    # Schluessel an, und das Umbenennen waere kein einmaliger Vorgang.
+    #
+    # Und nachgesehen wird unter dem *Schreib*-Schluessel, denn genau den
+    # meldet `report()` als fehlend. Stand hier `digest(file_path)`, passte
+    # nach der Umbenennung kein Eintrag mehr, und der Lauf meldete
+    # "nichts zu tun", waehrend 29.174 Kacheln als fehlend im Bericht
+    # standen.
+    from api.thumbs import cache_keys
+
+    nach_digest = {}
+    offset = None
+    while True:
+        batch, offset = q.scroll(
+            collection_name=PHOTOS, limit=512, offset=offset,
+            with_payload=["file_path", "content_sha256"], with_vectors=False,
+        )
+        for pt in batch:
+            pl = pt.payload or {}
+            fp = pl.get("file_path")
+            if fp:
+                h = pl.get("content_sha256")
+                schreib, _ = cache_keys(fp, None, 0.35, h)
+                nach_digest[digest(schreib)] = (fp, h)
+        if offset is None:
+            break
     todo = []
     for s in sizes:
         for d in zus["missing"][s]:
-            p = nach_digest.get(d)
-            if p:
-                todo.append((p, s))
+            treffer = nach_digest.get(d)
+            if treffer:
+                todo.append((treffer[0], s, treffer[1]))
     if not todo:
         print("Nichts zu tun -- alle Kacheln sind da.")
         return 0
     print(f"{len(todo)} Kacheln erzeugen. Jede liest das Original einmal;")
     print("ueber ein Netzlaufwerk ist das der langsame Teil.")
     fertig = 0
-    for i, (p, s) in enumerate(todo, 1):
+    for i, (p, s, h) in enumerate(todo, 1):
         try:
-            get_thumb(p, size=s)
+            get_thumb(p, size=s, content_hash=h)
             fertig += 1
         except Exception as e:
             logger.debug("%s (%s px): %s", p, s, e)
@@ -291,6 +425,15 @@ def main(argv=None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     sizes = [int(x) for x in args.sizes.split(",") if x.strip()]
+
+    # Den Ort zuerst nennen, nicht erst im Bericht. `--move` und `--rekey`
+    # verschieben Dateien, bevor `report()` etwas ausgibt -- lief das
+    # Werkzeug auf einem anderen Verzeichnis als der Server, sah man das
+    # vorher erst hinterher an der Rechnung.
+    if args.move or args.rekey or args.prune or args.warm:
+        print(f"Cache: {CACHE_DIR}")
+        print()
+
     if args.move:
         move()
         print()

@@ -12,6 +12,7 @@ stimmen: sie stand einmal bei 34 GB fuer 118 Kacheln, weil der Mittelwert
 durch die Zahl der Dateien im leeren Zielverzeichnis geteilt wurde.
 """
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -216,3 +217,78 @@ class TestFindCached:
         monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
         lege(tmp_path, "/a.jpg", 160)
         assert th._find_cached(["", None, "/a.jpg"], 160) is not None
+
+
+class TestResolveCache:
+    """Wo der Cache liegt, darf nicht davon abhaengen, wer den Prozess startet.
+
+    Der Anlass ist ein echter Vorfall: der Server bekam den Ort per
+    `export` aus `start-local.sh`, ein direkt gestartetes
+    `python -m tools.thumbs --rekey` nicht -- und schob 29.083 Kacheln
+    (353 MB) auf ein Verzeichnis, in dem der Server sie nicht mehr fand.
+    """
+
+    def _ohne_umgebung(self, monkeypatch):
+        monkeypatch.delenv("PHOTOVAULT_THUMB_CACHE", raising=False)
+
+    def test_variable_gewinnt(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setenv("PHOTOVAULT_THUMB_CACHE", str(tmp_path / "gewaehlt"))
+        assert th._resolve_cache() == tmp_path / "gewaehlt"
+
+    def test_merkzettel_gilt_ohne_variable(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        self._ohne_umgebung(monkeypatch)
+        monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
+        (tmp_path / "data").mkdir(parents=True)
+        (tmp_path / "data" / "thumbs.path").write_text("/schnell/thumbs\n", encoding="utf-8")
+        assert th._resolve_cache() == Path("/schnell/thumbs")
+
+    def test_variable_schlaegt_den_merkzettel(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setenv("PHOTOVAULT_THUMB_CACHE", str(tmp_path / "ausdruecklich"))
+        monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
+        (tmp_path / "data").mkdir(parents=True)
+        (tmp_path / "data" / "thumbs.path").write_text("/woanders\n", encoding="utf-8")
+        assert th._resolve_cache() == tmp_path / "ausdruecklich"
+
+    def test_leerer_merkzettel_zaehlt_nicht(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        self._ohne_umgebung(monkeypatch)
+        monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "gibtsnicht")
+        (tmp_path / "data").mkdir(parents=True)
+        (tmp_path / "data" / "thumbs.path").write_text("   \n", encoding="utf-8")
+        assert th._resolve_cache() == tmp_path / "data" / "thumbs"
+
+    def test_bestehender_cache_wiegt_mehr_als_die_voreinstellung(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        self._ohne_umgebung(monkeypatch)
+        monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
+        alt = tmp_path / "alt"
+        monkeypatch.setattr(th, "LEGACY_CACHE", alt)
+        lege(alt, "/a.jpg", 160)
+        assert th._resolve_cache() == alt
+
+    def test_leerer_alter_ort_zaehlt_nicht(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        self._ohne_umgebung(monkeypatch)
+        monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
+        alt = tmp_path / "alt"
+        alt.mkdir()
+        monkeypatch.setattr(th, "LEGACY_CACHE", alt)
+        assert th._resolve_cache() == tmp_path / "data" / "thumbs"
+
+    def test_frische_installation_nimmt_das_arbeitsverzeichnis(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        self._ohne_umgebung(monkeypatch)
+        monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "gibtsnicht")
+        assert th._resolve_cache() == tmp_path / "data" / "thumbs"

@@ -45,6 +45,16 @@ LOG="logs/uvicorn.log"
 # Wer es anders will, setzt PHOTOVAULT_THUMB_CACHE selbst.
 export PHOTOVAULT_THUMB_CACHE="${PHOTOVAULT_THUMB_CACHE:-$HOME/.cache/photovault-thumbs}"
 
+# Und derselbe Ort als Merkzettel neben den Daten.
+#
+# Ein `export` gilt nur fuer die Prozesse, die dieses Skript startet. Ein
+# spaeter direkt aufgerufenes `python -m tools.thumbs` erbt ihn nicht --
+# es fiel auf `data/thumbs` zurueck und hat beim Umbenennen 29.083 Kacheln
+# dorthin geschoben, wo der Server sie nicht mehr fand. Der Merkzettel
+# macht die Wahl unabhaengig davon, wer gerade wie gestartet wurde.
+mkdir -p data
+printf '%s\n' "${PHOTOVAULT_THUMB_CACHE}" > data/thumbs.path
+
 ok()   { printf '  \033[32m*\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 bad()  { printf '  \033[31mx\033[0m %s\n' "$1"; }

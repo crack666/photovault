@@ -175,19 +175,24 @@ def thumb_cost() -> dict:
     Mittelwert je Groesse mal die Zahl der fehlenden Kacheln.
     """
     from api.thumbs import CACHE_DIR
-    from tools.thumbs import ATLAS_SIZES, digest, indexed_paths, scan
+    from tools.thumbs import ATLAS_SIZES, cache_soll, scan, zaehle
 
     q = client()
-    paths = indexed_paths(q)
-    soll = {digest(p) for p in paths}
+    # Ueber `cache_soll`, nicht ueber `digest(file_path)`: seit der Cache
+    # unter dem Inhalts-Hash liegt, ist der Pfad-Digest der falsche
+    # Schluessel. Die Seite haette hier 29.174 fehlende Kacheln gemeldet und
+    # zu einem Lauf ueber alle 14.593 Originale eingeladen, der nichts
+    # gebracht haette.
+    je_foto, gueltig = cache_soll(q)
     da = scan(CACHE_DIR, ATLAS_SIZES)
 
     je_groesse, fehlend, kosten, belegt = [], 0, 0.0, 0
     for s in ATLAS_SIZES:
-        gut = {d: v for d, v in da[s].items() if d in soll}
+        z = zaehle(da[s], je_foto, gueltig)
+        gut = z["gut"]
         b = sum(v[1] for v in gut.values())
         schnitt = b / len(gut) if gut else 0
-        fehlt = len(soll) - len(gut)
+        fehlt = len(z["fehlt"])
         je_groesse.append({"size": s, "have": len(gut), "missing": fehlt,
                            "bytes": b, "avg": round(schnitt)})
         fehlend += fehlt
@@ -195,7 +200,7 @@ def thumb_cost() -> dict:
         belegt += b
 
     return {
-        "photos": len(paths),
+        "photos": len(je_foto),
         "sizes": je_groesse,
         "missing": fehlend,
         "bytes_missing": round(kosten),
