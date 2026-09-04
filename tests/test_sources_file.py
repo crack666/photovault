@@ -171,3 +171,52 @@ class TestSchreiben:
             "/mnt/photo/Handys", "/mnt/photo/Fotos", "/mnt/photo/Urlaub",
             "/mnt/photo/Handys/Screenshots",
         }
+
+class TestEntfernen:
+    """Eine Zeile ganz herausnehmen -- vor allem tote.
+
+    Stilllegen reicht dort nicht: eine Zeile, die auf einen Ordner zeigt, den
+    es nicht gibt, ist kein Vorschlag mehr. Sie stehenzulassen heisst, sie bei
+    jedem Blick wieder zu lesen und wieder zu verwerfen. In dieser Datei
+    betrifft das zwölf von 34 Zeilen.
+    """
+
+    def test_nimmt_genau_eine_zeile(self, tmp_path):
+        s, _ = lade(tmp_path)
+        e = next(x for x in s.entries if "confidential" in x.path)
+        neu = sources.remove(s.lines, e.line)
+        assert len(neu) == len(s.lines) - 1
+        assert not any("confidential" in z for z in neu)
+
+    def test_alles_andere_bleibt_byteweise_gleich(self, tmp_path):
+        s, _ = lade(tmp_path)
+        e = next(x for x in s.entries if "confidential" in x.path)
+        neu = sources.remove(s.lines, e.line)
+        erwartet = s.lines[:e.line] + s.lines[e.line + 1:]
+        assert neu == erwartet
+
+    def test_kommentarzeile_darueber_bleibt(self, tmp_path):
+        # Sie kann sich auf den ganzen Abschnitt beziehen -- eine fremde
+        # Zeile zu loeschen waere schlimmer als eine stehenzulassen.
+        s, _ = lade(tmp_path)
+        e = next(x for x in s.entries if x.path.endswith("Screenshots"))
+        neu = sources.remove(s.lines, e.line)
+        assert "# Ausschluesse innerhalb aktiver Quellen." in neu
+
+    def test_zeile_ohne_pfad_wird_abgelehnt(self, tmp_path):
+        s, _ = lade(tmp_path)
+        with pytest.raises(ValueError, match="keinen Pfad"):
+            sources.remove(s.lines, 0)   # Ueberschrift
+
+    def test_bereich_wird_geprueft(self, tmp_path):
+        s, _ = lade(tmp_path)
+        with pytest.raises(ValueError, match="gibt es nicht"):
+            sources.remove(s.lines, 9999)
+
+    def test_geschriebenes_liest_sich_ohne_die_zeile(self, tmp_path):
+        s, p = lade(tmp_path)
+        e = next(x for x in s.entries if "Urlaub" in x.path)
+        sources.write(str(p), sources.remove(s.lines, e.line))
+        wieder = sources.read(str(p))
+        assert not any("Urlaub" in x.path for x in wieder.entries)
+        assert len(wieder.entries) == len(s.entries) - 1

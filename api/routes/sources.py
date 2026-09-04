@@ -130,6 +130,40 @@ def add_source(req: AddRequest) -> dict:
     return {"ok": True, "path": p, "exclude": req.exclude}
 
 
+class RemoveRequest(BaseModel):
+    line: int
+
+
+@router.post("/remove")
+def remove_source(req: RemoveRequest) -> dict:
+    """Eine Zeile ganz herausnehmen.
+
+    Vor allem fuer Zeilen, die auf einen Ordner zeigen, den es nicht gibt:
+    stilllegen aendert dort nichts, sie bleiben Muell, den man bei jedem
+    Blick wieder lesen und wieder verwerfen muss.
+
+    Gemeldet wird, was in der Zeile stand -- damit ein Fehlgriff nicht
+    heisst, dass der Pfad verloren ist. Wiederherstellen geht ueber
+    "Ordner hinzufuegen".
+    """
+    s = src.read(FILE)
+    treffer = next((e for e in s.entries if e.line == req.line), None)
+    if treffer is None:
+        raise HTTPException(400, f"Zeile {req.line + 1} nennt keinen Pfad")
+    try:
+        lines = src.remove(s.lines, req.line)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    src.write(FILE, lines)
+    return {
+        "ok": True,
+        "removed": treffer.path,
+        "exclude": treffer.exclude,
+        "was_enabled": treffer.enabled,
+        "note": treffer.note,
+    }
+
+
 #: Wieviele Dateien je Ordner hoechstens gezaehlt werden. Ueber ein
 #: Netzlaufwerk kostet jeder Eintrag Zeit; fuer die Frage "liegen hier die
 #: Fotos?" genuegt "mindestens so viele".

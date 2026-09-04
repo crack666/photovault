@@ -128,6 +128,27 @@ def add(lines: list[str], path: str, exclude: bool = False) -> list[str]:
     return lines
 
 
+def remove(lines: list[str], index: int) -> list[str]:
+    """Eine Zeile ganz herausnehmen.
+
+    Nur stilllegen genuegt nicht: eine Zeile, die auf einen Ordner zeigt, den
+    es nicht gibt, ist kein Vorschlag mehr, sondern Muell. Sie stehenzulassen
+    heisst, sie bei jedem Blick wieder zu lesen und wieder zu verwerfen.
+
+    Der Zeilenkommentar geht mit -- er gehoert zur Zeile. Steht ueber ihr eine
+    reine Kommentarzeile, bleibt die: sie kann sich auf den ganzen Abschnitt
+    beziehen, und eine fremde Zeile zu loeschen waere schlimmer als eine
+    stehenzulassen.
+    """
+    lines = list(lines)
+    if not 0 <= index < len(lines):
+        raise ValueError(f"Zeile {index + 1} gibt es nicht")
+    if _split(lines[index]) is None:
+        raise ValueError(f"Zeile {index + 1} nennt keinen Pfad: {lines[index]!r}")
+    del lines[index]
+    return lines
+
+
 def write(path: str, lines: list[str]) -> None:
     """Erst daneben schreiben, dann umbenennen.
 

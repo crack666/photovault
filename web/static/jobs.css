@@ -126,8 +126,22 @@
   display: flex; align-items: baseline; gap: 10px;
   padding: 5px 9px; border-radius: 8px;
   border: 1px solid transparent;
-  cursor: pointer; font-size: .85rem;
+  font-size: .85rem;
 }
+/* Der Haken und der Pfad sind ein Klickziel, der Entfernen-Knopf nicht --
+   sonst schaltet ein Griff nach dem Knopf die Quelle mit um. */
+.src-pick { display: flex; align-items: baseline; gap: 10px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.src-del {
+  padding: 2px 8px; border-radius: 6px;
+  border: 1px solid #3a4152; background: transparent;
+  color: var(--muted); cursor: pointer; font: inherit; font-size: .72rem;
+  opacity: 0; transition: opacity .12s;
+}
+.src-row:hover .src-del, .src-del:focus-visible { opacity: 1; }
+.src-del:hover { border-color: #6a3a3a; color: #ffbfc6; background: #2a1e20; }
+/* Bei einer toten Zeile ist Entfernen die naheliegende Handlung -- dann darf
+   der Knopf nicht erst beim Ueberfahren erscheinen. */
+.src-row.ghost .src-del { opacity: .75; }
 .src-row:hover { background: #1d222c; }
 .src-row.on { border-color: #2f4a3a; background: #17211b; }
 /* Ein Ordner, den es nicht gibt: die Zeile steht da, wirkt aber nicht --
@@ -136,7 +150,8 @@
 .src-path { font-family: ui-monospace, monospace; flex: 1 1 auto; word-break: break-all; }
 .src-warn { color: #ffbfc6; font-size: .75rem; white-space: nowrap; }
 .src-count { color: var(--accent); font-size: .75rem; white-space: nowrap; }
-.src-note { color: var(--muted); font-size: .75rem; }
+.src-note { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.src-note em { font-style: normal; opacity: .65; }
 
 .src-add { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
 .src-result { margin-top: 16px; }

@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Jobs</title>
-  <link rel="stylesheet" href="/static/styles.css?v=70" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=70" />
-  <link rel="stylesheet" href="/static/jobs.css?v=70" />
+  <link rel="stylesheet" href="/static/styles.css?v=71" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=71" />
+  <link rel="stylesheet" href="/static/jobs.css?v=71" />
 </head>
 <body>
   <header class="top">
@@ -55,8 +55,8 @@
   </main>
 
 <script type="module">
-import { renderNav } from "/static/core/nav.js?v=70";
-import { notify, openModal } from "/static/core/modal.js?v=70";
+import { renderNav } from "/static/core/nav.js?v=71";
+import { notify, openModal } from "/static/core/modal.js?v=71";
 
 renderNav(document.getElementById("nav"), { active: "jobs" });
 
@@ -358,14 +358,24 @@ function paintSources() {
   const ein = srcState.entries.filter((e) => !e.exclude);
   const aus = srcState.entries.filter((e) => e.exclude);
 
+  /* Die Notiz ist ausdruecklich als Notiz gekennzeichnet.
+
+     Sie steht als Kommentar in der Datei und ist damit historisch -- ein
+     Ordner, den es nicht gibt, kann daneben "313 Bilder" tragen, und das
+     liest sich als Widerspruch. Der Zusatz "laut Datei" sagt, woher die
+     Zahl kommt; "im Index" daneben ist gemessen. */
   const zeile = (e) => `
-    <label class="src-row${e.enabled ? " on" : ""}${e.exists ? "" : " ghost"}">
-      <input type="checkbox" data-line="${e.line}"${e.enabled ? " checked" : ""}>
-      <span class="src-path">${esc(e.path)}</span>
+    <div class="src-row${e.enabled ? " on" : ""}${e.exists ? "" : " ghost"}">
+      <label class="src-pick">
+        <input type="checkbox" data-line="${e.line}"${e.enabled ? " checked" : ""}>
+        <span class="src-path">${esc(e.path)}</span>
+      </label>
       ${e.exists ? "" : `<span class="src-warn" title="Diesen Ordner gibt es nicht — die Zeile wirkt nicht">gibt es nicht</span>`}
       ${e.photos > 0 ? `<span class="src-count">${num(e.photos)} im Index</span>` : ""}
-      ${e.note ? `<span class="src-note">${esc(e.note)}</span>` : ""}
-    </label>`;
+      ${e.note ? `<span class="src-note" title="Kommentar aus sources.txt, nicht gemessen">${esc(e.note)} <em>laut Datei</em></span>` : ""}
+      <button type="button" class="src-del" data-del="${e.line}"
+              title="Diese Zeile aus sources.txt entfernen">entfernen</button>
+    </div>`;
 
   box.innerHTML = `
     <h3>Quellen <em>${ein.filter((e) => e.enabled).length} von ${ein.length} aktiv</em></h3>
@@ -376,6 +386,9 @@ function paintSources() {
 
   box.querySelectorAll("input[data-line]").forEach((cb) => {
     cb.addEventListener("change", () => toggleSource(Number(cb.dataset.line), cb.checked, cb));
+  });
+  box.querySelectorAll("[data-del]").forEach((b) => {
+    b.addEventListener("click", () => removeSource(Number(b.dataset.del), b));
   });
 }
 
@@ -406,6 +419,36 @@ async function toggleSource(line, enabled, cb) {
   } else {
     notify("Gespeichert. Wirkt beim nächsten Lauf.");
   }
+}
+
+async function removeSource(line, btn) {
+  const e = srcState.entries.find((x) => x.line === line);
+  if (!e) return;
+  // Rueckfrage nur, wenn etwas verloren gehen kann. Eine Zeile, die auf
+  // einen Ordner zeigt den es nicht gibt, ist Muell -- dafuer einen Dialog
+  // aufzumachen waere Zeremonie.
+  if (e.exists) {
+    const { askConfirm } = await import("/static/core/modal.js?v=71");
+    const drin = e.photos > 0 ? ` ${num(e.photos)} Fotos aus diesem Ordner bleiben im Index.` : "";
+    if (!await askConfirm({
+      title: `Zeile entfernen`,
+      lead: `<b>${esc(e.path)}</b> wird aus sources.txt gestrichen.${drin} `
+          + "Die Dateien auf der Platte bleiben unangetastet.",
+      ok: "Entfernen", danger: true,
+    })) return;
+  }
+  btn.disabled = true;
+  try {
+    const r = await api("/api/sources/remove", {
+      method: "POST", body: JSON.stringify({ line }),
+    });
+    notify(`Entfernt: ${r.removed}`);
+  } catch (err) {
+    btn.disabled = false;
+    notify(`Nicht entfernt: ${err.message || err}`, { kind: "error" });
+    return;
+  }
+  await loadSources();
 }
 
 async function previewSources() {
