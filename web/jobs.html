@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Jobs</title>
-  <link rel="stylesheet" href="/static/styles.css?v=67" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=67" />
-  <link rel="stylesheet" href="/static/jobs.css?v=67" />
+  <link rel="stylesheet" href="/static/styles.css?v=69" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=69" />
+  <link rel="stylesheet" href="/static/jobs.css?v=69" />
 </head>
 <body>
   <header class="top">
@@ -55,8 +55,8 @@
   </main>
 
 <script type="module">
-import { renderNav } from "/static/core/nav.js?v=67";
-import { notify, openModal } from "/static/core/modal.js?v=67";
+import { renderNav } from "/static/core/nav.js?v=69";
+import { notify, openModal } from "/static/core/modal.js?v=69";
 
 renderNav(document.getElementById("nav"), { active: "jobs" });
 
@@ -418,27 +418,94 @@ async function previewSources() {
     <p class="muted">${esc(d.note || "")}</p>`;
 }
 
-async function addSource() {
-  const { askText } = await import("/static/core/modal.js?v=67");
-  const p = await askText({
-    title: "Ordner hinzufügen",
-    lead: "Absoluter Pfad, so wie er auf dieser Maschine heißt. "
-        + "Ein führendes Minus macht daraus einen Ausschluss.",
-    placeholder: "/mnt/photo/Urlaub   oder   -/mnt/photo/Handys/Download",
-    ok: "Hinzufügen",
+/* Ordner auswählen statt eintippen.
+
+   Nicht aus Bequemlichkeit: von 34 Zeilen dieser Datei zeigen zwölf auf
+   Ordner, die es nicht mehr gibt. Getippte Pfade veralten still -- eine tote
+   Ausschlusszeile sieht im Editor aus wie eine wirksame. Wer nur auswählen
+   kann, was da ist, legt solche Zeilen gar nicht erst an.
+
+   Je Ordner steht dabei, wieviele Bilder direkt darin liegen: sonst klickt
+   man blind durch einen Baum und weiß am Ende nicht, ob man die Ebene mit
+   den Fotos erwischt hat. */
+async function pickFolder(start = "/mnt/photo") {
+  const dlg = openModal({
+    title: "Ordner auswählen",
+    lead: "Ein Klick auf einen Namen geht hinein. Die Zahl sagt, wieviele "
+        + "Bilder direkt darin liegen — Unterordner sind nicht mitgezählt.",
+    body: '<div class="pick" id="pick">lädt …</div>',
+    buttons: [
+      { id: "cancel", label: "Abbrechen" },
+      { id: "exclude", label: "Als Ausschluss" },
+      { id: "include", label: "Als Quelle", kind: "primary" },
+    ],
   });
-  if (!p) return;
-  const exclude = p.startsWith("-");
-  const pfad = exclude ? p.slice(1).trim() : p;
+
+  let hier = start;
+
+  async function zeige(p) {
+    const box = document.getElementById("pick");
+    box.innerHTML = "lädt …";
+    let d;
+    try {
+      d = await api(`/api/sources/browse?path=${encodeURIComponent(p)}`);
+    } catch (e) {
+      box.innerHTML = `<p class="muted">Nicht lesbar: ${esc(String(e.message || e))}</p>`;
+      return;
+    }
+    hier = d.path;
+    const teile = d.path.split("/").filter(Boolean);
+    box.innerHTML = `
+      <div class="pick-crumbs">
+        <button type="button" data-go="/">/</button>
+        ${teile.map((t, i) => `<button type="button" data-go="/${
+          teile.slice(0, i + 1).join("/")}">${esc(t)}</button>`).join("<span>/</span>")}
+      </div>
+      <p class="pick-here">Gewählt: <b>${esc(d.path)}</b></p>
+      <div class="pick-list">
+        ${d.dirs.length ? d.dirs.map((x) => `
+          <button type="button" class="pick-row${x.listed ? " known" : ""}" data-go="${esc(x.path)}">
+            <span class="pick-name">${esc(x.name)}</span>
+            <span class="pick-n">${x.images}${x.truncated ? "+" : ""} Bilder</span>
+            ${x.has_subdirs ? '<span class="pick-sub">Unterordner</span>' : ""}
+            ${x.listed ? `<span class="pick-tag">${
+              x.listed === "exclude" ? "Ausschluss" : "Quelle"}${
+              x.enabled ? "" : ", aus"}</span>` : ""}
+          </button>`).join("")
+        : '<p class="muted">Keine Unterordner.</p>'}
+      </div>`;
+    box.querySelector(".pick-crumbs").onclick = (e) => {
+      const b = e.target.closest("[data-go]");
+      if (b) zeige(b.dataset.go);
+    };
+    box.querySelector(".pick-list").onclick = (e) => {
+      const b = e.target.closest("[data-go]");
+      if (b) zeige(b.dataset.go);
+    };
+  }
+
+  await zeige(start);
+  const antwort = await dlg.wait();
+  if (antwort !== "include" && antwort !== "exclude") return null;
+  return { path: hier, exclude: antwort === "exclude" };
+}
+
+async function addSource() {
+  // Als Startpunkt der oberste bereits eingetragene Ordner -- man sucht fast
+  // immer einen Nachbarn dessen, was schon drinsteht.
+  const erste = srcState.entries.find((e) => !e.exclude);
+  const wahl = await pickFolder(erste ? erste.path.replace(/\/[^/]+$/, "") || "/" : "/");
+  if (!wahl) return;
   try {
     await api("/api/sources/add", {
-      method: "POST", body: JSON.stringify({ path: pfad, exclude }),
+      method: "POST", body: JSON.stringify({ path: wahl.path, exclude: wahl.exclude }),
     });
   } catch (e) {
     notify(`Nicht hinzugefügt: ${e.message || e}`, { kind: "error" });
     return;
   }
-  notify(`Hinzugefügt. Sieh mit dem Trockenlauf nach, was dazukommt.`);
+  notify(`${wahl.exclude ? "Ausschluss" : "Quelle"} hinzugefügt. `
+       + "Der Trockenlauf zeigt, was dazukommt.");
   await loadSources();
 }
 

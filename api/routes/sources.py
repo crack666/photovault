@@ -130,6 +130,74 @@ def add_source(req: AddRequest) -> dict:
     return {"ok": True, "path": p, "exclude": req.exclude}
 
 
+#: Wieviele Dateien je Ordner hoechstens gezaehlt werden. Ueber ein
+#: Netzlaufwerk kostet jeder Eintrag Zeit; fuer die Frage "liegen hier die
+#: Fotos?" genuegt "mindestens so viele".
+BROWSE_CAP = 400
+
+
+@router.get("/browse")
+def browse(path: str = "/") -> dict:
+    """Unterordner eines Pfades -- damit man nicht tippen muss, was existiert.
+
+    Der eigentliche Grund ist nicht Bequemlichkeit: von 34 Zeilen dieser
+    Datei zeigen zwölf auf Ordner, die es nicht (mehr) gibt. Getippte Pfade
+    veralten, und eine tote Zeile sieht im Editor wie eine wirksame aus. Wer
+    nur auswählen kann, was da ist, legt diese Zeilen nicht an.
+
+    Je Ordner steht dabei, wieviele Bilder direkt darin liegen und ob es
+    Unterordner gibt -- sonst klickt man sich blind durch einen Baum.
+    """
+    p = Path(path or "/")
+    if not p.is_absolute():
+        raise HTTPException(400, "Absoluter Pfad erwartet")
+    if not p.is_dir():
+        raise HTTPException(404, f"Kein Verzeichnis: {p}")
+
+    from ingest.scanner import _is_image
+
+    dirs = []
+    try:
+        for kind in sorted(p.iterdir(), key=lambda x: x.name.lower()):
+            if not kind.is_dir() or kind.name.startswith("."):
+                continue
+            bilder, unter, angeschnitten = 0, False, False
+            try:
+                for i, e in enumerate(kind.iterdir()):
+                    if i >= BROWSE_CAP:
+                        angeschnitten = True
+                        break
+                    if e.is_dir():
+                        unter = True
+                    elif _is_image(e):
+                        bilder += 1
+            except OSError:
+                pass
+            dirs.append({
+                "name": kind.name,
+                "path": str(kind),
+                "images": bilder,
+                "truncated": angeschnitten,
+                "has_subdirs": unter,
+            })
+    except OSError as e:
+        raise HTTPException(502, f"Nicht lesbar: {e}") from e
+
+    s = src.read(FILE)
+    drin = {e.path.rstrip("/"): e for e in s.entries}
+    for d in dirs:
+        e = drin.get(d["path"].rstrip("/"))
+        d["listed"] = None if e is None else ("exclude" if e.exclude else "include")
+        d["enabled"] = None if e is None else e.enabled
+
+    return {
+        "path": str(p),
+        "parent": None if p.parent == p else str(p.parent),
+        "dirs": dirs,
+        "cap": BROWSE_CAP,
+    }
+
+
 @router.get("/preview")
 def preview() -> dict:
     """Was ein Lauf mit dem aktuellen Stand finden würde.

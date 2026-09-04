@@ -147,3 +147,40 @@
 .src-table .n { text-align: right; font-variant-numeric: tabular-nums; }
 .src-table .n.plus { color: #7fc79a; font-weight: 600; }
 .src-table tfoot th { border-top: 1px solid #2a3140; font-variant-numeric: tabular-nums; }
+
+/* ---- Ordnerwähler -----------------------------------------------------
+   Zeigt, was existiert. Der Grund ist nicht Bequemlichkeit: getippte Pfade
+   veralten still, und eine tote Zeile sieht wie eine wirksame aus. */
+
+.pick { min-width: min(560px, 78vw); }
+.pick-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-bottom: 8px; }
+.pick-crumbs button {
+  padding: 2px 7px; border-radius: 6px; border: 1px solid transparent;
+  background: #1d222c; color: var(--text); cursor: pointer;
+  font: inherit; font-size: .82rem;
+}
+.pick-crumbs button:hover { border-color: var(--accent); }
+.pick-crumbs span { color: var(--muted); }
+.pick-here { margin: 0 0 10px; font-size: .82rem; }
+.pick-here b { font-family: ui-monospace, monospace; }
+
+/* `overflow-x: hidden` und `min-width: 0` gehoeren zusammen: ohne das
+   zweite schrumpft ein Flex-Kind nicht, der Name draengt die Marken nach
+   rechts hinaus, und man sieht nicht mehr, was schon eingetragen ist. */
+.pick-list {
+  max-height: min(46vh, 420px);
+  overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.pick-row {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 6px 9px; border-radius: 8px; border: 1px solid transparent;
+  background: transparent; color: var(--text); cursor: pointer;
+  font: inherit; font-size: .84rem; text-align: left;
+}
+.pick-row:hover { background: #1d222c; border-color: #313a4a; }
+.pick-row.known { background: #17211b; }
+.pick-name { flex: 1 1 auto; min-width: 0; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.pick-n { color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pick-sub, .pick-tag { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.pick-tag { color: #7fc79a; }
