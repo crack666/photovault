@@ -46,6 +46,13 @@ services:
       - ${PHOTO_DIR:?PHOTO_DIR fehlt -- .env.example nach .env kopieren}:/photos:ro
       # Modellgewichte (insightface, CLIP) überleben so einen Neubau des Images.
       - model_cache:/models
+      # Vorschaubilder. Ohne dieses Volume liegen sie im Container und sind
+      # nach jedem `--build` weg -- 14.593 Originale müssten dann wieder
+      # über die Leitung. Benanntes Volume und kein Bind-Mount auf den
+      # Projektordner: unter WSL liegt der auf NTFS über 9p, und das ist
+      # gemessen viermal langsamer als die Linux-Platte (0,89 ms gegen
+      # 3,62 ms je Kachel).
+      - thumb_cache:/app/data/thumbs
     depends_on:
       qdrant:
         condition: service_healthy
@@ -54,3 +61,4 @@ services:
 volumes:
   qdrant_data:
   model_cache:
+  thumb_cache:

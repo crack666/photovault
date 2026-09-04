@@ -46,6 +46,10 @@ class Runnable(BaseModel):
     kind: str
     #: Braucht Ollama und damit die Grafikkarte.
     gpu: bool = False
+    #: Feste Schalter, die dieser Lauf immer braucht. `tools/thumbs.py`
+    #: berichtet ohne `--warm` nur und erzeugt nichts -- ein Knopf "Anlegen",
+    #: der nichts anlegt, ist schlimmer als kein Knopf.
+    argv: tuple[str, ...] = ()
     #: Welche Schalter das Werkzeug wirklich kennt. `atlas_build` hat keinen
     #: Trockenlauf -- ihm einen mitzugeben ließe den Start unerklärlich
     #: scheitern, mit dem Fehler im Protokoll statt in der Antwort.
@@ -78,6 +82,15 @@ RUNNABLE: dict[str, Runnable] = {
         hint=f"Ollama starten und `ollama pull {EMBED_MODEL}`.",
         label="Text-Vektoren neu bauen",
         note="Nach neuen Captions, Namen, Notizen — oder wenn sich die Regel geändert hat.",
+    ),
+    "thumbs": Runnable(
+        module="tools.thumbs", kind="thumbs",
+        argv=("--warm",),
+        flags=(),
+        label="Vorschaubilder anlegen",
+        note="Erzeugt die fehlenden Kacheln fuer Karte und Listen. Liest jedes "
+             "Original einmal -- ueber ein Netzlaufwerk ist das der langsame Teil. "
+             "Danach werden die Originale nicht mehr geholt.",
     ),
     "atlas": Runnable(
         module="tools.atlas_build", kind="atlas",
@@ -151,6 +164,46 @@ def _runnable_state(running: list[dict]) -> list[dict]:
             "blocked": blocked,
         })
     return out
+
+
+@router.get("/cost/thumbs")
+def thumb_cost() -> dict:
+    """Was "Vorschaubilder anlegen" kosten wuerde -- vorher, nicht hinterher.
+
+    Ein Knopf, der einen Lauf ueber 14.593 Dateien startet, muss sagen was
+    er vorhat. Gerechnet wird aus dem, was schon im Cache liegt: der
+    Mittelwert je Groesse mal die Zahl der fehlenden Kacheln.
+    """
+    from api.thumbs import CACHE_DIR
+    from tools.thumbs import ATLAS_SIZES, digest, indexed_paths, scan
+
+    q = client()
+    paths = indexed_paths(q)
+    soll = {digest(p) for p in paths}
+    da = scan(CACHE_DIR, ATLAS_SIZES)
+
+    je_groesse, fehlend, kosten, belegt = [], 0, 0.0, 0
+    for s in ATLAS_SIZES:
+        gut = {d: v for d, v in da[s].items() if d in soll}
+        b = sum(v[1] for v in gut.values())
+        schnitt = b / len(gut) if gut else 0
+        fehlt = len(soll) - len(gut)
+        je_groesse.append({"size": s, "have": len(gut), "missing": fehlt,
+                           "bytes": b, "avg": round(schnitt)})
+        fehlend += fehlt
+        kosten += fehlt * schnitt
+        belegt += b
+
+    return {
+        "photos": len(paths),
+        "sizes": je_groesse,
+        "missing": fehlend,
+        "bytes_missing": round(kosten),
+        "bytes_present": belegt,
+        "cache_dir": str(CACHE_DIR),
+        "note": "Karte und Listen brauchen 160 und 320 px. Die Grossansicht "
+                "(1280) entsteht bei Bedarf -- fuer alle waeren das rund 2,4 GB.",
+    }
 
 
 @router.get("/{job_id}")
@@ -280,7 +333,7 @@ def build_argv(spec: Runnable, *, dry_run: bool, limit: Optional[int]) -> list[s
     nicht kennt, wird weggelassen statt weitergereicht: sonst scheitert der
     Start unerklaerlich, mit dem Fehler im Protokoll statt in der Antwort.
     """
-    argv = [sys.executable, "-m", spec.module]
+    argv = [sys.executable, "-m", spec.module, *spec.argv]
     if dry_run and "dry_run" in spec.flags:
         argv.append("--dry-run")
     if limit and "limit" in spec.flags:

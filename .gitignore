@@ -53,3 +53,8 @@ sources.txt
 # enthalten damit echte Personennamen -- wie der Index selbst gehoert sie
 # nicht ins Repository. Neu bauen: python -m tools.atlas_build
 web/static/atlas/atlas.json
+
+# Vorschaubilder und andere Laufzeitdaten. Der Cache ist reproduzierbar --
+# er gehoert nicht ins Repository, aber auch nicht unter ~/.cache, wo ihn
+# niemand findet. `tools/thumbs.py` sagt, wo er liegt und was er kostet.
+data/

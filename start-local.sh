@@ -34,6 +34,17 @@ OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 VENV="${VENV:-$HOME/.venvs/photovault}"
 LOG="logs/uvicorn.log"
 
+# Wo die Vorschaubilder liegen.
+#
+# Die Voreinstellung im Code ist `data/thumbs` im Projektordner -- richtig
+# fuer den Container, wo ein benanntes Volume darunter liegt. Hier nicht:
+# der Projektordner liegt auf /mnt/d, also NTFS ueber 9p, und das ist
+# gemessen viermal langsamer als die Linux-Platte (0,89 ms gegen 3,62 ms je
+# Kachel). Bei 14.593 Kacheln sind das 13 Sekunden gegen 53.
+#
+# Wer es anders will, setzt PHOTOVAULT_THUMB_CACHE selbst.
+export PHOTOVAULT_THUMB_CACHE="${PHOTOVAULT_THUMB_CACHE:-$HOME/.cache/photovault-thumbs}"
+
 ok()   { printf '  \033[32m*\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 bad()  { printf '  \033[31mx\033[0m %s\n' "$1"; }
@@ -94,6 +105,18 @@ pruefe_qdrant() {
     return 1
 }
 
+pruefe_cache() {
+    local d="${PHOTOVAULT_THUMB_CACHE}"
+    if [ -d "${d}" ]; then
+        local n b
+        n=$(find "${d}" -name "*.jpg" 2>/dev/null | wc -l)
+        b=$(du -sm "${d}" 2>/dev/null | cut -f1)
+        ok "Vorschaubilder: ${d} (${n} Kacheln, ${b} MB)"
+    else
+        warn "Vorschaubilder: ${d} -- noch leer, wird beim ersten Ansehen gefuellt"
+    fi
+}
+
 pruefe_ollama() {
     if curl -sf -m 3 -o /dev/null "${OLLAMA_URL}/api/tags"; then
         ok "Ollama: ${OLLAMA_URL}"
@@ -147,6 +170,7 @@ tu_start() {
     pruefe_venv || return 1
     pruefe_fotos
     pruefe_qdrant || return 1
+    pruefe_cache
     pruefe_ollama
     echo
     mkdir -p logs

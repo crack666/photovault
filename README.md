@@ -605,7 +605,34 @@ python -m tools.acceptance --prefix /mnt/photo       # Szenarien aus docs/spec.m
 python -m tools.atlas_build                          # Karte fuer den Tab "Atlas"
 python -m tools.reembed_all --dry-run                # Text-Vektoren neu bauen
 python -m tools.backfill_spaces --check              # Bereiche + Payload-Indizes pruefen
+python -m tools.thumbs                               # Vorschaubild-Cache: wo, wie gross, wieviel Muell
+python -m tools.thumbs --prune                        # verwaiste Kacheln loeschen
+python -m tools.thumbs --warm                         # fehlende erzeugen
 ```
+
+### Der Vorschaubild-Cache
+
+Er ist der Grund, warum der Atlas schnell ist: nach dem ersten Ansehen werden
+die Originale nicht mehr geholt. Gemessen an diesem Bestand — 14.593 Fotos,
+17,5 GB Originale — belegen die beiden Größen, die Karte und Listen brauchen,
+**295 MB**. Faktor 61. Die Großansicht (1280 px) entsteht bei Bedarf; für alle
+wären das weitere 2,4 GB.
+
+Wo er liegt, hängt am Betriebsmodus, und das ist gemessen und nicht geraten:
+
+| Modus | Ort | warum |
+|---|---|---|
+| Container | `/app/data/thumbs` als benanntes Volume | überlebt `--build`; ein Bind-Mount auf den Projektordner läge unter WSL auf NTFS über 9p |
+| lokal | `~/.cache/photovault-thumbs` | 0,89 ms je Kachel gegen 3,62 ms auf `/mnt/d` — bei 14.593 Kacheln 13 s gegen 53 s |
+
+`PHOTOVAULT_THUMB_CACHE` überschreibt beides; `start-local.sh` setzt den
+schnellen Ort und nennt ihn beim Start.
+
+**Der Schlüssel ist der Dateipfad** (`sha256(pfad)`). Wird ein Foto verschoben
+oder gelöscht, passt er nicht mehr und die alte Kachel bleibt liegen — gemessen
+14.858 Waisen mit 94 MB, die `--prune` freigibt. Das ist dieselbe Wurzel wie
+bei den Photo-IDs (siehe `ingest/identity.py`): eine pfadunabhängige Identität
+würde beides lösen und steht noch aus.
 
 `backfill_spaces` schreibt das Feld `space` (erste Ordnerebene) und legt die
 Indizes fuer `space`, `folder_name` und `trashed_at` an — die beiden letzten

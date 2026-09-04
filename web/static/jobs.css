@@ -184,3 +184,12 @@
 .pick-n { color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pick-sub, .pick-tag { color: var(--muted); font-size: .75rem; white-space: nowrap; }
 .pick-tag { color: #7fc79a; }
+
+/* Was ein Lauf kostet -- steht im Starter, nicht in einer Meldung danach. */
+.starter .cost {
+  display: block;
+  margin: 6px 0 0;
+  font-size: .78rem;
+  color: #9fb4d0;
+  line-height: 1.45;
+}

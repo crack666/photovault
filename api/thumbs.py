@@ -14,9 +14,23 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path(
-    os.environ.get("PHOTOVAULT_THUMB_CACHE", Path.home() / ".cache" / "photovault-thumbs")
-)
+#: Wo die Vorschaubilder liegen -- im Arbeitsverzeichnis, nicht unter ~/.cache.
+#:
+#: Zwei Gruende. Im Container ist `~` das Heimatverzeichnis *im Container*:
+#: der Cache stirbt dort bei jedem Neubau des Images, und 14.593 Bilder
+#: muessen wieder ueber die Leitung. Und auf dem Rechner will man sehen,
+#: wieviel das Werkzeug belegt, ohne in einem versteckten Ordner zu suchen.
+#:
+#: Abgeleitet vom Modulort, nicht vom Arbeitsverzeichnis: uvicorn wird nicht
+#: immer aus dem Projektordner gestartet, und ein Cache, der je nach Aufruf
+#: woanders liegt, ist kein Cache.
+DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data" / "thumbs"
+CACHE_DIR = Path(os.environ.get("PHOTOVAULT_THUMB_CACHE", DEFAULT_CACHE))
+
+#: Der alte Ort. Wird beim Lesen weiter beruecksichtigt, damit ein Umzug
+#: nicht bedeutet, dass 651 MB neu gerechnet werden -- `tools/thumbs.py
+#: --move` schiebt sie herueber.
+LEGACY_CACHE = Path.home() / ".cache" / "photovault-thumbs"
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
 ALLOWED_SIZES = (160, 320, 640, 1280)
 
@@ -29,10 +43,30 @@ def normalize_size(size: int) -> int:
     return ALLOWED_SIZES[-1]
 
 
-def _cache_path(key: str, size: int) -> Path:
+def _rel(key: str, size: int) -> Path:
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     # Zweistufig, damit kein Verzeichnis mit 50k Eintraegen entsteht.
-    return CACHE_DIR / digest[:2] / f"{digest}_{size}.jpg"
+    return Path(digest[:2]) / f"{digest}_{size}.jpg"
+
+
+def _cache_path(key: str, size: int) -> Path:
+    return CACHE_DIR / _rel(key, size)
+
+
+def _find_cached(key: str, size: int) -> Path | None:
+    """Ein vorhandenes Vorschaubild -- neuer Ort zuerst, alter als Rueckfall.
+
+    Ohne den Rueckfall waere der Umzug des Cache-Ortes ein stiller Neuaufbau
+    von 651 MB ueber das Netzlaufwerk. So merkt man ihn nicht.
+    """
+    rel = _rel(key, size)
+    neu = CACHE_DIR / rel
+    if neu.is_file():
+        return neu
+    alt = LEGACY_CACHE / rel
+    if LEGACY_CACHE != CACHE_DIR and alt.is_file():
+        return alt
+    return None
 
 
 WARN_TRUNCATED = "truncated"
@@ -65,13 +99,14 @@ def make_thumb(
     """Wie get_thumb, plus Warnung wenn die Datei unvollständig oder unlesbar ist."""
     size = normalize_size(size)
     key = f"{file_path}|{box}|{pad}" if box else file_path
-    cached = _cache_path(key, size)
-    if cached.is_file():
+    vorhanden = _find_cached(key, size)
+    if vorhanden is not None:
         try:
-            return cached.read_bytes(), None
+            return vorhanden.read_bytes(), None
         except OSError:
             pass
 
+    cached = _cache_path(key, size)
     data, warn = _render(file_path, size, box, pad, image)
     if warn is None:
         warn = jpeg_truncation_hint(file_path)
@@ -153,17 +188,22 @@ def drop_cached(file_path: str) -> int:
     Beim endgueltigen Loeschen bleibt sonst der Cache als Geisterbild zurueck:
     das Foto ist weg, aber die Oberflaeche zeigt es weiter, bis der Eintrag
     zufaellig verdraengt wird.
+
+    Geraeumt werden beide Orte. Bliebe am alten eines liegen, waere es nach
+    dem Loeschen weiter zu sehen -- genau das Geisterbild, das diese Funktion
+    verhindern soll.
     """
     gone = 0
     for size in ALLOWED_SIZES:
-        target = _cache_path(file_path, size)
-        try:
-            target.unlink()
-            gone += 1
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            logger.debug("Thumb %s nicht loeschbar: %s", target, e)
+        for basis in {CACHE_DIR, LEGACY_CACHE}:
+            target = basis / _rel(file_path, size)
+            try:
+                target.unlink()
+                gone += 1
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.debug("Thumb %s nicht loeschbar: %s", target, e)
     return gone
 
 

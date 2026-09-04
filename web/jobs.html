@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Jobs</title>
-  <link rel="stylesheet" href="/static/styles.css?v=69" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=69" />
-  <link rel="stylesheet" href="/static/jobs.css?v=69" />
+  <link rel="stylesheet" href="/static/styles.css?v=70" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=70" />
+  <link rel="stylesheet" href="/static/jobs.css?v=70" />
 </head>
 <body>
   <header class="top">
@@ -55,8 +55,8 @@
   </main>
 
 <script type="module">
-import { renderNav } from "/static/core/nav.js?v=69";
-import { notify, openModal } from "/static/core/modal.js?v=69";
+import { renderNav } from "/static/core/nav.js?v=70";
+import { notify, openModal } from "/static/core/modal.js?v=70";
 
 renderNav(document.getElementById("nav"), { active: "jobs" });
 
@@ -109,6 +109,7 @@ function renderStarters(runnable) {
       <p>${esc(r.note)}</p>
       ${r.gpu ? `<span class="gpu">belegt die Grafikkarte</span>` : ""}
       ${r.ready ? "" : `<span class="why">${esc(r.blocked)}</span>`}
+      ${r.id === "thumbs" ? '<span class="cost" id="thumb-cost">rechnet die Kosten …</span>' : ""}
       <div class="row">
         ${r.dry_run ? `<button data-run="${r.id}" data-dry="1" ${off ? "disabled" : ""}>Trockenlauf</button>` : ""}
         <button class="go" data-run="${r.id}" ${off ? "disabled" : ""}>${
@@ -116,6 +117,34 @@ function renderStarters(runnable) {
       </div>
     </div>`;
   }).join("");
+}
+
+/* Was der Lauf kostet -- vor dem Knopf, nicht danach.
+
+   Ein Knopf, der 14.593 Dateien anfasst, muss sagen was er vorhat. Die Zahl
+   kommt aus dem, was schon im Cache liegt: Mittelwert je Groesse mal die
+   Zahl der fehlenden Kacheln. Geladen wird sie einmal, nicht bei jedem
+   Zwei-Sekunden-Tick -- sie aendert sich nur, wenn ein Lauf durchlief. */
+let kostenGeholt = false;
+
+async function ladeThumbKosten() {
+  const el = document.getElementById("thumb-cost");
+  if (!el || kostenGeholt) return;
+  kostenGeholt = true;
+  try {
+    const d = await api("/api/jobs/cost/thumbs");
+    const mb = (b) => `${(b / 1048576).toFixed(b < 10485760 ? 1 : 0)} MB`;
+    el.textContent = d.missing
+      ? `${num(d.missing)} von ${num(d.photos * d.sizes.length)} Kacheln fehlen `
+        + `— etwa ${mb(d.bytes_missing)}. Vorhanden: ${mb(d.bytes_present)}.`
+      : `Vollstaendig: ${num(d.photos)} Fotos, ${mb(d.bytes_present)} im Cache. `
+        + "Ein Lauf haette nichts zu tun.";
+    el.title = d.note + ` Cache: ${d.cache_dir}`;
+  } catch (e) {
+    // Keine Zahl ist besser als eine erfundene -- und der Grund gehoert dazu.
+    el.textContent = `Kosten nicht ermittelbar (${String(e.message || e).slice(0, 60)})`;
+    kostenGeholt = false;
+  }
 }
 
 document.getElementById("starters").addEventListener("click", async (e) => {
@@ -274,6 +303,7 @@ async function tick() {
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
     renderStarters(data.runnable);
+    ladeThumbKosten();
     render(data);
   } catch (e) {
     document.getElementById("meta").textContent = `API nicht erreichbar: ${e.message}`;
