@@ -19,6 +19,10 @@ class QdrantWriter:
         # verschobenen Datei danach sucht -- ohne Index ein Full Scan ueber
         # 14.593 Punkte je Datei.
         ("photo_uid", "KEYWORD"),
+        # Der Inhalts-Hash. Indiziert, weil das Wiedererkennen einer
+        # verschobenen Datei danach sucht -- und weil "welche Fotos sind
+        # bitidentisch" damit eine Abfrage statt eines Durchlaufs ist.
+        ("content_sha256", "KEYWORD"),
         ("person_ids", "KEYWORD"),
         ("scene_tags", "KEYWORD"),
         ("annotations", "KEYWORD"),
@@ -148,6 +152,7 @@ class QdrantWriter:
             # letzten Leser umgestellt sind. Siehe ingest/identity.py.
             "photo_uid": record.photo_id,
             "photo_id": record.photo_id,
+            "content_sha256": getattr(record, "content_sha256", None),
             "file_path": record.file_path,
             "person_ids": record.person_ids,
             "face_count": record.face_count,

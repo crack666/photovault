@@ -62,6 +62,39 @@ def point_id_for_path(file_path: str) -> str:
     return point_id_for(photo_uid_for(file_path))
 
 
+def content_hash(file_path: str, chunk: int = 1 << 20) -> str | None:
+    """sha256 des Dateiinhalts -- oder None, wenn sie nicht lesbar ist.
+
+    Stufe 2 der Umstellung. Zwei Aufgaben, die der Pfad-Hash beide schlecht
+    erfuellte:
+
+    *Schluessel im Vorschaubild-Cache.* Gleiche Bytes heissen gleiche Kachel.
+    Ein Verschieben macht damit nichts ungueltig, und zwei bitidentische
+    Dateien teilen sich eine -- statt 14.858 Waisen zu hinterlassen.
+
+    *Wiedererkennen.* Eine von aussen verschobene Datei ist dieselbe Datei;
+    ihr Inhalt sagt das, ihr Pfad nicht.
+
+    Der Preis ist gering, weil der Ingest die Bytes ohnehin liest: gemessen
+    0,9 ms je Foto direkt nach dem Bildladen (das 61 ms kostet), gegen
+    35,8 ms bei kaltem Seiten-Cache. Deshalb *nach* dem Laden hashen, nicht
+    davor.
+    """
+    h = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as fh:
+            while True:
+                block = fh.read(chunk)
+                if not block:
+                    break
+                h.update(block)
+    except OSError:
+        # Keine Ausnahme nach oben: ein unlesbares Foto soll den Lauf nicht
+        # kosten. Ohne Hash faellt es nur auf den Pfad-Schluessel zurueck.
+        return None
+    return h.hexdigest()
+
+
 def uid_of(payload: dict) -> str:
     """Die Kennung aus einem Payload -- neues Feld zuerst, altes als Rueckfall.
 
