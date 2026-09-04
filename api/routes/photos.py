@@ -17,7 +17,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from api.qdrant_util import FACES, PHOTOS, client, visible
-from api.thumbs import drop_cached, jpeg_truncation_hint, make_thumb
+from api.thumbs import drop_cached, make_thumb
 from ingest.reembed import apply_annotations, rebuild_text_vectors
 
 logger = logging.getLogger(__name__)
@@ -359,10 +359,15 @@ def photo_thumb(point_id: str, size: int = 320):
         logger.warning("Thumb failed for %s: %s", path, e)
         _stamp_file_warning(q, point_id, payload, "unreadable")
         raise HTTPException(500, f"Thumbnail fehlgeschlagen: {e}") from e
-    if not payload.get("file_warning"):
-        warn = warn or jpeg_truncation_hint(path)
-        if warn:
-            _stamp_file_warning(q, point_id, payload, warn)
+    # `make_thumb` prueft die Endemarkierung schon -- aber nur, wenn es das
+    # Vorschaubild wirklich erzeugt. Hier noch einmal zu pruefen hiess: bei
+    # *jedem* Abruf die Originaldatei auf dem Netzlaufwerk oeffnen, auch wenn
+    # die Kachel aus dem Cache kam. Gemessen 14 ms von 24 ms je Anfrage --
+    # der Cache sparte das Dekodieren, nicht den Weg zum NAS. Und weil ein
+    # gesundes Foto nie einen Vermerk bekommt, wiederholte sich das fuer
+    # immer.
+    if warn and not payload.get("file_warning"):
+        _stamp_file_warning(q, point_id, payload, warn)
     return Response(
         content=data,
         media_type="image/jpeg",

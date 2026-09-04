@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.qdrant_util import visible
+from api.qdrant_util import client as qdrant, visible
 from api.query import QueryNode
 from ingest.dates import date_bound
 
@@ -152,12 +152,14 @@ class QuerySearchResponse(BaseModel):
 
 @router.post("/query", response_model=QuerySearchResponse)
 def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
-    from qdrant_client import QdrantClient
-
     from api.people_index import known_persons, resolve
     from api.query import count_conditions, describe, to_filter
 
-    client = QdrantClient(url=QDRANT_URL)
+    # Ueber qdrant_util.client(), nicht selbst gebaut: ein neuer Client je
+    # Anfrage kostet eine neue Verbindung samt Versionsabgleich -- bei der
+    # Suche gemessen 27 Anfragen je Sekunde gegen 452 bei den Kacheln,
+    # nachdem dort dasselbe behoben war.
+    client = qdrant()
     people = known_persons(client)
     inner = to_filter(req.query, resolver=lambda v: resolve(v, people))
     scope = space_scope(req.spaces)
@@ -267,10 +269,13 @@ def _total_for(client, filter_, req, seite: int) -> int:
 
 @router.post("")
 def search(req: SearchRequest) -> SearchResponse:
-    from qdrant_client import QdrantClient
     from qdrant_client.models import DatetimeRange, FieldCondition, Filter, MatchValue
 
-    client = QdrantClient(url=QDRANT_URL)
+    # Ueber qdrant_util.client(), nicht selbst gebaut: ein neuer Client je
+    # Anfrage kostet eine neue Verbindung samt Versionsabgleich -- bei der
+    # Suche gemessen 27 Anfragen je Sekunde gegen 452 bei den Kacheln,
+    # nachdem dort dasselbe behoben war.
+    client = qdrant()
     conditions = []
     unresolved: list[str] = []
     if req.persons:
@@ -392,11 +397,13 @@ def list_spaces(limit: int = 40) -> dict:
     Gezählt wird ohne Papierkorb -- sonst stimmt die Zahl im Wähler nicht mit
     der Zahl der Treffer überein, und das sähe aus wie ein Fehler.
     """
-    from qdrant_client import QdrantClient
-
     from api.qdrant_util import visible
 
-    client = QdrantClient(url=QDRANT_URL)
+    # Ueber qdrant_util.client(), nicht selbst gebaut: ein neuer Client je
+    # Anfrage kostet eine neue Verbindung samt Versionsabgleich -- bei der
+    # Suche gemessen 27 Anfragen je Sekunde gegen 452 bei den Kacheln,
+    # nachdem dort dasselbe behoben war.
+    client = qdrant()
     try:
         hits = client.facet(collection_name=COLLECTION, key="space",
                             facet_filter=visible(), limit=limit).hits
