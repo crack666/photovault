@@ -62,8 +62,16 @@ def get_stats() -> dict:
 _GAPS = (
     ("text", "Freitextsuche findet sie nicht",
      "Text-Vektoren neu bauen — braucht Ollama"),
+    # Der Hinweis lautete "Datei prüfen: meist beschädigt oder nicht lesbar".
+    # An den 59 Fällen dieses Bestands nachgemessen war das falsch, und die
+    # falsche Richtung: 56 Dateien lagen zu 98–100 % vor (es fehlten 0–73
+    # Bytes am Ende, alle mit heilem EXIF-Vorschaubild), eine zu 75 %, und
+    # nur zwei waren wirklich Müll — 36 Byte UUID-Text mit `.png` am Namen.
+    # Sie fehlten, weil sie aufgenommen wurden, bevor `_load_image`
+    # abgeschnittene Bilder tolerierte. Ein Hinweis, der auf die Datei zeigt,
+    # schickt den Benutzer 57 Mal in die falsche Richtung.
     ("clip", "keine Ähnlichkeitssuche, nicht auf der Karte",
-     "Datei prüfen: meist beschädigt oder nicht lesbar"),
+     "Vektoren nachziehen: python -m tools.backfill_clip"),
 )
 
 
