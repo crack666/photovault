@@ -15,6 +15,10 @@ class QdrantWriter:
     #: `space` und der Papierkorb-Stempel fehlten und wurden per Hand
     #: nachgetragen (tools/backfill_spaces.py) -- sie gehoeren hierher.
     PHOTO_INDEXES = (
+        # Die eingefrorene Kennung. Indiziert, weil das Wiedererkennen einer
+        # verschobenen Datei danach sucht -- ohne Index ein Full Scan ueber
+        # 14.593 Punkte je Datei.
+        ("photo_uid", "KEYWORD"),
         ("person_ids", "KEYWORD"),
         ("scene_tags", "KEYWORD"),
         ("annotations", "KEYWORD"),
@@ -138,6 +142,11 @@ class QdrantWriter:
         if record.text_embedding:
             vectors["text"] = record.text_embedding
         payload = {
+            # Beide, solange die Umstellung laeuft. `photo_uid` ist die
+            # eingefrorene Kennung -- sie wird beim ersten Sehen gebildet und
+            # danach nie neu berechnet; `photo_id` bleibt wertgleich, bis die
+            # letzten Leser umgestellt sind. Siehe ingest/identity.py.
+            "photo_uid": record.photo_id,
             "photo_id": record.photo_id,
             "file_path": record.file_path,
             "person_ids": record.person_ids,
