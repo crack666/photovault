@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PhotoVault — Jobs</title>
-  <link rel="stylesheet" href="/static/styles.css?v=66" />
-  <link rel="stylesheet" href="/static/core/ui.css?v=66" />
-  <link rel="stylesheet" href="/static/jobs.css?v=66" />
+  <link rel="stylesheet" href="/static/styles.css?v=67" />
+  <link rel="stylesheet" href="/static/core/ui.css?v=67" />
+  <link rel="stylesheet" href="/static/jobs.css?v=67" />
 </head>
 <body>
   <header class="top">
@@ -20,6 +20,24 @@
     <div class="starters" id="starters"></div>
     <div id="gaps" class="gaps hidden"></div>
     <p id="run-msg"></p>
+
+    <!-- Welche Ordner eingelesen werden. Steht auf der Jobs-Seite, weil die
+         Antwort darauf entscheidet, was die Laeufe darunter zu tun haben. -->
+    <section class="src" id="src">
+      <h2>Welche Ordner eingelesen werden</h2>
+      <p class="muted src-lead">
+        Der Haken sagt „beim naechsten Lauf mitnehmen“. Abwaehlen nimmt nichts
+        aus dem Index — die Fotos bleiben, bis sie aufgeraeumt werden.
+        <em id="src-file"></em>
+      </p>
+      <div id="src-list" class="src-list"></div>
+      <div class="src-add">
+        <button type="button" id="src-new" class="mini">Ordner hinzufuegen …</button>
+        <button type="button" id="src-preview" class="mini">Trockenlauf: was wuerde gefunden?</button>
+        <span id="src-msg" class="muted"></span>
+      </div>
+      <div id="src-result" class="src-result hidden"></div>
+    </section>
 
     <div class="job-bar">
       <label>Art
@@ -37,8 +55,8 @@
   </main>
 
 <script type="module">
-import { renderNav } from "/static/core/nav.js?v=66";
-import { openModal } from "/static/core/modal.js?v=66";
+import { renderNav } from "/static/core/nav.js?v=67";
+import { notify, openModal } from "/static/core/modal.js?v=67";
 
 renderNav(document.getElementById("nav"), { active: "jobs" });
 
@@ -57,6 +75,20 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
 const badgeClass = (s) => ({
   running: "b-running", done: "b-done", stale: "b-stale",
 }[s] || (String(s).includes("error") ? "b-error" : "b-done"));
+
+
+// Die Jobs-Seite hat absichtlich keine gemeinsame App-Basis: sie soll auch
+// laufen, wenn der Rest kaputt ist. Also drei kleine Helfer statt eines
+// Imports, der alles mitzieht.
+const num = (n) => Number(n ?? 0).toLocaleString("de-DE");
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { "Content-Type": "application/json" }, ...opts,
+  });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`${r.status} ${text.slice(0, 200)}`);
+  return text ? JSON.parse(text) : {};
+}
 
 const msg = (text) => { document.getElementById("run-msg").textContent = text || ""; };
 
@@ -252,6 +284,168 @@ renderGaps();
 setInterval(tick, 2000);
 // Der Zustand ändert sich nur nach einem Lauf -- alle 30 s genügt.
 setInterval(renderGaps, 30000);
+
+/* ---- Welche Ordner eingelesen werden ---------------------------------
+
+   `sources.txt` entscheidet, was ueberhaupt existiert. Bis jetzt ging das
+   nur im Editor -- fuer eine Entscheidung dieser Tragweite zu versteckt.
+
+   Drei Dinge sind hier wichtiger als Bequemlichkeit:
+
+   Die Datei bleibt die Wahrheit. Ein Haken setzt oder entfernt genau ein
+   '#'; Reihenfolge, Einrueckung und handgeschriebene Notizen bleiben. In
+   dieser Datei steht hinter jeder Zeile die gefundene Bilderzahl -- eine
+   Oberflaeche, die die Datei neu generiert, wirft das weg.
+
+   Ein Ordner, den es nicht gibt, wird als solcher gezeigt. Im Texteditor
+   sieht eine tote Ausschlusszeile genauso aus wie eine wirksame, und dann
+   schuetzt sie nichts, ohne dass es auffaellt.
+
+   Und der Trockenlauf steht neben dem Speichern, nicht dahinter: ein Haken
+   kann einen stundenlangen Lauf ausloesen. */
+
+const srcState = { entries: [], file: "" };
+
+async function loadSources() {
+  const box = document.getElementById("src-list");
+  box.textContent = "lädt …";
+  let d;
+  try {
+    d = await api("/api/sources");
+  } catch (e) {
+    box.innerHTML = `<p class="muted">Quellenliste nicht lesbar: ${
+      esc(String(e.message || e))}</p>`;
+    return;
+  }
+  srcState.entries = d.entries;
+  srcState.file = d.file;
+  document.getElementById("src-file").textContent = d.file;
+  paintSources();
+}
+
+function paintSources() {
+  const box = document.getElementById("src-list");
+  const ein = srcState.entries.filter((e) => !e.exclude);
+  const aus = srcState.entries.filter((e) => e.exclude);
+
+  const zeile = (e) => `
+    <label class="src-row${e.enabled ? " on" : ""}${e.exists ? "" : " ghost"}">
+      <input type="checkbox" data-line="${e.line}"${e.enabled ? " checked" : ""}>
+      <span class="src-path">${esc(e.path)}</span>
+      ${e.exists ? "" : `<span class="src-warn" title="Diesen Ordner gibt es nicht — die Zeile wirkt nicht">gibt es nicht</span>`}
+      ${e.photos > 0 ? `<span class="src-count">${num(e.photos)} im Index</span>` : ""}
+      ${e.note ? `<span class="src-note">${esc(e.note)}</span>` : ""}
+    </label>`;
+
+  box.innerHTML = `
+    <h3>Quellen <em>${ein.filter((e) => e.enabled).length} von ${ein.length} aktiv</em></h3>
+    ${ein.map(zeile).join("")}
+    <h3>Ausschlüsse <em>${aus.filter((e) => e.enabled).length} von ${aus.length} aktiv</em></h3>
+    <p class="muted src-sub">Gelten innerhalb der Quellen darüber.</p>
+    ${aus.map(zeile).join("")}`;
+
+  box.querySelectorAll("input[data-line]").forEach((cb) => {
+    cb.addEventListener("change", () => toggleSource(Number(cb.dataset.line), cb.checked, cb));
+  });
+}
+
+async function toggleSource(line, enabled, cb) {
+  const e = srcState.entries.find((x) => x.line === line);
+  cb.disabled = true;
+  try {
+    await api("/api/sources/toggle", {
+      method: "POST", body: JSON.stringify({ line, enabled }),
+    });
+  } catch (err) {
+    cb.checked = !enabled;   // zurückdrehen, sonst zeigt der Haken etwas Falsches
+    cb.disabled = false;
+    notify(`Konnte nicht speichern: ${err.message || err}`, { kind: "error" });
+    return;
+  }
+  cb.disabled = false;
+  if (e) e.enabled = enabled;
+  paintSources();
+
+  // Was das bedeutet, gehört dazu -- und zwar der unangenehme Teil zuerst.
+  if (!enabled && e && e.photos > 0 && !e.exclude) {
+    notify(`„${e.path}“ wird nicht mehr nachgeladen. Die ${num(e.photos)} Fotos `
+         + "bleiben im Index, bis „Liste aufräumen“ sie entfernt.", { ms: 12000 });
+  } else if (enabled && e && !e.exists) {
+    notify(`Angehakt, aber „${e.path}“ gibt es nicht — die Zeile wirkt nicht.`,
+           { kind: "error" });
+  } else {
+    notify("Gespeichert. Wirkt beim nächsten Lauf.");
+  }
+}
+
+async function previewSources() {
+  const btn = document.getElementById("src-preview");
+  const out = document.getElementById("src-result");
+  btn.disabled = true;
+  const alt = btn.textContent;
+  btn.textContent = "zählt …";
+  document.getElementById("src-msg").textContent = "geht die Ordner durch — über das Netz dauert das";
+  let d;
+  try {
+    d = await api("/api/sources/preview");
+  } catch (e) {
+    document.getElementById("src-msg").textContent = "";
+    out.classList.remove("hidden");
+    out.innerHTML = `<p class="muted">Zählen fehlgeschlagen: ${
+      esc(String(e.message || e))}</p>`;
+    btn.disabled = false; btn.textContent = alt;
+    return;
+  }
+  btn.disabled = false; btn.textContent = alt;
+  document.getElementById("src-msg").textContent = "";
+  out.classList.remove("hidden");
+  out.innerHTML = `
+    <table class="src-table">
+      <thead><tr><th>Quelle</th><th>auf der Platte</th><th>im Index</th><th>Unterschied</th></tr></thead>
+      <tbody>${d.per_source.map((r) => {
+        const diff = r.found - (r.in_index < 0 ? 0 : r.in_index);
+        return `<tr>
+          <td>${esc(r.path)}</td>
+          <td class="n">${num(r.found)}</td>
+          <td class="n">${r.in_index < 0 ? "?" : num(r.in_index)}</td>
+          <td class="n${diff > 0 ? " plus" : ""}">${diff > 0 ? `+${num(diff)}` : "0"}</td>
+        </tr>`;
+      }).join("")}</tbody>
+      <tfoot><tr><th>gesamt</th><th class="n">${num(d.total)}</th><th></th><th></th></tr></tfoot>
+    </table>
+    ${d.missing?.length ? `<p class="muted warn">Nicht vorhanden und deshalb ohne Wirkung:
+      ${d.missing.map((p) => esc(p)).join(", ")}</p>` : ""}
+    <p class="muted">${esc(d.note || "")}</p>`;
+}
+
+async function addSource() {
+  const { askText } = await import("/static/core/modal.js?v=67");
+  const p = await askText({
+    title: "Ordner hinzufügen",
+    lead: "Absoluter Pfad, so wie er auf dieser Maschine heißt. "
+        + "Ein führendes Minus macht daraus einen Ausschluss.",
+    placeholder: "/mnt/photo/Urlaub   oder   -/mnt/photo/Handys/Download",
+    ok: "Hinzufügen",
+  });
+  if (!p) return;
+  const exclude = p.startsWith("-");
+  const pfad = exclude ? p.slice(1).trim() : p;
+  try {
+    await api("/api/sources/add", {
+      method: "POST", body: JSON.stringify({ path: pfad, exclude }),
+    });
+  } catch (e) {
+    notify(`Nicht hinzugefügt: ${e.message || e}`, { kind: "error" });
+    return;
+  }
+  notify(`Hinzugefügt. Sieh mit dem Trockenlauf nach, was dazukommt.`);
+  await loadSources();
+}
+
+document.getElementById("src-preview").addEventListener("click", previewSources);
+document.getElementById("src-new").addEventListener("click", addSource);
+loadSources();
+
 </script>
 </body>
 </html>

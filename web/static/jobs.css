@@ -106,3 +106,44 @@
 .gap b { color: #e0a13c; font-variant-numeric: tabular-nums; }
 .gap span { color: #c9b8a0; }
 .gap i { font-style: normal; color: var(--muted); font-size: var(--fs-m); }
+
+/* ---- Welche Ordner eingelesen werden ---------------------------------
+   Steht ueber der Job-Liste, weil die Antwort darauf entscheidet, was die
+   Laeufe darunter zu tun haben. */
+
+.src { max-width: 60rem; margin: 0 auto 28px; }
+.src h2 { margin: 0 0 4px; font-size: 1.1rem; }
+.src-lead { margin: 0 0 14px; font-size: .85rem; line-height: 1.5; }
+.src-lead em { color: var(--muted); font-style: normal; font-family: ui-monospace, monospace; }
+.src-list h3 {
+  margin: 16px 0 6px; font-size: .85rem; color: var(--muted);
+  font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+}
+.src-list h3 em { font-style: normal; text-transform: none; letter-spacing: 0; opacity: .8; }
+.src-sub { margin: -4px 0 8px; font-size: .78rem; }
+
+.src-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 5px 9px; border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer; font-size: .85rem;
+}
+.src-row:hover { background: #1d222c; }
+.src-row.on { border-color: #2f4a3a; background: #17211b; }
+/* Ein Ordner, den es nicht gibt: die Zeile steht da, wirkt aber nicht --
+   im Texteditor sieht man das nicht. */
+.src-row.ghost .src-path { text-decoration: line-through; opacity: .55; }
+.src-path { font-family: ui-monospace, monospace; flex: 1 1 auto; word-break: break-all; }
+.src-warn { color: #ffbfc6; font-size: .75rem; white-space: nowrap; }
+.src-count { color: var(--accent); font-size: .75rem; white-space: nowrap; }
+.src-note { color: var(--muted); font-size: .75rem; }
+
+.src-add { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.src-result { margin-top: 16px; }
+.src-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.src-table th, .src-table td { padding: 5px 8px; text-align: left; }
+.src-table thead th { color: var(--muted); font-weight: 600; border-bottom: 1px solid #2a3140; }
+.src-table tbody tr:nth-child(even) { background: #171b2180; }
+.src-table .n { text-align: right; font-variant-numeric: tabular-nums; }
+.src-table .n.plus { color: #7fc79a; font-weight: 600; }
+.src-table tfoot th { border-top: 1px solid #2a3140; font-variant-numeric: tabular-nums; }

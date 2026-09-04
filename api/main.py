@@ -21,6 +21,7 @@ from api.routes import (
     persons,
     photos,
     search,
+    sources,
     trash,
 )
 
@@ -44,6 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(search.router, prefix="/api/search", tags=["search"])
+app.include_router(sources.router, prefix="/api/sources", tags=["sources"])
 app.include_router(persons.router, prefix="/api/persons", tags=["persons"])
 app.include_router(faces.router, prefix="/api/faces", tags=["faces"])
 app.include_router(photos.router, prefix="/api/photos", tags=["photos"])
