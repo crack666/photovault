@@ -1,6 +1,6 @@
 ---
 titel: Fertigstellungs-Plan
-stand: 2026-09-01
+stand: 2026-09-04
 zweck: Auftragsbeschreibung fuer eine Ultracode-Session
 ---
 
@@ -54,8 +54,54 @@ mit der Grossansicht ersatzlos entfallen.
 - **Hell-Modus** — es gibt keinen, in keiner Form. Produktentscheidung, kein Befund; seit
   der Tokenschicht überhaupt erst diskutierbar.
 - **Tastaturbedienung** — kein einziges `tabindex` im Baum. Eigenständiges, grosses Paket.
-- **Request-Level-Tests** — `TestClient` kommt im Repo nicht vor. Die vier neuen
-  Testdateien decken die Routenlogik mit Doubles ab, nicht die App als Ganzes.
+- ~~**Request-Level-Tests**~~ — erledigt 2026-09-04, `tests/test_app_requests.py`
+  (23 Tests). Und der erste davon fand gleich einen Sicherheitsfehler: der
+  Ordnerwähler war ein Dateibrowser für die ganze Maschine — `browse` nahm jeden
+  absoluten Pfad, die Brotkrumen boten `/` an. `photo_root()` gab es dafür längst,
+  es wurde hier nur nicht benutzt. Das ist das Argument für diese Testebene, nicht
+  bloß ihr Nebenprodukt.
+
+## Nachtrag 2026-09-04
+
+### 0.1 ist nicht durch Vereinheitlichen zu lösen — die Stempel sind weg
+
+Der Punkt kam wieder: 74 Stellen auf `?v=66`, 6 auf `?v=72`. Zum zweiten Mal
+dieselbe Divergenz, und daraus folgt die Lehre — *eine Schutzmaßnahme, die
+niemand nachzieht, schützt nicht, sie täuscht.* An einer nicht erhöhten Zahl
+sieht man nicht, ob sie stimmt oder vergessen wurde.
+
+Sie waren zudem wirkungslos: `FreshStatic` setzt `Cache-Control: no-cache`, und
+der Server antwortet nachgemessen mit 304 — derselbe Schutz, für alle Dateien
+gleich, ohne Pflege. Und sie deckten den Modul-Graphen nie ab, also genau den
+Vorfall, der zu `FreshStatic` geführt hat. Alle 80 raus; der Grund steht im
+Docstring von `FreshStatic`.
+
+### Was der Cache-Schlüssel-Umbau an Mitrechnern hinterließ
+
+Die Identitäts-Stufen 1–4 stellten den Vorschaubild-Schlüssel vom Pfad auf den
+Inhalts-Hash um. Zwei Stellen rechneten danach noch im alten Schlüssel und
+meldeten deshalb Unsinn: `tools/thumbs.py report()` hielt **29.068 arbeitende
+Kacheln für verwaist** (295 MB, `--prune` hätte den ganzen Cache gelöscht), und
+die Jobs-Seite meldete 29.174 fehlende statt 118. Beide über `cache_soll()`
+korrigiert, das Fotos **und** Gesichter zählt — Gesichtsausschnitte tragen den
+Kasten im Schlüssel und wurden schon länger bei jedem `--prune` mitgenommen.
+
+Dazu: der Cache-Ort war eine Entscheidung *je Prozess* (`export` im Launcher,
+den ein direkt gestartetes Werkzeug nicht erbt). Ein Umbenennungslauf hat damit
+29.083 Kacheln an einen Ort geschoben, an dem der Server sie nicht mehr fand.
+Jetzt entscheidet ein Merkzettel neben den Daten.
+
+### Die 59 „beschädigten" Fotos waren heil
+
+Die gelbe Zustandszeile riet „Datei prüfen: meist beschädigt oder nicht lesbar".
+Nachgemessen: 56 Dateien zu 98–100 % vorhanden (0–73 Bytes fehlen am Ende, alle
+mit heilem EXIF-Vorschaubild), eine zu 75 %, zwei echter Müll. Sie fehlten, weil
+sie aufgenommen wurden, **bevor `_load_image` abgeschnittene Bilder tolerierte** —
+ein Hinweis, der auf die Datei zeigt, schickt einen 57 Mal in die falsche
+Richtung. `tools/backfill_clip.py` zog sie in 13,7 s nach.
+
+Die Lehre für Zustandszeilen: eine Vermutung über die Ursache gehört nur dorthin,
+wenn sie geprüft ist. Sonst nennt man die Fälle und lässt den Benutzer sehen.
 
 ### Zum Schnitt: die Reihenfolge ist enger als hier notiert
 
