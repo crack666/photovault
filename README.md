@@ -625,14 +625,28 @@ Wo er liegt, hängt am Betriebsmodus, und das ist gemessen und nicht geraten:
 | Container | `/app/data/thumbs` als benanntes Volume | überlebt `--build`; ein Bind-Mount auf den Projektordner läge unter WSL auf NTFS über 9p |
 | lokal | `~/.cache/photovault-thumbs` | 0,89 ms je Kachel gegen 3,62 ms auf `/mnt/d` — bei 14.593 Kacheln 13 s gegen 53 s |
 
-`PHOTOVAULT_THUMB_CACHE` überschreibt beides; `start-local.sh` setzt den
-schnellen Ort und nennt ihn beim Start.
+Entschieden wird der Ort in `api/thumbs._resolve_cache()`, in dieser
+Reihenfolge: `PHOTOVAULT_THUMB_CACHE`, dann der Merkzettel
+`data/thumbs.path`, dann ein vorhandener Cache unter `~/.cache`, dann das
+Arbeitsverzeichnis. Der Merkzettel ist der Kern davon — ein `export` gilt nur
+für die Prozesse, die der Launcher startet, und ein später direkt
+aufgerufenes `python -m tools.thumbs` erbt ihn nicht. Genau daran hat ein
+Umbenennungslauf 29.083 Kacheln (353 MB) an einen Ort geschoben, an dem der
+Server sie nicht mehr fand. Der Ort liegt jetzt neben den Daten, nicht in
+einer Shell-Sitzung.
 
-**Der Schlüssel ist der Dateipfad** (`sha256(pfad)`). Wird ein Foto verschoben
-oder gelöscht, passt er nicht mehr und die alte Kachel bleibt liegen — gemessen
-14.858 Waisen mit 94 MB, die `--prune` freigibt. Das ist dieselbe Wurzel wie
-bei den Photo-IDs (siehe `ingest/identity.py`): eine pfadunabhängige Identität
-würde beides lösen und steht noch aus.
+**Der Schlüssel ist der Inhalts-Hash** (`sha256:<content_sha256>`), seit die
+Identität pfadunabhängig ist (siehe `ingest/identity.py`). Gleiche Bytes
+heißen gleiche Kachel: ein Verschieben macht nichts ungültig, und
+bitidentische Dateien teilen sich eine. Der Pfad-Schlüssel bleibt lesbar,
+damit die Umstellung keine 295 MB über das Netzlaufwerk kostet —
+`tools/thumbs.py --rekey` benennt die vorhandenen Kacheln um. Vorher war der
+Schlüssel der Pfad, und jedes Verschieben oder Löschen hinterließ eine Waise:
+gemessen 14.858 mit 94 MB.
+
+Was eine Waise ist, rechnet `cache_soll()` aus Fotos **und** Gesichtern.
+Gesichtsausschnitte tragen den Kasten im Schlüssel, waren dem Bericht also
+nie bekannt und wurden bei jedem `--prune` mitgelöscht.
 
 `backfill_spaces` schreibt das Feld `space` (erste Ordnerebene) und legt die
 Indizes fuer `space`, `folder_name` und `trashed_at` an — die beiden letzten
