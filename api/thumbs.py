@@ -12,6 +12,8 @@ import logging
 import os
 from pathlib import Path
 
+from ingest.netfs import is_transient
+
 logger = logging.getLogger(__name__)
 
 #: Wo die Vorschaubilder liegen -- im Arbeitsverzeichnis, nicht unter ~/.cache.
@@ -138,6 +140,22 @@ WARN_TRUNCATED = "truncated"
 WARN_UNREADABLE = "unreadable"
 
 
+def _reraise_io(exc: OSError, file_path: str, truncated_ok: bool = False) -> None:
+    """Transportfehler nicht als kaputte Datei behandeln — und nicht cachen.
+
+    `EHOSTDOWN` beim Lesen sah sonst aus wie ein abgeschnittenes JPEG:
+    Pillow decodierte ein paar Bytes, die Kachel landete im Cache, und
+    nach Rueckkehr der NAS blieb das dunkle Geisterbild.
+    """
+    from api.archive import ArchiveUnavailable
+
+    if is_transient(exc):
+        raise ArchiveUnavailable(exc.errno, str(exc), file_path) from exc
+    if truncated_ok:
+        return
+    raise exc
+
+
 def get_thumb(
     file_path: str,
     size: int = 320,
@@ -238,12 +256,19 @@ def _render(file_path: str, size: int, box: list | None, pad: float, image=None)
 
     if image is None:
         src = Path(file_path)
-        if src.suffix.lower() not in IMAGE_EXT or not src.is_file():
-            raise FileNotFoundError(file_path)
-        image = Image.open(src)
+        try:
+            if src.suffix.lower() not in IMAGE_EXT or not src.is_file():
+                raise FileNotFoundError(file_path)
+        except OSError as e:
+            _reraise_io(e, file_path)
+        try:
+            image = Image.open(src)
+        except OSError as e:
+            _reraise_io(e, file_path)
         try:
             image.load()
         except OSError as e:
+            _reraise_io(e, file_path, truncated_ok=True)
             logger.warning("truncated image, using what decoded: %s (%s)", file_path, e)
             warn = WARN_TRUNCATED
             if getattr(image, "im", None) is None:

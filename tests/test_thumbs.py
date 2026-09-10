@@ -34,3 +34,27 @@ def test_a_complete_jpeg_has_no_warning(tmp_path):
     assert jpeg_truncation_hint(str(p)) is None
     _data, warn = make_thumb(str(p), size=160)
     assert warn is None
+
+
+def test_host_down_is_not_cached_as_a_thumb(tmp_path, monkeypatch):
+    """Ein NAS-Aussetzer darf keine dunkle Kachel hinterlassen."""
+    import errno
+
+    import pytest
+    from PIL import Image as PilImage
+
+    from api.archive import ArchiveUnavailable
+
+    p = _jpeg(tmp_path / "x.jpg")
+    monkeypatch.setattr("api.thumbs.CACHE_DIR", tmp_path / "c")
+    real_open = PilImage.open
+
+    def boom(src, *a, **k):
+        if Path(src) == p:
+            raise OSError(errno.EHOSTDOWN, "host down")
+        return real_open(src, *a, **k)
+
+    monkeypatch.setattr(PilImage, "open", boom)
+    with pytest.raises(ArchiveUnavailable):
+        get_thumb(str(p), size=160)
+    assert list((tmp_path / "c").rglob("*.jpg")) == []

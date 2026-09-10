@@ -22,6 +22,7 @@ from qdrant_client.models import (
     PayloadField,
 )
 
+from api.archive import media_http_error
 from api.qdrant_util import FACES, PHOTOS, client
 from api.thumbs import get_thumb
 from ingest.face_matcher import MATCH_THRESHOLD
@@ -57,11 +58,9 @@ def face_crop(face_id: str, pad: float = 0.35, size: int = 320):
         # immer wieder angefordert, und die Originale liegen auf dem NAS.
         data = get_thumb(path, size=size, box=box, pad=pad,
                          content_hash=payload.get("content_sha256"))
-    except FileNotFoundError:
-        raise HTTPException(404, "image missing") from None
     except Exception as e:
         logger.warning("Face crop failed for %s: %s", path, e)
-        raise HTTPException(500, f"crop failed: {e}") from e
+        raise media_http_error(e, path) from e
     return Response(
         content=data,
         media_type="image/jpeg",

@@ -14,6 +14,7 @@ from api.qdrant_util import FACES, PHOTOS, client, visible
 from ingest.face_cluster import cluster_faces, person_id_from_name
 from ingest.face_matcher import FaceMatcher
 from api.people_index import invalidate as invalidate_people
+from ingest.captioner import unwrap_caption
 from ingest.reembed import rebuild_text_vectors
 
 logger = logging.getLogger(__name__)
@@ -430,7 +431,7 @@ def _timeline_from_points(photos: list, *, person_id: str = "", name: str = "") 
             "taken_at": payload.get("taken_at"),
             "channel": payload.get("channel") or channel(payload.get("file_path") or ""),
             "caption_display": payload.get("caption_display"),
-            "caption_de": payload.get("caption_de"),
+            "caption_de": unwrap_caption(payload.get("caption_de")) or None,
             "folder_name": payload.get("folder_name"),
             "person_names": payload.get("person_names") or [],
             "annotations": payload.get("annotations") or [],

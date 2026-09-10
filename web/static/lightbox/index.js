@@ -13,6 +13,7 @@
 
 import { api } from "../core/api.js";
 import { $, escapeHtml, isTyping } from "../core/dom.js";
+import { rememberPhoto } from "../core/nav.js";
 import { bindFaceStrip, mountFaceStrip } from "../faces/strip.js";
 
 //: Die gerade gezeigte Liste und die Stelle darin. Geschrieben nur von
@@ -58,6 +59,7 @@ function openLightbox(i) {
     <span class="muted"> — ${lbIndex + 1} von ${lbPhotos.length}</span>`;
   setLbInfoOpen(lbInfoOpen());
   $("lightbox").classList.remove("hidden");
+  rememberPhoto(ph.id);
   loadPhotoInfo(ph.id);
 }
 
@@ -123,7 +125,9 @@ async function loadPhotoInfo(id, opts = {}) {
     : null;
 
   // Jede Zeile ist zugleich ein mögliches Suchkriterium.
+  // Die Kennung zuerst: sie ist das, was sich in einem Chat benennen lässt.
   const rows = [
+    ["Kennung", id],
     ["Aufnahmedatum", dateLine],
     ["Album", d.folder_name],
     ["Serie", d.event_name],
@@ -147,10 +151,18 @@ async function loadPhotoInfo(id, opts = {}) {
     ["Indiziert", d.ingested_at ? d.ingested_at.slice(0, 10) : null],
   ].filter(([, v]) => v !== null && v !== undefined && v !== "");
 
-  dl.innerHTML = rows.map(([k, v]) =>
-    `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join("");
+  dl.innerHTML = rows.map(([k, v]) => {
+    if (k === "Kennung") {
+      return `<dt>${escapeHtml(k)}</dt><dd class="lb-id"><code id="lb-photo-id">${escapeHtml(id)}</code>`
+        + `<button type="button" class="mini" id="lb-copy-id" title="Kennung kopieren">Kopieren</button></dd>`;
+    }
+    return `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`;
+  }).join("");
 
   $("lb-caption").value = d.caption_de || "";
+  const overlay = [d.caption_display, d.caption_de].filter(Boolean);
+  $("lb-cap").innerHTML = `${overlay.map(escapeHtml).join("<br>")}
+    <span class="muted"> — ${lbIndex + 1} von ${lbPhotos.length}</span>`;
   /* "Behalten" und "Speichern" taten dasselbe: beide schickten den Feldinhalt
      mit lock: true. Der Nutzer suchte einen Unterschied, den es nicht gab.
 
@@ -233,6 +245,7 @@ async function trashFromLightbox(id, back) {
 
 function closeLightbox() {
   $("lightbox").classList.add("hidden");
+  rememberPhoto(null);
   fillMap(null);
   fillFileWarn(null);
 }
@@ -257,6 +270,19 @@ export function bindLightbox() {
   bindFaceStrip($("lb-faces"));
   $("lb-toggle").addEventListener("click", () => setLbInfoOpen(false));
   $("lb-reveal").addEventListener("click", () => setLbInfoOpen(true));
+  $("lb-info").addEventListener("click", async (e) => {
+    const btn = e.target.closest("#lb-copy-id");
+    if (!btn) return;
+    const id = $("lb-info").dataset.photoId;
+    if (!id) return;
+    try {
+      await navigator.clipboard.writeText(id);
+      btn.textContent = "Kopiert";
+      setTimeout(() => { if (btn.textContent === "Kopiert") btn.textContent = "Kopieren"; }, 1500);
+    } catch {
+      btn.textContent = "fehlgeschlagen";
+    }
+  });
   $("lb-caption").addEventListener("input", () => updateKeepButton(false));
   $("lb-save-caption").addEventListener("click", async () => {
     const id = $("lb-info").dataset.photoId;
