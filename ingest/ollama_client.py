@@ -33,12 +33,20 @@ def ollama_url(override: str | None = None) -> str:
     return (override or DEFAULT_OLLAMA_URL).rstrip("/")
 
 
-def post_json(url: str, payload: dict[str, Any], timeout: int = 180) -> dict[str, Any]:
+def post_json(
+    url: str,
+    payload: dict[str, Any],
+    timeout: int = 180,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     data = json.dumps(payload).encode("utf-8")
+    req_headers = {"Content-Type": "application/json"}
+    if headers:
+        req_headers.update(headers)
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=req_headers,
         method="POST",
     )
     try:

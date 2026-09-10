@@ -791,9 +791,22 @@ class IngestPipeline:
             time.time() - started,
         )
         try:
-            post_json(f"{url}/api/embed",
-                      {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1},
-                      timeout=300)
+            litellm = os.environ.get("LITELLM_URL", "").rstrip("/")
+            if litellm:
+                headers = {}
+                key = os.environ.get("LITELLM_MASTER_KEY", "")
+                if key:
+                    headers["Authorization"] = f"Bearer {key}"
+                post_json(
+                    f"{litellm}/v1/embeddings",
+                    {"model": EMBED_MODEL, "input": "ok"},
+                    timeout=300,
+                    headers=headers,
+                )
+            else:
+                post_json(f"{url}/api/embed",
+                          {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1},
+                          timeout=300)
         except Exception as e:
             logger.warning("Could not re-pin %s: %s", EMBED_MODEL, e)
 

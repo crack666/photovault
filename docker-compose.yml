@@ -34,8 +34,10 @@ services:
       # Ollama läuft auf dem Host, nicht im Verbund. Ohne bleibt es bei
       # Metadaten, Gesichtern und CLIP -- die Captions entfallen.
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-qwen3.8:27b-ctx128k}
-      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-qwen3-embedding:4b-ctx2k}
+      LITELLM_URL: ${LITELLM_URL:-http://host.docker.internal:4000}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-qwen3.8:27b-ctx8k}
+      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-embedder}
       MODEL_DIR: /models
     extra_hosts:
       - "host.docker.internal:host-gateway"
