@@ -160,7 +160,7 @@ def test_num_ctx_zero_lets_the_profile_decide(monkeypatch):
     monkeypatch.setattr(cap, "CAPTION_NUM_CTX", 0)
     options = cap.caption_options()
     assert "num_ctx" not in options
-    assert options["num_predict"] == 200
+    assert options["num_predict"] == 512
 
 
 def test_request_omits_num_ctx_when_disabled(monkeypatch):

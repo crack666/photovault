@@ -8,8 +8,10 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from api.caption_match import collapse_copies, payload_matches, tokens as caption_tokens
 from api.qdrant_util import client as qdrant, visible
 from api.query import QueryNode
+from ingest.captioner import unwrap_caption
 from ingest.dates import date_bound
 
 logger = logging.getLogger(__name__)
@@ -94,7 +96,7 @@ def _point_to_result(p) -> dict:
     return {
         "id": p.id,
         "file_path": payload.get("file_path"),
-        "caption_de": payload.get("caption_de"),
+        "caption_de": unwrap_caption(payload.get("caption_de")) or None,
         "caption_display": payload.get("caption_display"),
         "annotations": payload.get("annotations") or [],
         "person_ids": payload.get("person_ids") or [],
@@ -105,6 +107,7 @@ def _point_to_result(p) -> dict:
         "folder_name": payload.get("folder_name"),
         "sequence_in_folder": payload.get("sequence_in_folder"),
         "person_suggestions": payload.get("person_suggestions") or [],
+        "content_sha256": payload.get("content_sha256"),
         "score": getattr(p, "score", None),
     }
 
@@ -172,19 +175,33 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
 
     try:
         if req.caption_query:
-            from ingest.text_embedder import TextEmbedder
-
-            vec = TextEmbedder().embed(req.caption_query)
-            if vec is None:
-                raise HTTPException(503, "Text-Embedding fehlgeschlagen (Ollama erreichbar?)")
-            points = client.query_points(
-                collection_name=COLLECTION, query=vec, using="text",
-                query_filter=filter_,
-                limit=IDS_RANK_LIMIT if req.ids_only else req.limit,
-                offset=0 if req.ids_only else req.offset,
-                score_threshold=req.caption_min_score,
-                with_payload=not req.ids_only,
-            ).points
+            points, total = _caption_hits(
+                client, filter_, req.caption_query,
+                limit=req.limit, offset=req.offset,
+                ids_only=req.ids_only, min_score=req.caption_min_score,
+            )
+            if req.ids_only:
+                return QuerySearchResponse(
+                    total=total,
+                    returned=len(points),
+                    results=[],
+                    ids=[str(p.id) for p in points],
+                    ranked=True,
+                    expression=expression or "alle Fotos",
+                    conditions=count_conditions(req.query),
+                    scope=scope_text(req.spaces),
+                )
+            results = [_point_to_result(p) for p in points]
+            return QuerySearchResponse(
+                total=total,
+                returned=len(results),
+                offset=req.offset,
+                results=results,
+                ranked=True,
+                expression=expression or "alle Fotos",
+                conditions=count_conditions(req.query),
+                scope=scope_text(req.spaces),
+            )
         elif req.ids_only:
             # Seitenweise bis zum Ende: `limit` ist hier keine Obergrenze,
             # sondern die Haeppchengroesse. Die Karte will alle.
@@ -265,6 +282,36 @@ def _total_for(client, filter_, req, seite: int) -> int:
     except Exception as e:  # pragma: no cover -- Zaehlen ist Beiwerk
         logger.warning("Trefferzahl konnte nicht ermittelt werden: %s", e)
         return seite
+
+
+def _caption_hits(client, filter_, query: str, *, limit: int, offset: int,
+                  ids_only: bool, min_score: float | None):
+    """Vektor holt Kandidaten, die Wörter entscheiden, wer ein Treffer ist.
+
+    Gemessen an Jonas Meyer + „Balkon“: Cosinus 0,45 für ein Sofa,
+    0,44 für ein Bier. Ohne die Wortprüfung ist die Rangfolge Rauschen.
+    """
+    from ingest.text_embedder import TextEmbedder
+
+    vec = TextEmbedder().embed(query)
+    if vec is None:
+        raise HTTPException(503, "Text-Embedding fehlgeschlagen (Ollama erreichbar?)")
+    terms = caption_tokens(query)
+    points = client.query_points(
+        collection_name=COLLECTION, query=vec, using="text",
+        query_filter=filter_,
+        limit=IDS_RANK_LIMIT,
+        offset=0,
+        score_threshold=min_score,
+        with_payload=True,
+    ).points
+    if terms:
+        points = [p for p in points if payload_matches(p.payload or {}, terms)]
+    points = collapse_copies(points)
+    total = len(points)
+    if ids_only:
+        return points, total
+    return points[offset:offset + limit], total
 
 
 @router.post("")
@@ -349,23 +396,13 @@ def search(req: SearchRequest) -> SearchResponse:
     # wie "keine Treffer" und bliebe unbemerkt.
     try:
         if req.caption_query:
-            from ingest.text_embedder import TextEmbedder
-
-            vec = TextEmbedder().embed(req.caption_query)
-            if vec is None:
-                raise HTTPException(503, "Text-Embedding fehlgeschlagen (Ollama erreichbar?)")
-            points = client.query_points(
-                collection_name=COLLECTION,
-                query=vec,
-                using="text",
-                query_filter=filter_,
-                limit=req.limit,
-                offset=req.offset,
-                score_threshold=req.caption_min_score,
-                with_payload=True,
-            ).points
+            points, total = _caption_hits(
+                client, filter_, req.caption_query,
+                limit=req.limit, offset=req.offset,
+                ids_only=False, min_score=req.caption_min_score,
+            )
             results = [_point_to_result(p) for p in points]
-            return SearchResponse(total=len(results), results=results, unknown_persons=unresolved)
+            return SearchResponse(total=total, results=results, unknown_persons=unresolved)
 
         points, _ = client.scroll(
             collection_name=COLLECTION,

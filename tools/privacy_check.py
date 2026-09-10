@@ -61,7 +61,10 @@ PATTERNS: list[tuple[str, str]] = [
 ]
 
 #: Beispieladressen aus RFC 5737 und die Signatur der Commits.
-ALLOWED = re.compile(r"192\.0\.2\.\d+|198\.51\.100\.\d+|203\.0\.113\.\d+|noreply@anthropic\.com")
+ALLOWED = re.compile(
+    r"192\.0\.2\.\d+|198\.51\.100\.\d+|203\.0\.113\.\d+"
+    r"|noreply@anthropic\.com|cursoragent@cursor\.com"
+)
 
 #: Hier sind Treffer erwartbar und harmlos.
 SKIP_FILES = {DENYLIST, EXTRA_TERMS, ALLOW_TERMS, "tools/privacy_check.py"}

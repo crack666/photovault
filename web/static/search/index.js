@@ -340,7 +340,7 @@ async function renderSearchExamples() {
   }
   items.push({
     title: "Feuerwerk in der Nacht",
-    hint: "nur Freitext, sortiert",
+    hint: "in Beschreibung oder Tags",
     needs: "freetext",
     run: () => {
       qbTree = { op: "and", children: [] };
@@ -398,7 +398,7 @@ function updateExpression() {
   const text = localExpression(qbTree);
   const free = ($("q-text") && $("q-text").value.trim()) || "";
   let line = text ? `Fotos, die ${text}` : "Noch keine Bedingung — alle Fotos";
-  if (free) line += `, sortiert nach „${free}“`;
+  if (free) line += ` und „${free}“ im Bildtext`;
   $("qb-expr").textContent = line;
 }
 
@@ -444,7 +444,7 @@ async function runSearch() {
   $("qb-expr").textContent =
     satz +
     (data.scope ? `, ${data.scope}` : "") +
-    (free ? `, sortiert nach „${free}“` : "") +
+    (free ? ` und „${free}“ in Beschreibung, Tags oder Album` : "") +
     ` — ${data.total} Treffer` +
     (data.conditions ? ` · ${data.conditions} Bedingung${data.conditions === 1 ? "" : "en"}` : "");
   const gezeigt = data.returned ?? (data.results || []).length;
@@ -466,6 +466,7 @@ async function runSearch() {
 function renderResults(results, unknown = []) {
   const box = $("search-results");
   box.innerHTML = "";
+  const free = ($("q-text") && $("q-text").value.trim()) || "";
   if (unknown.length) {
     const warn = document.createElement("p");
     warn.className = "muted warn";
@@ -475,7 +476,9 @@ function renderResults(results, unknown = []) {
   if (!results.length) {
     box.insertAdjacentHTML(
       "beforeend",
-      "<p class='muted'>Keine Treffer. Personen filtern hart; Freitext sortiert nur. Ohne Captions trifft „Bier“ oft nichts.</p>",
+      free
+        ? `<p class='muted'>Keine Treffer für „${escapeHtml(free)}“. Der Text kommt in keiner Beschreibung, keinem Tag und keinem Album vor.</p>`
+        : "<p class='muted'>Keine Treffer.</p>",
     );
     return;
   }
@@ -564,7 +567,7 @@ export function bindSearch() {
     if (!data.ids?.length) { notify("Keine Treffer zum Zeigen."); return; }
 
     const satz = [data.conditions ? data.expression : "alle Fotos", data.scope,
-                  frei ? `ähnlich zu „${frei}“` : ""].filter(Boolean).join(", ");
+                  frei ? `mit „${frei}“ im Bildtext` : ""].filter(Boolean).join(", ");
     const { focusFromSearch } = await import("./atlas/index.js");
     focusFromSearch({
       ids: data.ids,

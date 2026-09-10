@@ -16,8 +16,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from api.archive import media_http_error, why_unavailable
 from api.qdrant_util import FACES, PHOTOS, client, visible
 from api.thumbs import drop_cached, make_thumb
+from ingest.captioner import unwrap_caption
 from ingest.reembed import apply_annotations, rebuild_text_vectors
 
 logger = logging.getLogger(__name__)
@@ -68,7 +70,7 @@ def photo_detail(point_id: str) -> dict:
         "event_name": p.get("event_name"),
         "sequence_in_folder": p.get("sequence_in_folder"),
         "caption_display": p.get("caption_display"),
-        "caption_de": p.get("caption_de"),
+        "caption_de": unwrap_caption(p.get("caption_de")) or None,
         "caption_source": p.get("caption_source") or ("manual" if p.get("caption_locked") else "llm"),
         "caption_locked": bool(p.get("caption_locked")),
         "date": p.get("date"),
@@ -107,7 +109,7 @@ class CaptionRequest(BaseModel):
 @router.post("/{point_id}/caption")
 def set_caption(point_id: str, req: CaptionRequest) -> dict:
     """Caption von Hand setzen und gegen den nächsten Vision-Lauf schützen."""
-    text = req.caption_de.strip()
+    text = unwrap_caption(req.caption_de)
     q = client()
     try:
         points = q.retrieve(collection_name=PHOTOS, ids=[point_id], with_payload=True)
@@ -297,7 +299,7 @@ class BulkCaptionRequest(BaseModel):
 @router.post("/caption/bulk")
 def set_captions(req: BulkCaptionRequest) -> dict:
     """Dieselbe Caption auf viele Fotos -- für ganze Abschnitte eines Events."""
-    text = req.caption_de.strip()
+    text = unwrap_caption(req.caption_de)
     if not req.photo_ids:
         raise HTTPException(400, "photo_ids ist leer")
     if not text:
@@ -358,13 +360,16 @@ def photo_thumb(point_id: str, size: int = 320):
         # kaputt, sondern stufenweise besser.
         data, warn = make_thumb(path, size=size,
                                 content_hash=payload.get("content_sha256"))
-    except FileNotFoundError:
-        _stamp_file_warning(q, point_id, payload, "missing")
-        raise HTTPException(404, f"Datei fehlt: {path}") from None
     except Exception as e:
         logger.warning("Thumb failed for %s: %s", path, e)
-        _stamp_file_warning(q, point_id, payload, "unreadable")
-        raise HTTPException(500, f"Thumbnail fehlgeschlagen: {e}") from e
+        err = media_http_error(e, path)
+        # Nur eine wirklich fehlende Datei vermerken — nicht den Mount-Ausfall.
+        # Sonst klebt `file_warning=missing` an tausend Fotos, die da sind.
+        if err.status_code == 404:
+            _stamp_file_warning(q, point_id, payload, "missing")
+        elif err.status_code >= 500 and why_unavailable(path) is None:
+            _stamp_file_warning(q, point_id, payload, "unreadable")
+        raise err from e
     # `make_thumb` prueft die Endemarkierung schon -- aber nur, wenn es das
     # Vorschaubild wirklich erzeugt. Hier noch einmal zu pruefen hiess: bei
     # *jedem* Abruf die Originaldatei auf dem Netzlaufwerk oeffnen, auch wenn

@@ -26,6 +26,9 @@ JSON_SCHEMA = (
 #: Luft und deckelt zugleich das Wachstum bei wiederholten Caption-Laeufen.
 MAX_TAGS = 16
 
+#: Tokens fuer die JSON-Antwort. Darunter bricht der Rahmen mitten im Satz ab.
+CAPTION_NUM_PREDICT = 512
+
 
 def merge_tags(existing: list[str], extra: list[str], limit: int = MAX_TAGS) -> list[str]:
     """CLIP-Tags und LLM-Tags zusammenfuehren, ohne Dubletten.
@@ -101,7 +104,10 @@ def caption_options(num_ctx: int | None = None) -> dict[str, Any]:
     Caption-Lauf laesst den Kontext in Ruhe -- er hat keine GPU-Modelle daneben.
     """
     value = CAPTION_NUM_CTX if num_ctx is None else num_ctx
-    options: dict[str, Any] = {"temperature": 0.2, "num_predict": 200}
+    # 200 Tokens reichten nicht: JSON-Rahmen plus zwei deutsche Saetze
+    # wurden abgeschnitten, der Parser scheiterte, und der Rohstring
+    # landete als caption_de in der Detailansicht.
+    options: dict[str, Any] = {"temperature": 0.2, "num_predict": CAPTION_NUM_PREDICT}
     if value:
         options["num_ctx"] = value
     return options
@@ -252,10 +258,16 @@ class Captioner:
                 return None
             parsed = _parse_json(raw)
             if parsed is None:
+                recovered = unwrap_caption(raw)
+                if recovered:
+                    return {"caption_de": recovered, "scene_tags": []}
+                if raw.lstrip().startswith("{"):
+                    logger.warning("Caption JSON unparseable for %s", file_path)
+                    return None
                 return {"caption_de": raw, "scene_tags": []}
             caption = parsed.get("caption_de")
             if isinstance(caption, str):
-                parsed["caption_de"] = caption.strip()
+                parsed["caption_de"] = unwrap_caption(caption) or caption.strip()
             tags = parsed.get("scene_tags") or []
             parsed["scene_tags"] = [str(t).lower().strip() for t in tags if str(t).strip()][:8]
             return parsed
@@ -300,3 +312,71 @@ def _parse_json(raw: str) -> dict[str, Any] | None:
             return data if isinstance(data, dict) else None
         except json.JSONDecodeError:
             return None
+
+
+def unwrap_caption(text: str | None) -> str:
+    """Den deutschen Satz, auch wenn der Index den JSON-Blob gespeichert hat.
+
+    Wenn das Modell den Rahmen nicht schliesst, legt `caption_structured`
+    den Rohstring in `caption_de`. Die Detailseite zeigte ihn dann
+    wortwoertlich. Hier wird der Satz herausgeholt -- fuer Anzeige, Suche
+    und den naechsten Caption-Lauf.
+    """
+    if not text:
+        return ""
+    current = text.strip()
+    for _ in range(4):
+        if not current.startswith("{"):
+            return current
+        inner = _caption_from_blob(current)
+        if not inner or inner == current:
+            return ""
+        current = inner.strip()
+    return current
+
+
+def _caption_from_blob(raw: str) -> str | None:
+    parsed = _parse_json(raw)
+    if isinstance(parsed, dict):
+        cap = parsed.get("caption_de")
+        if isinstance(cap, str) and cap.strip():
+            return cap.strip()
+        return None
+    return _caption_from_truncated(raw)
+
+
+def _caption_from_truncated(raw: str) -> str | None:
+    match = re.search(r'"caption_de"\s*:\s*"', raw)
+    if not match:
+        return None
+    return _read_json_string(raw, match.end())
+
+
+def _read_json_string(raw: str, start: int) -> str | None:
+    """JSON-String ab `start` lesen, auch ohne schliessendes Anfuehrungszeichen."""
+    out: list[str] = []
+    i = start
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch == "\\":
+            if i + 1 >= n:
+                break
+            nxt = raw[i + 1]
+            if nxt == "u" and i + 5 < n:
+                try:
+                    out.append(chr(int(raw[i + 2:i + 6], 16)))
+                    i += 6
+                    continue
+                except ValueError:
+                    pass
+            mapping = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/"}
+            out.append(mapping.get(nxt, nxt))
+            i += 2
+            continue
+        if ch == '"':
+            break
+        out.append(ch)
+        i += 1
+    got = "".join(out).strip()
+    return got or None

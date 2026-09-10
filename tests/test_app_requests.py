@@ -55,6 +55,19 @@ class FakeQdrant:
         gesucht = set(str(i) for i in (ids or []))
         return [p for p in self.punkte if str(p.id) in gesucht]
 
+    def query_points(self, collection_name=None, query=None, using=None,
+                     query_filter=None, limit=50, offset=0,
+                     score_threshold=None, with_payload=True, with_vectors=False,
+                     **kw):
+        pts = list(self.punkte)
+        if offset:
+            pts = pts[offset:]
+        pts = pts[:limit]
+        for p in pts:
+            if getattr(p, "score", None) is None:
+                p.score = 0.45
+        return type("R", (), {"points": pts})()
+
     def set_payload(self, collection_name=None, payload=None, points=None, **kw):
         self.geschrieben.append(("set_payload", payload, points))
 
@@ -313,3 +326,147 @@ class TestKachelKosten:
         assert daten["photos"] == 1
         assert daten["missing"] == len(daten["sizes"])
         assert daten["bytes_missing"] == 0     # nichts da, woraus zu schaetzen waere
+
+
+class TestBildfehler:
+    """Fehler bei Vorschaubildern duerfen der Browser nicht 24h als Bild halten.
+
+    Anlass: NAS kurz weg, `/api/faces/…/crop` antwortete 404-JSON ohne
+    `Cache-Control`. Die Oberflaeche zeigte bei allen Personen dasselbe
+    unkenntliche Kreisbild und lud es nicht neu, als das Archiv wieder da war.
+    """
+
+    def test_fehlendes_gesicht_wird_nicht_gecacht(self, client, fake):
+        fake.punkte = [_Point("f1", {"file_path": "/tmp/gibt-es-nicht.jpg",
+                                     "box": [0, 0, 40, 40]})]
+        r = client.get("/api/faces/f1/crop?size=160")
+        assert r.status_code == 404
+        assert r.headers.get("cache-control") == "no-store"
+
+    def test_archiv_weg_ist_503_ohne_cache(self, client, fake, monkeypatch):
+        monkeypatch.setattr("api.archive.why_unavailable",
+                            lambda path=None: "nicht gemountet")
+        fake.punkte = [_Point("f1", {"file_path": "/mnt/photo/x/a.jpg",
+                                     "box": [0, 0, 40, 40]})]
+        r = client.get("/api/faces/f1/crop?size=160")
+        assert r.status_code == 503
+        assert r.headers.get("cache-control") == "no-store"
+        assert "nicht gemountet" in r.json()["detail"]
+
+    def test_archiv_weg_stempelt_keine_datei_als_fehlend(
+        self, client, fake, monkeypatch,
+    ):
+        monkeypatch.setattr("api.archive.why_unavailable",
+                            lambda path=None: "nicht gemountet")
+        fake.punkte = [_Point("a", {"file_path": "/mnt/photo/x/a.jpg"})]
+        r = client.get("/api/photos/a/thumb?size=160")
+        assert r.status_code == 503
+        assert not any(
+            art == "set_payload" and (payload or {}).get("file_warning") == "missing"
+            for art, payload, *_ in fake.geschrieben
+        )
+
+    def test_geladener_ausschnitt_darf_gecacht_werden(self, client, fake, tmp_path):
+        from PIL import Image
+
+        foto = tmp_path / "ok.jpg"
+        Image.new("RGB", (80, 80), (20, 80, 140)).save(foto, format="JPEG")
+        fake.punkte = [_Point("f1", {"file_path": str(foto),
+                                     "box": [10, 10, 50, 50]})]
+        r = client.get("/api/faces/f1/crop?size=160")
+        assert r.status_code == 200
+        assert r.headers.get("cache-control") == "public, max-age=86400"
+        assert r.content[:2] == b"\xff\xd8"
+
+    def test_capabilities_nennt_fehlendes_archiv(self, client, monkeypatch):
+        import api.capabilities as cap
+
+        cap._cache = (0.0, {})
+        monkeypatch.setattr("api.archive.why_unavailable",
+                            lambda path=None: "nicht gemountet")
+        r = client.get("/api/capabilities")
+        assert r.status_code == 200
+        archiv = r.json()["features"]["archive"]
+        assert archiv["ok"] is False
+        assert "nicht gemountet" in archiv["why"]
+        assert archiv["lost"]
+
+
+class TestBildtextSuche:
+    """Der Suchsatz muss im Foto stehen, nicht nur irgendwie ähnlich sein."""
+
+    def test_sofa_ist_kein_balkon(self, client, fake, monkeypatch):
+        fake.punkte = [_Point("sofa", {
+            "caption_de": "Jonas liegt auf dem Sofa.",
+            "scene_tags": ["wohnzimmer", "sofa"],
+        })]
+        monkeypatch.setattr(
+            "ingest.text_embedder.TextEmbedder.embed",
+            lambda self, t: [0.1] * 8,
+        )
+        r = client.post("/api/search/query", json={
+            "query": {"op": "and", "children": []},
+            "caption_query": "Balkon",
+        })
+        assert r.status_code == 200
+        assert r.json()["ranked"] is True
+        assert r.json()["total"] == 0
+        assert r.json()["results"] == []
+
+    def test_bier_in_der_caption_trifft(self, client, fake, monkeypatch):
+        fake.punkte = [_Point("bier", {
+            "caption_de": "Eine Flasche Bier steht auf dem Tisch.",
+            "scene_tags": ["getraenke"],
+        })]
+        monkeypatch.setattr(
+            "ingest.text_embedder.TextEmbedder.embed",
+            lambda self, t: [0.1] * 8,
+        )
+        r = client.post("/api/search/query", json={
+            "query": {"op": "and", "children": []},
+            "caption_query": "Bier",
+        })
+        assert r.status_code == 200
+        assert r.json()["total"] == 1
+        assert r.json()["results"][0]["id"] == "bier"
+
+
+class TestCaptionJson:
+    """Abgeschnittener Modell-Output darf nicht als JSON in der UI stehen."""
+
+    BLOB = (
+        '{"caption_de": "Ein Screenshot einer WhatsApp-Nachricht vom 10. November 2024.",'
+        ' "scene_tags": ["screenshot", "dokument"]}'
+    )
+
+    def test_detail_zeigt_satz_statt_json(self, client, fake):
+        fake.punkte = [_Point("wa", {
+            "caption_de": self.BLOB,
+            "file_path": "/mnt/photo/x/IMG-20241110-WA0002.jpg",
+        })]
+        r = client.get("/api/photos/wa")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["id"] == "wa"
+        assert body["caption_de"] == (
+            "Ein Screenshot einer WhatsApp-Nachricht vom 10. November 2024."
+        )
+        assert not body["caption_de"].startswith("{")
+
+    def test_suche_liefert_satz_statt_json(self, client, fake, monkeypatch):
+        fake.punkte = [_Point("wa", {
+            "caption_de": self.BLOB,
+            "scene_tags": ["screenshot"],
+        })]
+        monkeypatch.setattr(
+            "ingest.text_embedder.TextEmbedder.embed",
+            lambda self, t: [0.1] * 8,
+        )
+        r = client.post("/api/search/query", json={
+            "query": {"op": "and", "children": []},
+            "caption_query": "Screenshot",
+        })
+        assert r.status_code == 200
+        assert r.json()["total"] == 1
+        assert r.json()["results"][0]["caption_de"].startswith("Ein Screenshot")
+

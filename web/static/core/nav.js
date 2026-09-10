@@ -43,10 +43,23 @@ export function tabFromUrl() {
   return TABS.some((t) => t.id === want) ? want : TABS[0].id;
 }
 
+/** Foto-Kennung aus der Adresse — damit ein Beispiel sich benennen lässt. */
+export function photoFromUrl() {
+  return (new URLSearchParams(location.search).get("photo") || "").trim();
+}
+
 /** Die Adresse mitführen, damit ein Tab teilbar und der Zurück-Knopf sinnvoll ist. */
 export function rememberTab(id) {
   const url = new URL(location.href);
   if (id === TABS[0].id) url.searchParams.delete("tab");
   else url.searchParams.set("tab", id);
+  history.replaceState(null, "", url);
+}
+
+/** Dieselbe Adresse trägt die Foto-Kennung, solange die Grossansicht offen ist. */
+export function rememberPhoto(id) {
+  const url = new URL(location.href);
+  if (id) url.searchParams.set("photo", id);
+  else url.searchParams.delete("photo");
   history.replaceState(null, "", url);
 }

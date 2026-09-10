@@ -1,11 +1,12 @@
 import { api, cropUrl } from "./core/api.js";
 import { $, escapeHtml } from "./core/dom.js";
+import { watchMedia } from "./core/images.js";
 import { faceStatsLine } from "./core/format.js";
 import { refreshEventNames, refreshPersonNames } from "./core/names.js";
-import { rememberTab, renderNav, tabFromUrl } from "./core/nav.js";
+import { rememberTab, renderNav, tabFromUrl, photoFromUrl } from "./core/nav.js";
 import { forgetPeopleList } from "./core/people.js";
 import { bindEvents, loadEventTab } from "./events/index.js";
-import { bindLightbox } from "./lightbox/index.js";
+import { bindLightbox, showLightbox } from "./lightbox/index.js";
 import { bindPeople, loadPeople } from "./people/index.js";
 import { bindSearch, loadPersonPicker } from "./search/index.js";
 import { bindUnknown, loadCandidates, loadUnknown } from "./unknown/index.js";
@@ -226,6 +227,7 @@ bindEvents();
 bindUnknown();
 bindSearch();
 bindPeople();
+watchMedia();
 
 /* Zuletzt, nicht zwischendrin.
 
@@ -240,3 +242,5 @@ bindPeople();
    jetzt aus einem zweiten Grund richtig -- am Ende ist gebunden, was gebunden
    gehoert, bevor der erste Tab aufgeht. */
 showTab(tabFromUrl());
+const photo = photoFromUrl();
+if (photo) showLightbox([{ id: photo }], 0);

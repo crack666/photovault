@@ -145,6 +145,18 @@ def snapshot() -> dict:
         "lost": "" if ATLAS_FILE.is_file() else "Der Tab Atlas bleibt leer.",
     }
 
+    from api.archive import why_unavailable
+
+    archiv = why_unavailable()
+    features["archive"] = {
+        "label": "Fotoarchiv",
+        "ok": not archiv,
+        "why": archiv or "",
+        "lost": "" if not archiv else (
+            "Vorschaubilder und Originale fehlen — der Index bleibt lesbar."
+        ),
+    }
+
     state = {
         "ollama": {"url": ollama_url(), "reachable": pool is not None,
                    "models": sorted(pool) if pool else []},
