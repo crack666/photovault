@@ -38,6 +38,7 @@ class QdrantWriter:
         ("taken_at", "DATETIME"),
         ("event_name", "KEYWORD"),
         ("space", "KEYWORD"),
+        ("kind", "KEYWORD"),
         ("trashed_at", "DATETIME"),
     )
 
@@ -158,6 +159,8 @@ class QdrantWriter:
             "photo_id": record.photo_id,
             "content_sha256": getattr(record, "content_sha256", None),
             "file_path": record.file_path,
+            "kind": getattr(record, "kind", None) or "photo",
+            "duration_s": getattr(record, "duration_s", None),
             "person_ids": record.person_ids,
             "face_count": record.face_count,
             "face_boxes": record.face_boxes,

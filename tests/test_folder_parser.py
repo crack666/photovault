@@ -44,6 +44,11 @@ class TestFolderParser:
         assert result["date_hint_source"] == "filename"
         assert result["sequence"] == 120
 
+    def test_whatsapp_video_name(self):
+        result = self.parser.parse("/photos/Handys/VID-20181021-WA0001.mp4")
+        assert result["date_hint"] == "2018-10-21"
+        assert result["sequence"] == 1
+
     def test_compact_date_in_filename(self):
         result = self.parser.parse("/photos/Handyfotos/20130515_223527 Basti Kino.jpg")
         assert result["date_hint"] == "2013-05-15"

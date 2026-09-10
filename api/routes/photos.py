@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from api.archive import media_http_error, why_unavailable
@@ -66,6 +66,8 @@ def photo_detail(point_id: str) -> dict:
         "id": point_id,
         "file_path": path,
         "file_name": path.rsplit("/", 1)[-1] if path else None,
+        "kind": p.get("kind") or "photo",
+        "duration_s": p.get("duration_s"),
         "folder_name": p.get("folder_name"),
         "event_name": p.get("event_name"),
         "sequence_in_folder": p.get("sequence_in_folder"),
@@ -383,6 +385,41 @@ def photo_thumb(point_id: str, size: int = 320):
         content=data,
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/{point_id}/media")
+def photo_media(point_id: str):
+    """Originaldatei — bei Videos mit Range, damit der Player spulen kann."""
+    q = client()
+    try:
+        points = q.retrieve(
+            collection_name=PHOTOS, ids=[point_id],
+            with_payload=["file_path", "kind"],
+        )
+    except Exception as e:
+        raise HTTPException(404, f"Foto nicht gefunden: {e}") from e
+    if not points:
+        raise HTTPException(404, "Foto nicht gefunden")
+    payload = points[0].payload or {}
+    path = payload.get("file_path")
+    if not path:
+        raise HTTPException(404, "Foto hat keinen Pfad")
+    blocked = why_unavailable(path)
+    if blocked:
+        raise HTTPException(503, blocked)
+    src = Path(path)
+    if not src.is_file():
+        err = media_http_error(FileNotFoundError(path), path)
+        raise err
+    from ingest.media import kind_of, video_mime
+
+    mime = video_mime(path) if kind_of(path) == "video" else "image/jpeg"
+    return FileResponse(
+        path,
+        media_type=mime,
+        filename=src.name,
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 

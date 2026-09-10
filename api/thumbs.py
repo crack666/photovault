@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 
+from ingest.media import VIDEO_EXTENSIONS
 from ingest.netfs import is_transient
 
 logger = logging.getLogger(__name__)
@@ -257,22 +258,28 @@ def _render(file_path: str, size: int, box: list | None, pad: float, image=None)
     if image is None:
         src = Path(file_path)
         try:
-            if src.suffix.lower() not in IMAGE_EXT or not src.is_file():
-                raise FileNotFoundError(file_path)
+            suffix = src.suffix.lower()
+            if suffix in VIDEO_EXTENSIONS:
+                from ingest.video import poster_image
+
+                image = poster_image(file_path)
+            else:
+                if suffix not in IMAGE_EXT or not src.is_file():
+                    raise FileNotFoundError(file_path)
+                try:
+                    image = Image.open(src)
+                except OSError as e:
+                    _reraise_io(e, file_path)
+                try:
+                    image.load()
+                except OSError as e:
+                    _reraise_io(e, file_path, truncated_ok=True)
+                    logger.warning("truncated image, using what decoded: %s (%s)", file_path, e)
+                    warn = WARN_TRUNCATED
+                    if getattr(image, "im", None) is None:
+                        raise
         except OSError as e:
             _reraise_io(e, file_path)
-        try:
-            image = Image.open(src)
-        except OSError as e:
-            _reraise_io(e, file_path)
-        try:
-            image.load()
-        except OSError as e:
-            _reraise_io(e, file_path, truncated_ok=True)
-            logger.warning("truncated image, using what decoded: %s (%s)", file_path, e)
-            warn = WARN_TRUNCATED
-            if getattr(image, "im", None) is None:
-                raise
     try:
         # Handyfotos tragen die Ausrichtung im EXIF; ohne das steht die Haelfte quer.
         image = ImageOps.exif_transpose(image)

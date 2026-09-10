@@ -179,6 +179,9 @@ class PhotoRecord:
     event_excluded: bool = False
     file_warning: Optional[str] = None
     ingested_at: Optional[str] = None
+    #: photo (Voreinstellung, auch wenn das Feld im Index fehlt) oder video.
+    kind: str = "photo"
+    duration_s: Optional[float] = None
 
 
 class IngestPipeline:
@@ -314,10 +317,20 @@ class IngestPipeline:
                     with t.stage("file_times"):
                         _fill_file_times(record, Path(fp))
 
+                    from ingest.identity import content_hash
+                    from ingest.media import kind_of
+
+                    record.kind = kind_of(fp)
+                    record.content_sha256 = content_hash(fp)
+
                     # Einmal oeffnen, alles daraus bedienen: EXIF, Gesichter,
                     # CLIP und Vorschaubild lasen bisher jeweils neu vom NAS.
+                    raw_img = rgb = None
                     with t.stage("decode"):
-                        raw_img, rgb, warn = _load_image(fp)
+                        if record.kind == "video":
+                            raw_img, rgb, warn = _load_video(fp, record)
+                        else:
+                            raw_img, rgb, warn = _load_image(fp)
                     if warn:
                         record.file_warning = warn
 
@@ -342,21 +355,22 @@ class IngestPipeline:
                     record.date_hint = fd.get("date_hint")
                     record.date_hint_source = fd.get("date_hint_source")
 
-                    with t.stage("face"):
-                        fr = face_emb.process(fp, image=rgb)
-                    record.face_count = fr["count"]
-                    record.face_embedding = fr["primary_embedding"]
-                    record.face_boxes = fr["boxes"]
-                    record.faces = fr.get("faces") or []
-                    with t.stage("face_match"):
-                        record.person_suggestions = [
-                            s["id"] for s in matcher.suggest(record.face_embedding)
-                        ]
+                    if record.kind != "video":
+                        with t.stage("face"):
+                            fr = face_emb.process(fp, image=rgb)
+                        record.face_count = fr["count"]
+                        record.face_embedding = fr["primary_embedding"]
+                        record.face_boxes = fr["boxes"]
+                        record.faces = fr.get("faces") or []
+                        with t.stage("face_match"):
+                            record.person_suggestions = [
+                                s["id"] for s in matcher.suggest(record.face_embedding)
+                            ]
 
-                    with t.stage("clip"):
-                        sr = scene.process(fp, image=rgb)
-                    record.scene_tags = sr["tags"]
-                    record.clip_embedding = sr["embedding"]
+                        with t.stage("clip"):
+                            sr = scene.process(fp, image=rgb)
+                        record.scene_tags = sr["tags"]
+                        record.clip_embedding = sr["embedding"]
 
                     if self.config.thumbs:
                         # Jetzt gleich, solange die Datei ohnehin gelesen wird --
@@ -374,7 +388,7 @@ class IngestPipeline:
                         record.caption_de = prior.get("caption_de")
                         record.caption_source = prior.get("caption_source") or "manual"
                         record.caption_locked = True
-                    elif captioner is not None:
+                    elif captioner is not None and record.kind != "video":
                         from ingest.captioner import jpeg_b64
 
                         with t.stage("caption"):
@@ -475,17 +489,23 @@ class IngestPipeline:
             _apply_prior(record, prior)
             _fill_file_times(record, Path(fp))
 
+            from ingest.identity import content_hash
+            from ingest.media import kind_of
+
+            record.kind = kind_of(fp)
             with _Timed(clock, "  io:decode"):
                 from ingest.netfs import retry_io
 
                 # Ein SMB-Aussetzer soll den Datensatz nicht kosten.
-                raw_img, rgb, warn = retry_io(lambda: _load_image(fp), what=fp)
+                if record.kind == "video":
+                    raw_img, rgb, warn = retry_io(
+                        lambda: _load_video(fp, record), what=fp)
+                else:
+                    raw_img, rgb, warn = retry_io(lambda: _load_image(fp), what=fp)
             if warn:
                 record.file_warning = warn
             # Jetzt, nicht vorher: die Datei liegt nach dem Dekodieren im
             # Seiten-Cache, und der Hash kostet dann fast nichts.
-            from ingest.identity import content_hash
-
             record.content_sha256 = content_hash(fp)
             if rgb is None:
                 # Kein lesbares Bild -- aber Datum, Album und Pfad sind trotzdem
@@ -516,7 +536,7 @@ class IngestPipeline:
             record._clip = None
             record._caption_b64 = None
             if rgb is not None:
-                if captioner is not None:
+                if record.kind != "video" and captioner is not None:
                     # Sonst liest der Caption-Schritt die Datei ein zweites Mal
                     # ueber SMB und dekodiert sie erneut.
                     from ingest.captioner import jpeg_b64
@@ -527,15 +547,16 @@ class IngestPipeline:
                     with _Timed(clock, "  io:thumb"):
                         _make_thumb(fp, rgb, record.content_sha256)
 
-                # Beides ist reine CPU-Arbeit und gehoert deshalb hierher, nicht
-                # in den GPU-Thread: die BGR-Kopie kostet bei 12 MP rund 36 MB,
-                # das CLIP-Preprocessing skaliert auf 224x224.
-                from ingest.face_embedder import to_bgr
+                if record.kind != "video":
+                    # Beides ist reine CPU-Arbeit und gehoert deshalb hierher, nicht
+                    # in den GPU-Thread: die BGR-Kopie kostet bei 12 MP rund 36 MB,
+                    # das CLIP-Preprocessing skaliert auf 224x224.
+                    from ingest.face_embedder import to_bgr
 
-                with _Timed(clock, "  io:bgr"):
-                    record._bgr = to_bgr(rgb)
-                with _Timed(clock, "  io:clip_pre"):
-                    record._clip = scene.preprocess(rgb)
+                    with _Timed(clock, "  io:bgr"):
+                        record._bgr = to_bgr(rgb)
+                    with _Timed(clock, "  io:clip_pre"):
+                        record._clip = scene.preprocess(rgb)
             # Das grosse PIL-Bild wird ab hier nicht mehr gebraucht.
             record._prior = prior
             return record
@@ -601,7 +622,7 @@ class IngestPipeline:
                     record.caption_source = prior.get("caption_source") or "manual"
                     record.caption_locked = True
                     record._caption_b64 = None
-                elif captioner is not None:
+                elif captioner is not None and record.kind != "video":
                     todo.append(record)
                 elif prior:
                     record.caption_de = prior.get("caption_de")
@@ -987,6 +1008,24 @@ def _load_image(file_path: str):
         return raw, rgb, warn
     except Exception as e:
         logger.debug("Could not decode %s: %s", file_path, e)
+        return None, None, "unreadable"
+
+
+def _load_video(file_path: str, record: PhotoRecord):
+    """Poster-Frame als RGB -- das Original bleibt Video."""
+    from ingest.video import VideoToolMissing, poster_image, probe
+
+    try:
+        info = probe(file_path)
+    except VideoToolMissing as e:
+        logger.warning("Video without ffmpeg: %s (%s)", file_path, e)
+        return None, None, None
+    record.duration_s = info.get("duration")
+    try:
+        rgb = poster_image(file_path, info.get("duration"))
+        return rgb, rgb, None
+    except Exception as e:
+        logger.warning("Video poster failed for %s: %s", file_path, e)
         return None, None, "unreadable"
 
 

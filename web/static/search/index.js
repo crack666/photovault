@@ -38,8 +38,10 @@ const FIELDS = [
    Nichts. Die Wahl bleibt über Sitzungen erhalten, sonst müsste man sie bei
    jedem Aufräumdurchgang neu treffen. */
 const SCOPE_KEY = "pv-search-spaces";
+const MEDIA_KEY = "pv-search-media";
 let spacesCache = [];
 let scopePick = new Set();
+let mediaPick = "all";
 
 let peopleFilter = "";
 let peopleLimit = 16;
@@ -52,6 +54,7 @@ export async function loadPersonPicker() {
   gate("freetext", $("q-text"), $("q-text-gate"));
   await loadPeopleList();
   await loadScope();
+  loadMedia();
   renderBuilder();
   renderPeopleChips();
   await renderSearchExamples();
@@ -90,6 +93,27 @@ function renderScope() {
   $("scope-hint").textContent = scopePick.size
     ? `Suche nur in ${[...scopePick].join(", ")}.`
     : "Alle Bereiche — nichts eingeschränkt.";
+}
+
+function loadMedia() {
+  try {
+    const saved = localStorage.getItem(MEDIA_KEY);
+    if (saved === "photo" || saved === "video" || saved === "all") mediaPick = saved;
+  } catch { /* privater Modus */ }
+  renderMedia();
+}
+
+function renderMedia() {
+  const host = $("media-chips");
+  if (!host) return;
+  const chips = [
+    ["all", "Beides"],
+    ["photo", "Fotos"],
+    ["video", "Videos"],
+  ];
+  host.innerHTML = chips.map(([id, label]) => `
+    <button type="button" class="scope-chip${mediaPick === id ? " on" : ""}"
+            data-media="${id}">${label}</button>`).join("");
 }
 
 
@@ -428,6 +452,7 @@ async function runSearch() {
       body: JSON.stringify({
         query: qbTree,
         spaces: [...scopePick],
+        media: mediaPick,
         caption_query: $("q-text").value.trim() || null,
         limit: QB_PAGE,
         offset: qbOffset,
@@ -484,7 +509,7 @@ function renderResults(results, unknown = []) {
   }
   results.forEach((r, i) => {
     const el = document.createElement("figure");
-    el.className = "hit";
+    el.className = r.kind === "video" ? "hit video" : "hit";
     const head = r.caption_display || [r.date, r.folder_name].filter(Boolean).join(" · ");
     const names = (r.person_names || []).join(", ");
     const notes = (r.annotations || []).map((a) => `<span class="note">${escapeHtml(a)}</span>`).join("");
@@ -495,7 +520,7 @@ function renderResults(results, unknown = []) {
     el.innerHTML = `
       <img loading="${loading}" src="/api/photos/${encodeURIComponent(r.id)}/thumb?size=320" alt="" />
       <figcaption>
-        <div class="muted">${escapeHtml(head)}</div>
+        <div class="muted">${r.kind === "video" ? "Video · " : ""}${escapeHtml(head)}</div>
         ${names ? `<div class="names">${escapeHtml(names)}</div>` : ""}
         ${r.caption_de ? `<p>${escapeHtml(r.caption_de)}</p>` : `<p class="muted">Noch keine Caption</p>`}
         ${notes || tags ? `<div class="notes">${notes}${tags}</div>` : ""}
@@ -523,6 +548,13 @@ export function bindSearch() {
     if (scopePick.size === spacesCache.length) scopePick.clear();
     try { localStorage.setItem(SCOPE_KEY, JSON.stringify([...scopePick])); } catch { /* privater Modus */ }
     renderScope();
+  });
+  $("media-chips")?.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-media]");
+    if (!chip) return;
+    mediaPick = chip.dataset.media || "all";
+    try { localStorage.setItem(MEDIA_KEY, mediaPick); } catch { /* privater Modus */ }
+    renderMedia();
   });
   document.querySelectorAll("[data-add]").forEach((b) => {
     b.addEventListener("click", () => {
@@ -553,6 +585,7 @@ export function bindSearch() {
         body: JSON.stringify({
           query: qbTree,
           spaces: [...scopePick],
+          media: mediaPick,
           caption_query: frei || null,
           ids_only: true,
         }),

@@ -150,6 +150,7 @@
     <button type="button" class="lb-nav lb-prev" aria-label="Zurück">‹</button>
     <figure>
       <img id="lb-img" alt="" />
+      <video id="lb-video" class="hidden" controls playsinline preload="metadata"></video>
       <figcaption id="lb-cap"></figcaption>
     </figure>
     <button type="button" class="lb-nav lb-next" aria-label="Weiter">›</button>
@@ -280,6 +281,10 @@
       <span class="scope-label">Bereich</span>
       <div class="scope-chips" id="scope-chips"></div>
       <span class="muted scope-hint" id="scope-hint"></span>
+    </div>
+    <div class="scope-bar" id="search-media">
+      <span class="scope-label">Medium</span>
+      <div class="scope-chips" id="media-chips"></div>
     </div>
 
     <form id="search-form" class="search-desk">

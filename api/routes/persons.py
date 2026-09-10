@@ -432,6 +432,7 @@ def _timeline_from_points(photos: list, *, person_id: str = "", name: str = "") 
             "channel": payload.get("channel") or channel(payload.get("file_path") or ""),
             "caption_display": payload.get("caption_display"),
             "caption_de": unwrap_caption(payload.get("caption_de")) or None,
+            "kind": payload.get("kind") or "photo",
             "folder_name": payload.get("folder_name"),
             "person_names": payload.get("person_names") or [],
             "annotations": payload.get("annotations") or [],

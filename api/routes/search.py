@@ -82,13 +82,37 @@ def space_scope(spaces: list[str]):
     return terms[0] if len(terms) == 1 else Filter(should=terms)
 
 
-def scope_text(spaces: list[str]) -> str:
+def media_scope(media: str | None):
+    """Nur Fotos, nur Videos, oder nichts — fehlendes `kind` zaehlt als Foto."""
+    want = (media or "all").strip().lower()
+    if want in ("", "all", "both"):
+        return None
+    from qdrant_client.models import FieldCondition, Filter, IsEmptyCondition, MatchValue, PayloadField
+
+    if want == "video":
+        return FieldCondition(key="kind", match=MatchValue(value="video"))
+    if want in ("photo", "photos", "image", "images"):
+        return Filter(should=[
+            FieldCondition(key="kind", match=MatchValue(value="photo")),
+            IsEmptyCondition(is_empty=PayloadField(key="kind")),
+        ])
+    return None
+
+
+def scope_text(spaces: list[str], media: str = "all") -> str:
     """Der Geltungsbereich in Worten -- er darf nicht unsichtbar wirken."""
-    if not spaces:
-        return ""
-    if len(spaces) == 1:
-        return f"nur im Bereich {spaces[0]}"
-    return "nur in den Bereichen " + ", ".join(spaces)
+    teile: list[str] = []
+    if spaces:
+        if len(spaces) == 1:
+            teile.append(f"nur im Bereich {spaces[0]}")
+        else:
+            teile.append("nur in den Bereichen " + ", ".join(spaces))
+    want = (media or "all").strip().lower()
+    if want == "video":
+        teile.append("nur Videos")
+    elif want in ("photo", "photos", "image", "images"):
+        teile.append("nur Fotos")
+    return ", ".join(teile)
 
 
 def _point_to_result(p) -> dict:
@@ -108,6 +132,8 @@ def _point_to_result(p) -> dict:
         "sequence_in_folder": payload.get("sequence_in_folder"),
         "person_suggestions": payload.get("person_suggestions") or [],
         "content_sha256": payload.get("content_sha256"),
+        "kind": payload.get("kind") or "photo",
+        "duration_s": payload.get("duration_s"),
         "score": getattr(p, "score", None),
     }
 
@@ -119,6 +145,9 @@ class QuerySearchRequest(BaseModel):
     #: Geltungsbereich, nicht Bedingung -- wie der Papierkorb. Steht deshalb
     #: neben dem Ausdruck und nicht in ihm: der Baum bleibt der des Nutzers.
     spaces: list[str] = []
+    #: Foto, Video oder beides. Wie `spaces` ein Geltungsbereich, keine
+    #: Bedingung im Baum -- sonst wird „nur Videos“ zur Alternative.
+    media: str = "all"
     caption_query: Optional[str] = None
     caption_min_score: Optional[float] = None
     limit: int = 50
@@ -165,13 +194,14 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
     client = qdrant()
     people = known_persons(client)
     inner = to_filter(req.query, resolver=lambda v: resolve(v, people))
-    scope = space_scope(req.spaces)
-    if scope is not None:
+    extra = [c for c in (space_scope(req.spaces), media_scope(req.media)) if c is not None]
+    if extra:
         from qdrant_client.models import Filter as _Filter
 
-        inner = _Filter(must=[inner, scope]) if inner is not None else _Filter(must=[scope])
+        inner = _Filter(must=[inner, *extra] if inner is not None else extra)
     filter_ = visible(inner)
     expression = describe(req.query)
+    geltung = scope_text(req.spaces, req.media)
 
     try:
         if req.caption_query:
@@ -189,7 +219,7 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
                     ranked=True,
                     expression=expression or "alle Fotos",
                     conditions=count_conditions(req.query),
-                    scope=scope_text(req.spaces),
+                    scope=geltung,
                 )
             results = [_point_to_result(p) for p in points]
             return QuerySearchResponse(
@@ -200,7 +230,7 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
                 ranked=True,
                 expression=expression or "alle Fotos",
                 conditions=count_conditions(req.query),
-                scope=scope_text(req.spaces),
+                scope=geltung,
             )
         elif req.ids_only:
             # Seitenweise bis zum Ende: `limit` ist hier keine Obergrenze,
@@ -247,7 +277,7 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
             ranked=bool(req.caption_query),
             expression=expression or "alle Fotos",
             conditions=count_conditions(req.query),
-            scope=scope_text(req.spaces),
+            scope=geltung,
         )
 
     results = [_point_to_result(p) for p in points]
@@ -258,7 +288,7 @@ def search_by_query(req: QuerySearchRequest) -> QuerySearchResponse:
         results=results,
         expression=expression or "alle Fotos",
         conditions=count_conditions(req.query),
-        scope=scope_text(req.spaces),
+        scope=geltung,
     )
 
 
