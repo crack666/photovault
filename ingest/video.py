@@ -73,6 +73,10 @@ def probe(file_path: str) -> dict[str, Any]:
     return {"duration": duration, "codec": codec, "created": created}
 
 
+#: Drei Einzelbilder fuer Captions -- Anfang, Mitte, Ende.
+FRAME_RATIOS = (0.1, 0.5, 0.9)
+
+
 def poster_offset(duration: float | None, ratio: float = 0.1) -> float:
     """Nicht Frame 0: der ist oft schwarz oder ein Blitz."""
     if not duration or duration <= 0:
@@ -82,12 +86,31 @@ def poster_offset(duration: float | None, ratio: float = 0.1) -> float:
     return max(0.0, min(duration * ratio, duration - 0.15))
 
 
-def poster_jpeg(file_path: str, duration: float | None = None) -> bytes:
+def sample_offsets(duration: float | None) -> list[float]:
+    """Wo die Caption-Frames sitzen.
+
+    Kurze Clips sind ein Bild -- drei mal dasselbe Frame waere nur dreimal
+    Ollama fuer denselben Satz. Ab drei Sekunden lohnen Anfang, Mitte, Ende.
+    """
+    if not duration or duration <= 0:
+        return [0.0]
+    if duration < 3:
+        return [poster_offset(duration)]
+    seen: set[float] = set()
+    out: list[float] = []
+    for ratio in FRAME_RATIOS:
+        ss = round(poster_offset(duration, ratio), 3)
+        if ss in seen:
+            continue
+        seen.add(ss)
+        out.append(ss)
+    return out or [0.0]
+
+
+def frame_jpeg(file_path: str, ss: float = 0.0) -> bytes:
+    """Ein Einzelbild als JPEG in den Speicher -- nie neben das Original."""
     if not shutil.which(FFMPEG):
         raise VideoToolMissing("ffmpeg nicht gefunden")
-    if duration is None:
-        duration = probe(file_path).get("duration")
-    ss = poster_offset(duration)
     try:
         raw = subprocess.run(
             [
@@ -99,11 +122,24 @@ def poster_jpeg(file_path: str, duration: float | None = None) -> bytes:
             capture_output=True, timeout=90, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise RuntimeError(f"ffmpeg poster failed: {e}") from e
+        raise RuntimeError(f"ffmpeg frame failed: {e}") from e
     if raw.returncode != 0 or not raw.stdout:
         err = (raw.stderr or b"").decode("utf-8", "replace")[:200]
-        raise RuntimeError(f"ffmpeg poster exit {raw.returncode}: {err}")
+        raise RuntimeError(f"ffmpeg frame exit {raw.returncode}: {err}")
     return raw.stdout
+
+
+def poster_jpeg(file_path: str, duration: float | None = None) -> bytes:
+    if duration is None:
+        duration = probe(file_path).get("duration")
+    return frame_jpeg(file_path, poster_offset(duration))
+
+
+def sample_jpegs(file_path: str, duration: float | None = None) -> list[bytes]:
+    """Anfang/Mitte/Ende als JPEG-Bytes, ohne Datei auf dem NAS."""
+    if duration is None:
+        duration = probe(file_path).get("duration")
+    return [frame_jpeg(file_path, ss) for ss in sample_offsets(duration)]
 
 
 def poster_image(file_path: str, duration: float | None = None):

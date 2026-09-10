@@ -128,6 +128,29 @@ def test_person_and_album_become_must_conditions():
     assert keys == ["person_names", "folder_name"]
 
 
+def test_kind_video_filters_on_payload():
+    flt = build_filter(kind="video")
+    assert any(getattr(c, "key", None) == "kind" for c in flt.must)
+
+
+def test_context_marks_videos():
+    ctx = payload_context(_payload(kind="video", file_path="/p/a.mp4"))
+    assert ctx["kind"] == "video"
+
+
+def test_exif_write_skips_videos(monkeypatch):
+    """piexif kennt kein MP4 — der Satz bleibt im Index."""
+    called = []
+    monkeypatch.setattr("ingest.exif_writer.write_caption",
+                        lambda *a, **k: called.append(1) or {"written": True})
+    photo = Photo(0, _payload(kind="video", file_path="/p/clip.mp4", caption_de="Ein Clip."))
+    photo.caption_de = "Ein Clip."
+    stats: dict = {}
+    caption_pass._write_file_captions([photo], stats)
+    assert called == []
+    assert stats["exif_skipped"] == 1
+
+
 def test_select_returns_sorted_paths():
     pts = [_Point(i, _payload(file_path=f"/p/{c}.jpg")) for i, c in enumerate("dbca")]
     found = select_photos(FakeClient(pts))
@@ -169,7 +192,7 @@ def wired(monkeypatch):
             self.num_ctx = num_ctx
             self.seen: list[tuple[str, dict, str]] = []
 
-        def caption_structured(self, file_path, context=None, image_b64=None):
+        def caption_structured(self, file_path, context=None, image_b64=None, images_b64=None):
             self.seen.append((file_path, context, image_b64))
             return {"caption_de": f"Beschreibung zu {file_path}", "scene_tags": ["fest"]}
 
@@ -265,7 +288,7 @@ def test_a_failing_caption_costs_only_that_photo(wired, monkeypatch):
         def __init__(self, url=None, num_ctx=None):
             pass
 
-        def caption_structured(self, file_path, context=None, image_b64=None):
+        def caption_structured(self, file_path, context=None, image_b64=None, images_b64=None):
             if file_path.endswith("1.jpg"):
                 raise RuntimeError("Ollama sagt nein")
             return {"caption_de": "ok", "scene_tags": []}

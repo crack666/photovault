@@ -114,10 +114,23 @@ def caption_options(num_ctx: int | None = None) -> dict[str, Any]:
 
 
 def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
+    kind = (context or {}).get("kind") or "photo"
+    if kind == "video":
+        head = (
+            "Analysiere das Video anhand der Einzelbilder (Anfang, Mitte, Ende). "
+            "Der KONTEXT stammt aus Datei/Ordner/EXIF/Face-ID — nicht aus den Bildern. "
+            "Nutze ihn in caption_de (Ort, Jahr, Anlass), "
+            "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen. "
+            "Beschreibe den Clip in 1-2 Saetzen, nicht jedes Einzelbild extra."
+        )
+    else:
+        head = (
+            "Analysiere das Foto. Der KONTEXT stammt aus Datei/Ordner/EXIF/Face-ID — "
+            "nicht aus dem Bild. Nutze ihn in caption_de (Ort, Jahr, Anlass), "
+            "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen."
+        )
     lines = [
-        "Analysiere das Foto. Der KONTEXT stammt aus Datei/Ordner/EXIF/Face-ID — "
-        "nicht aus dem Bild. Nutze ihn in caption_de (Ort, Jahr, Anlass), "
-        "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen.",
+        head,
         "",
         "Regeln zu Namen — streng:",
         "- Einen Namen NUR dann nennen, wenn er unter 'Zugeordnet (Face-Match)' steht.",
@@ -229,15 +242,25 @@ class Captioner:
         file_path: str,
         context: dict[str, Any] | None = None,
         image_b64: str | None = None,
+        images_b64: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """`image_b64` ist ein bereits kodiertes JPEG.
 
         Ohne das liest diese Methode die Datei ein zweites Mal ueber SMB und
         dekodiert sie erneut -- rund 200 ms, die das Fliessband schon bezahlt
         hat. Der Leser-Pool reicht das Ergebnis deshalb durch.
+
+        `images_b64` sind mehrere Frames desselben Videos in einer Anfrage.
         """
         try:
-            b64 = image_b64 if image_b64 is not None else jpeg_b64(file_path)
+            if images_b64:
+                images = [b for b in images_b64 if b]
+            elif image_b64 is not None:
+                images = [image_b64]
+            else:
+                images = [jpeg_b64(file_path)]
+            if not images:
+                return None
             payload = {
                 "model": self._model,
                 "stream": False,
@@ -248,7 +271,7 @@ class Captioner:
                     {
                         "role": "user",
                         "content": build_caption_prompt(context),
-                        "images": [b64],
+                        "images": images,
                     }
                 ],
             }
