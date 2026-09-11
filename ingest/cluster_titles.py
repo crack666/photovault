@@ -76,6 +76,37 @@ def clean_title(raw: Any) -> str | None:
     return t
 
 
+def disambiguate(clusters: list[dict], titles: list[str | None]) -> list[str | None]:
+    """Gleiche Titel unterscheidbar machen.
+
+    Der erste Bau ergab einen Familiennamen zweimal und einen Vornamen
+    dreimal -- in der Sprungliste nicht zu unterscheiden, auf der Karte auch
+    nicht. Das Modell sieht jeden Kontinent fuer sich; dass ein anderer
+    denselben Titel bekam, kann es nicht wissen.
+
+    Angehaengt wird das erste Rangwort, das im Titel noch nicht steckt und
+    das der Dublette fehlt: "Familie Mira · wiese" gegen "Familie Mira ·
+    strand". Der groesste Kontinent behaelt den blanken Titel.
+    """
+    out = list(titles)
+    gruppen: dict[str, list[int]] = {}
+    for i, t in enumerate(out):
+        if t:
+            gruppen.setdefault(t.lower(), []).append(i)
+    for _, idx in gruppen.items():
+        if len(idx) < 2:
+            continue
+        idx.sort(key=lambda i: -int(clusters[i].get("n", 0)))
+        for i in idx[1:]:
+            eigene = [w for w in (clusters[i].get("terms") or [])
+                      if w.lower() not in out[i].lower()]
+            fremde = {w for j in idx if j != i for w in (clusters[j].get("terms") or [])}
+            zusatz = next((w for w in eigene if w not in fremde), None) or (eigene[0] if eigene else None)
+            if zusatz:
+                out[i] = f"{out[i]} · {zusatz}"
+    return out
+
+
 def title_clusters(
     clusters: list[dict],
     samples_of: Callable[[int], list[str]],
@@ -108,4 +139,4 @@ def title_clusters(
             logger.warning("Kein Titel fuer Kontinent %s -- Modell antwortet nicht; "
                            "die uebrigen behalten ihre Rangwoerter.", c["i"])
         out.append(titel)
-    return out
+    return disambiguate(clusters, out)

@@ -307,6 +307,8 @@ export function createScene(canvas, model, hooks = {}) {
   const cam = { scale: 1, tx: 0, ty: 0 };
 
   let layout = "bedeutung";
+  /** Kontinente, deren Schild der letzte Frame gezeichnet hat. */
+  const labelsShown = new Set();
   let colorMode = "kontinent";
   let mode = "fotos";       // "fotos" | "serien"
   let minEventSize = 3;
@@ -1768,6 +1770,9 @@ export function createScene(canvas, model, hooks = {}) {
   function labelAt(sx, sy) {
     if (mode === "serien" || cam.scale > 6000) return -1;
     for (const c of model.clusters) {
+      // Nur, was der letzte Frame auch gezeichnet hat -- ein Klick darf
+      // kein Schild treffen, das der Kollisionsschutz weggelassen hat.
+      if (!labelsShown.has(c.i)) continue;
       const [wx, wy] = clusterAnchor(c.i);
       const cx = toScreenX(wx), cy = toScreenY(wy);
       const label = model.clusterLabel[c.i];
@@ -1797,13 +1802,27 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    for (const c of model.clusters) {
+    /* Grosse Kontinente zuerst, und ein Schild, das ein schon gezeichnetes
+       ueberdeckt, faellt weg. Die Themen-Anordnung hat 60 Schubladen auf
+       einer kompakten Karte -- Text-Einbettungen bilden eher einen Klumpen
+       als Inseln --, und ohne das lagen im Zentrum zwanzig Schilder
+       uebereinander. Beim Hineinzoomen ruecken sie auseinander und kommen
+       von selbst wieder. */
+    const placed = [];
+    labelsShown.clear();
+    const clusters = [...model.clusters].filter((c) => c.n > 0).sort((a, b) => b.n - a.n);
+    for (const c of clusters) {
       const [wx, wy] = clusterAnchor(c.i);
       const sx = toScreenX(wx), sy = toScreenY(wy);
       if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
       const label = model.clusterLabel[c.i];
       const weak = c.cap_share < 0.15;
-      ctx.font = `${weak ? 400 : 600} ${Math.min(15, 10 + c.n / 90)}px system-ui, sans-serif`;
+      const px = Math.min(15, 10 + c.n / 90);
+      const halfW = label.length * px * 0.3 + 6, halfH = px * 0.75;
+      if (placed.some((p) => Math.abs(p.x - sx) < p.hw + halfW && Math.abs(p.y - sy) < p.hh + halfH)) continue;
+      placed.push({ x: sx, y: sy, hw: halfW, hh: halfH });
+      labelsShown.add(c.i);
+      ctx.font = `${weak ? 400 : 600} ${px}px system-ui, sans-serif`;
       ctx.lineWidth = 3.5;
       ctx.strokeStyle = "rgba(10,12,16,0.85)";
       ctx.globalAlpha = strength * (weak ? 0.5 : 0.95);

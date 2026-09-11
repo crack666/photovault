@@ -414,9 +414,11 @@ function buildToolbar() {
     $("atlas-lenses").querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === b));
     scene.setLayout(b.dataset.lens);
     // Die Themen bringen andere Kontinente mit -- alles, was deren Namen
-    // einmal in den DOM geschrieben hat, muss neu.
+    // einmal in den DOM geschrieben hat, muss neu. Das Briefing nur, wenn
+    // es offen ist: geschlossen soll es geschlossen bleiben.
     buildJump();
     renderFooter();
+    if (!$("atlas-brief").classList.contains("hidden")) paintBriefing();
   };
 
   $("atlas-levels").innerHTML =

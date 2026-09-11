@@ -125,3 +125,54 @@ class TestApplyTitles:
         assert clusters[0]["title"] == "Garten"
         assert clusters[1]["title"] is None
         assert clusters[1]["terms"] == ["auto"]
+
+
+class TestDisambiguate:
+    """Der erste Bau ergab einen Familiennamen zweimal und einen Vornamen
+    dreimal. Das Modell sieht jeden Kontinent fuer sich."""
+
+    def test_zweiter_bekommt_ein_eigenes_rangwort(self):
+        from ingest.cluster_titles import disambiguate
+
+        clusters = [
+            {"i": 0, "n": 463, "terms": ["florian", "kinder", "liana", "wiese"]},
+            {"i": 1, "n": 409, "terms": ["kinder", "göring", "liana", "cataleya"]},
+        ]
+        out = disambiguate(clusters, ["Familie Mira", "Familie Mira"])
+        assert out[0] == "Familie Mira"                 # der groessere bleibt blank
+        assert out[1] == "Familie Mira · göring"        # erstes Wort, das dem anderen fehlt
+
+    def test_rangwort_das_schon_im_titel_steckt_zaehlt_nicht(self):
+        from ingest.cluster_titles import disambiguate
+
+        clusters = [
+            {"i": 0, "n": 10, "terms": ["mira", "garten"]},
+            {"i": 1, "n": 5, "terms": ["mira", "strand"]},
+        ]
+        assert disambiguate(clusters, ["Mira", "Mira"]) == ["Mira", "Mira · strand"]
+
+    def test_dreifach(self):
+        from ingest.cluster_titles import disambiguate
+
+        clusters = [
+            {"i": 0, "n": 3, "terms": ["a", "x"]},
+            {"i": 1, "n": 2, "terms": ["a", "y"]},
+            {"i": 2, "n": 1, "terms": ["a", "z"]},
+        ]
+        out = disambiguate(clusters, ["T", "T", "T"])
+        assert out == ["T", "T · y", "T · z"]
+
+    def test_verschiedene_und_leere_bleiben(self):
+        from ingest.cluster_titles import disambiguate
+
+        clusters = [{"i": 0, "n": 3, "terms": ["a"]}, {"i": 1, "n": 2, "terms": ["b"]}]
+        assert disambiguate(clusters, ["Eins", None]) == ["Eins", None]
+        assert disambiguate(clusters, ["Eins", "Zwei"]) == ["Eins", "Zwei"]
+
+    def test_title_clusters_liefert_eindeutige_titel(self):
+        from ingest.cluster_titles import title_clusters
+
+        clusters = [{"i": 0, "n": 9, "terms": ["kind", "garten"]},
+                    {"i": 1, "n": 4, "terms": ["kind", "strand"]}]
+        out = title_clusters(clusters, lambda c: ["x"], lambda p: {"titel": "Kinder"})
+        assert out == ["Kinder", "Kinder · strand"]
