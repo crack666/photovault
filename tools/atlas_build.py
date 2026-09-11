@@ -566,9 +566,16 @@ def apply_titles(clusters: list[dict], labels: np.ndarray, meta: list[dict],
     from ingest.cluster_titles import title_clusters
 
     if ask is None:
-        from ingest.captioner import Captioner
+        import os
 
-        ask = Captioner().ask_json
+        from ingest.captioner import CAPTION_MODEL, Captioner
+
+        # Standard: dasselbe Modell wie die Captions. An diesem Rechner ist
+        # das ein 27B mit 262k Kontext -- gemessen rund eine Minute je Titel
+        # bei voller GPU, 100 Titel je Kartenbau. Wer einen schnelleren
+        # Pool-Alias hat (`fast`), setzt ihn hier; die Aufgabe ist klein.
+        modell = os.environ.get("PHOTOVAULT_TITLE_MODEL") or CAPTION_MODEL
+        ask = Captioner(model=modell).ask_json
 
     rng = random.Random(7)
 
