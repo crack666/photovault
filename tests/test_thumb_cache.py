@@ -175,6 +175,14 @@ class TestSchluessel:
         b, _ = cache_keys("/a.jpg", box=[1, 2, 3, 4], pad=0.5, content_hash="x")
         assert a != b
 
+    def test_video_frame_geht_in_den_schluessel_ein(self):
+        from api.thumbs import cache_keys
+
+        poster, _ = cache_keys("/a.mp4", box=[1, 2, 3, 4], content_hash="abc")
+        mitte, _ = cache_keys("/a.mp4", box=[1, 2, 3, 4], content_hash="abc", extra="ss=1.7")
+        ende, _ = cache_keys("/a.mp4", box=[1, 2, 3, 4], content_hash="abc", extra="ss=3.1")
+        assert poster != mitte != ende
+
     def test_leerer_hash_gilt_als_keiner(self):
         from api.thumbs import cache_keys
 

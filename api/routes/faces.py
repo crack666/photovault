@@ -56,8 +56,21 @@ def face_crop(face_id: str, pad: float = 0.35, size: int = 320):
     try:
         # Ueber den Thumbnail-Cache: beim Labeling wird derselbe Ausschnitt
         # immer wieder angefordert, und die Originale liegen auf dem NAS.
+        image = None
+        extra = None
+        from ingest.media import is_video
+
+        if is_video(path) or payload.get("frame_ss") is not None:
+            # Sonst schneidet get_thumb das Poster (10 %), und ein Gesicht
+            # aus der Mitte oder vom Ende des Clips sitzt auf dem falschen Bild.
+            from ingest.video import frame_image
+
+            ss = float(payload.get("frame_ss") or 0.0)
+            extra = f"ss={ss}"
+            image = frame_image(path, ss)
         data = get_thumb(path, size=size, box=box, pad=pad,
-                         content_hash=payload.get("content_sha256"))
+                         content_hash=payload.get("content_sha256"),
+                         image=image, extra=extra)
     except Exception as e:
         logger.warning("Face crop failed for %s: %s", path, e)
         raise media_http_error(e, path) from e

@@ -95,11 +95,15 @@ def build_filter(
     path_contains: Optional[str] = None,
     has_caption: bool = False,
     kind: Optional[str] = None,
+    skip_locked: bool = True,
 ):
     """Qdrant-Filter fuer die Auswahl. `caption_locked` bleibt beim LLM-Lauf aussen vor.
 
     `has_caption` ist der EXIF-Abgleich: Satz steht schon im Index, soll in
     die Datei. Von-Hand-Sätze (`caption_locked`) gehören dort *hinein*.
+
+    `skip_locked=False` braucht der Gesichts-Lauf: ein festgehaltener Satz
+    aendert nichts daran, dass auf dem Clip noch niemand erkannt wurde.
     """
     from qdrant_client.models import (
         FieldCondition, Filter, IsEmptyCondition, MatchText, MatchValue, PayloadField,
@@ -107,7 +111,7 @@ def build_filter(
 
     must: list = []
     must_not: list = []
-    if not has_caption:
+    if skip_locked and not has_caption:
         must_not.append(FieldCondition(key="caption_locked", match=MatchValue(value=True)))
     if missing_only:
         must_not.append(FieldCondition(key="caption_source", match=MatchValue(value="llm")))
@@ -468,6 +472,9 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+    from ingest.ollama_client import apply_llm_env
+
+    apply_llm_env()
     from qdrant_client import QdrantClient
 
     client = QdrantClient(url=args.qdrant_url)

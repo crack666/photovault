@@ -233,7 +233,14 @@ class QdrantWriter:
             vec = face.get("embedding")
             if not vec:
                 continue
-            face_key = f"{record.photo_id}:{i}:{face.get('box')}"
+            # Ohne Zeitpunkt bleibt der Schluessel wie bei Fotos -- sonst
+            # wuerde ein Re-Ingest neue IDs erzeugen und die vergebenen
+            # Namen nicht mehr finden.
+            ss = face.get("frame_ss")
+            if ss is None:
+                face_key = f"{record.photo_id}:{i}:{face.get('box')}"
+            else:
+                face_key = f"{record.photo_id}:{ss}:{i}:{face.get('box')}"
             fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, face_key))
             prepared.append((fid, vec, face))
         if not prepared:
@@ -275,6 +282,7 @@ class QdrantWriter:
                 "score": face.get("score"),
                 "landmarks": face.get("landmarks"),
                 "frontality": face.get("frontality"),
+                "frame_ss": face.get("frame_ss"),
                 **existing.get(fid, {}),
             }
             points.append(PointStruct(id=fid, vector=vec, payload=payload))

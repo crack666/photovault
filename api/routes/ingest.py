@@ -21,6 +21,12 @@ class IngestStartRequest(BaseModel):
 
 @router.post("/start")
 def start_ingest(req: IngestStartRequest) -> dict:
+    """Stummel. Der echte Start ist POST /api/jobs/run mit job=ingest.
+
+    Die Route bleibt, weil Clients und Tests sie kennen — sie startet
+    weiterhin keinen Prozess. Wer einlesen will, nimmt die Jobs-Seite:
+    dieselben Ordner wie die Haken darunter, gleicher Lauf wie die Konsole.
+    """
     return {"status": "started", "source": req.source}
 
 

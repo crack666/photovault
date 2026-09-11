@@ -765,24 +765,38 @@ class IngestPipeline:
         selben Prozess auf derselben Karte liegen.
         """
         from ingest.ollama_client import (
-            CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, ollama_url, post_json,
+            CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, litellm_headers,
+            litellm_url, ollama_url, post_json,
         )
 
         from ingest.captioner import caption_options
 
-        url = ollama_url(self.config.ollama_url)
         started = time.time()
-        options = dict(caption_options())
-        options["num_predict"] = 1
+        pool = litellm_url()
         try:
-            post_json(
-                f"{url}/api/generate",
-                {"model": CAPTION_MODEL, "prompt": "ok", "stream": False,
-                 "options": options, "keep_alive": -1},
-                timeout=900,
-            )
+            if pool:
+                post_json(
+                    f"{pool}/v1/chat/completions",
+                    {
+                        "model": CAPTION_MODEL,
+                        "messages": [{"role": "user", "content": "ok"}],
+                        "max_tokens": 1,
+                        "stream": False,
+                    },
+                    timeout=900,
+                    headers=litellm_headers(),
+                )
+            else:
+                url = ollama_url(self.config.ollama_url)
+                options = dict(caption_options())
+                options["num_predict"] = 1
+                post_json(
+                    f"{url}/api/generate",
+                    {"model": CAPTION_MODEL, "prompt": "ok", "stream": False,
+                     "options": options, "keep_alive": -1},
+                    timeout=900,
+                )
         except Exception as e:
-            # Kein Grund abzubrechen -- der erste Caption-Aufruf laedt sonst eben.
             logger.warning("Could not warm %s: %s", CAPTION_MODEL, e)
             return
         logger.info(
@@ -791,19 +805,15 @@ class IngestPipeline:
             time.time() - started,
         )
         try:
-            litellm = os.environ.get("LITELLM_URL", "").rstrip("/")
-            if litellm:
-                headers = {}
-                key = os.environ.get("LITELLM_MASTER_KEY", "")
-                if key:
-                    headers["Authorization"] = f"Bearer {key}"
+            if pool:
                 post_json(
-                    f"{litellm}/v1/embeddings",
+                    f"{pool}/v1/embeddings",
                     {"model": EMBED_MODEL, "input": "ok"},
                     timeout=300,
-                    headers=headers,
+                    headers=litellm_headers(),
                 )
             else:
+                url = ollama_url(self.config.ollama_url)
                 post_json(f"{url}/api/embed",
                           {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1},
                           timeout=300)
@@ -949,6 +959,9 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    from ingest.ollama_client import apply_llm_env
+
+    apply_llm_env()
     if not args.verbose:
         for noisy in ("httpx", "httpcore", "urllib3", "PIL"):
             logging.getLogger(noisy).setLevel(logging.WARNING)

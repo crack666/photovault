@@ -107,3 +107,62 @@ class TestIndizes:
         w._ensure_photo_indexes()
         assert "space" in w.client.indexes
         assert "trashed_at" in w.client.indexes
+
+
+class TestFacePayload:
+    def test_photo_key_does_not_change_when_frame_is_absent(self):
+        import uuid
+        from types import SimpleNamespace
+
+        from ingest.qdrant_writer import QdrantWriter
+
+        class C:
+            def __init__(self):
+                self.points = []
+
+            def retrieve(self, **kw):
+                return []
+
+            def upsert(self, collection_name, points, wait=False):
+                self.points = points
+
+        w = QdrantWriter.__new__(QdrantWriter)
+        w.client = C()
+        w.faces_collection = "faces"
+        rec = SimpleNamespace(
+            photo_id="abc", file_path="/a.jpg", content_sha256="h",
+            faces=[{"embedding": [0.1], "box": [1, 2, 3, 4], "score": 0.9}],
+        )
+        w.upsert_faces(rec)
+        want = str(uuid.uuid5(uuid.NAMESPACE_DNS, "abc:0:[1, 2, 3, 4]"))
+        assert w.client.points[0].id == want
+        assert w.client.points[0].payload.get("frame_ss") is None
+
+    def test_video_key_includes_the_frame(self):
+        import uuid
+        from types import SimpleNamespace
+
+        from ingest.qdrant_writer import QdrantWriter
+
+        class C:
+            def __init__(self):
+                self.points = []
+
+            def retrieve(self, **kw):
+                return []
+
+            def upsert(self, collection_name, points, wait=False):
+                self.points = points
+
+        w = QdrantWriter.__new__(QdrantWriter)
+        w.client = C()
+        w.faces_collection = "faces"
+        rec = SimpleNamespace(
+            photo_id="abc", file_path="/a.mp4", content_sha256="h",
+            faces=[{"embedding": [0.1], "box": [1, 2, 3, 4],
+                    "frame_ss": 1.5, "score": 0.9}],
+        )
+        w.upsert_faces(rec)
+        want = str(uuid.uuid5(uuid.NAMESPACE_DNS, "abc:1.5:0:[1, 2, 3, 4]"))
+        assert w.client.points[0].id == want
+        assert w.client.points[0].payload["frame_ss"] == 1.5

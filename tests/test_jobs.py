@@ -226,6 +226,39 @@ class TestBuildArgv:
         assert argv[-1] == "7"
         assert all(isinstance(a, str) for a in argv)
 
+    def test_faces_always_scans_videos(self):
+        from api.routes.jobs import RUNNABLE, build_argv
+
+        argv = build_argv(RUNNABLE["faces"], dry_run=True, limit=9)
+        assert argv[1:3] == ["-m", "ingest.face_pass"]
+        assert "--kind" in argv and "video" in argv
+        assert "--dry-run" in argv
+        assert argv[-2:] == ["--limit", "9"]
+
+    def test_ingest_reads_sources_and_skips_captions(self, tmp_path, monkeypatch):
+        """Sonst waere der Knopf nur die Konsole ohne Argumente — und wuerde
+        Stunden an Bildbeschreibungen haengen, bevor die Dateien überhaupt
+        im Index sind."""
+        from api.routes import jobs as jobs_mod
+
+        src = tmp_path / "sources.txt"
+        src.write_text("/mnt/photo/Urlaub\n", encoding="utf-8")
+        monkeypatch.setenv("PHOTOVAULT_SOURCES", str(src))
+        argv = jobs_mod.build_argv(jobs_mod.RUNNABLE["ingest"], dry_run=True, limit=25)
+        assert argv[1:3] == ["-m", "ingest.pipeline"]
+        assert "--skip-caption" in argv
+        assert argv[argv.index("--sources-file") + 1] == str(src)
+        assert "--dry-run" in argv
+        assert argv[-2:] == ["--limit", "25"]
+
+    def test_every_starter_is_a_valid_job_name(self):
+        """Ein Knopf, den das Schema ablehnt, startet mit 422 — sichtbar
+        erst beim Klick, und der Grund steht nicht auf der Karte."""
+        from api.routes.jobs import RUNNABLE, RunRequest
+
+        for key in RUNNABLE:
+            RunRequest(job=key)
+
 
 class TestMissingRequirements:
     """Was fehlt, muss *vor* dem Start gesagt werden.
@@ -275,6 +308,32 @@ class TestMissingRequirements:
         spec = Runnable(module="x", label="X", note="", kind="x",
                         needs_models=("da:7b",))
         assert missing_requirements(spec, models={"da:7b"}) == ""
+
+    def test_ingest_without_a_sources_file_is_blocked(self, tmp_path, monkeypatch):
+        """Sonst sagt die Oberfläche „gestartet“, und der Lauf stirbt an
+        „Weder --source noch --sources-file“ — nur im Protokoll."""
+        from api.routes import jobs as jobs_mod
+
+        monkeypatch.setenv("PHOTOVAULT_SOURCES", str(tmp_path / "fehlt.txt"))
+        msg = jobs_mod.missing_requirements(jobs_mod.RUNNABLE["ingest"], models=set())
+        assert "sources.txt" in msg
+
+    def test_ingest_without_an_enabled_folder_is_blocked(self, tmp_path, monkeypatch):
+        from api.routes import jobs as jobs_mod
+
+        src = tmp_path / "sources.txt"
+        src.write_text("# /mnt/photo/Urlaub\n", encoding="utf-8")
+        monkeypatch.setenv("PHOTOVAULT_SOURCES", str(src))
+        msg = jobs_mod.missing_requirements(jobs_mod.RUNNABLE["ingest"], models=set())
+        assert "aktive Quelle" in msg
+
+    def test_ingest_with_an_enabled_folder_is_ready(self, tmp_path, monkeypatch):
+        from api.routes import jobs as jobs_mod
+
+        src = tmp_path / "sources.txt"
+        src.write_text("/mnt/photo/Urlaub\n", encoding="utf-8")
+        monkeypatch.setenv("PHOTOVAULT_SOURCES", str(src))
+        assert jobs_mod.missing_requirements(jobs_mod.RUNNABLE["ingest"], models=set()) == ""
 
     def test_a_missing_package_is_reported_before_ollama(self):
         """Erst das, was ohne Netz feststellbar ist -- sonst wartet die

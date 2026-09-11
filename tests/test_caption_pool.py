@@ -8,6 +8,13 @@ import pytest
 from ingest.captioner import Captioner, jpeg_b64, run_captions
 
 
+@pytest.fixture(autouse=True)
+def _ohne_litellm(monkeypatch):
+    """Bestehende Tests beschreiben den Ollama-Fallback, nicht den Pool."""
+    monkeypatch.delenv("LITELLM_URL", raising=False)
+    monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
+
+
 class _Rec:
     def __init__(self, path):
         self.file_path = path
@@ -189,3 +196,80 @@ def test_warmup_follows_the_same_rule(monkeypatch):
     IngestPipeline(IngestConfig(source="/x"))._warm_caption_model()
     assert "num_ctx" not in calls[0]["options"]
     assert calls[0]["options"]["num_predict"] == 1
+
+
+def test_captioner_goes_through_litellm_chat(monkeypatch):
+    """Captions sind ein Pool-Alias. Das Gewicht steht nur in LiteLLM."""
+    sent = {}
+
+    def fake_post(url, payload, timeout=180, headers=None):
+        sent["url"] = url
+        sent["payload"] = payload
+        sent["headers"] = headers or {}
+        return {"choices": [{"message": {"content":
+            '{"caption_de": "hallo", "scene_tags": []}'}}]}
+
+    monkeypatch.setattr("ingest.captioner.litellm_url", lambda: "http://127.0.0.1:4000")
+    monkeypatch.setattr("ingest.captioner.litellm_headers",
+                        lambda: {"Authorization": "Bearer sk-test"})
+    monkeypatch.setattr("ingest.captioner.post_json", fake_post)
+    result = Captioner(model="local").caption_structured(
+        "/nix.jpg", {}, image_b64="AAAA",
+    )
+    assert result["caption_de"] == "hallo"
+    assert sent["url"] == "http://127.0.0.1:4000/v1/chat/completions"
+    assert sent["payload"]["model"] == "local"
+    assert sent["headers"]["Authorization"] == "Bearer sk-test"
+    parts = sent["payload"]["messages"][0]["content"]
+    assert parts[0]["type"] == "text"
+    assert parts[1]["image_url"]["url"] == "data:image/jpeg;base64,AAAA"
+    assert "num_ctx" not in sent["payload"]
+
+
+def test_embedder_goes_through_litellm(monkeypatch):
+    from ingest.text_embedder import TextEmbedder
+    from ingest.ollama_client import TEXT_VECTOR_SIZE
+
+    sent = {}
+    vec = [0.1] * TEXT_VECTOR_SIZE
+
+    def fake_post(url, payload, timeout=60, headers=None):
+        sent["url"] = url
+        sent["payload"] = payload
+        return {"data": [{"index": 0, "embedding": vec}]}
+
+    monkeypatch.setattr("ingest.text_embedder.litellm_url", lambda: "http://127.0.0.1:4000")
+    monkeypatch.setattr("ingest.text_embedder.litellm_headers", lambda: {})
+    monkeypatch.setattr("ingest.text_embedder.post_json", fake_post)
+    out = TextEmbedder(model="embedder").embed("ok")
+    assert out == vec
+    assert sent["url"] == "http://127.0.0.1:4000/v1/embeddings"
+    assert sent["payload"]["model"] == "embedder"
+
+
+def test_warmup_via_litellm_pins_caption_and_embedder(monkeypatch):
+    from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL
+    from ingest.pipeline import IngestConfig, IngestPipeline
+
+    calls = []
+
+    def fake_post(url, payload, timeout=180, headers=None):
+        calls.append((url, payload))
+        return {}
+
+    monkeypatch.setattr("ingest.ollama_client.litellm_url", lambda: "http://127.0.0.1:4000")
+    monkeypatch.setattr("ingest.ollama_client.post_json", fake_post)
+    IngestPipeline(IngestConfig(source="/x"))._warm_caption_model()
+    assert calls[0][0].endswith("/v1/chat/completions")
+    assert calls[1][0].endswith("/v1/embeddings")
+    assert calls[0][1]["model"] == CAPTION_MODEL
+    assert calls[1][1]["model"] == EMBED_MODEL
+    assert "num_ctx" not in calls[0][1]
+
+
+def test_env_file_value_strips_quotes(tmp_path):
+    from ingest.ollama_client import _env_file_value
+
+    p = tmp_path / ".env"
+    p.write_text('LITELLM_MASTER_KEY="sk-x"\n', encoding="utf-8")
+    assert _env_file_value(p, "LITELLM_MASTER_KEY") == "sk-x"

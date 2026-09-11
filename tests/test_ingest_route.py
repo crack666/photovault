@@ -69,6 +69,7 @@ def _kein_netz(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ingest_route, "client", _qdrant)
     monkeypatch.setattr(cap, "ollama_models", _ollama_aus)
+    monkeypatch.setattr(cap, "litellm_url", lambda: "")
     monkeypatch.setattr(cap, "_accelerator", lambda: {"onnxruntime_providers": [], "cuda": False})
     monkeypatch.setattr(cap, "_cache", (0.0, {}))
     monkeypatch.setattr(cap, "ATLAS_FILE", tmp_path / "atlas.json")
@@ -366,7 +367,7 @@ class TestMerkmalsrechnung:
         _ollama(monkeypatch, (cap.CAPTION_MODEL,))
         why = capabilities_route()["features"]["freetext"]["why"]
         assert cap.EMBED_MODEL in why
-        assert "ollama pull" in why
+        assert "LiteLLM" in why
 
     def test_ausgefallenes_merkmal_sagt_label_grund_und_verlust(self, monkeypatch):
         """Die drei zusammen sind die Auskunft: wie es heisst, warum es fehlt,

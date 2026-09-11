@@ -1,4 +1,12 @@
+import pytest
+
 from ingest.captioner import _parse_json, build_caption_prompt, unwrap_caption
+
+
+@pytest.fixture(autouse=True)
+def _ohne_litellm(monkeypatch):
+    monkeypatch.delenv("LITELLM_URL", raising=False)
+    monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
 
 
 def test_parse_json_object():

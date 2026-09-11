@@ -23,7 +23,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.capabilities import UNCHECKED, missing, ollama_models
+from api.capabilities import UNCHECKED, llm_models, missing
 from api.qdrant_util import client
 from ingest.jobs import COLLECTION, list_jobs
 from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL
@@ -63,23 +63,71 @@ class Runnable(BaseModel):
     needs_models: tuple[str, ...] = ()
     #: Was zu tun ist, wenn etwas fehlt.
     hint: str = ""
+    #: Der Lauf liest `sources.txt` (PHOTOVAULT_SOURCES). Ohne aktive Quelle
+    #: waere „gestartet" wieder eine Behauptung ohne Deckung.
+    needs_sources: bool = False
+
+
+def sources_path() -> Path:
+    """Dieselbe Datei, die die Haken unter den Knoepfen bearbeiten."""
+    raw = os.environ.get("PHOTOVAULT_SOURCES", "sources.txt")
+    p = Path(raw)
+    return p if p.is_absolute() else ROOT / p
+
+
+def sources_ready() -> str:
+    """Warum Einlesen jetzt nicht geht — oder leer, wenn es geht."""
+    path = sources_path()
+    if not path.is_file():
+        return (f"Keine sources.txt ({path}). Unten einen Ordner als Quelle "
+                "hinzufügen.")
+    try:
+        from ingest import sources as src
+
+        book = src.read(str(path))
+    except Exception as e:
+        return f"sources.txt nicht lesbar: {e}"
+    if not any(e.enabled and not e.exclude for e in book.entries):
+        return "Keine aktive Quelle. Unten mindestens einen Ordner anhaken."
+    return ""
 
 
 RUNNABLE: dict[str, Runnable] = {
+    "ingest": Runnable(
+        module="ingest.pipeline", kind="ingest", gpu=True,
+        argv=("--skip-caption",),
+        flags=("dry_run", "limit"),
+        needs_sources=True,
+        hint="Unten die Ordner als Quelle anhaken.",
+        label="Neue Dateien einlesen",
+        note="Ordner unten, nur was noch nicht im Index liegt. Fotos: Gesichter "
+             "und CLIP. Videos: nur Poster. Beschreibungen und Video-Gesichter "
+             "sind die Läufe daneben — dazwischen Namen unter Wer ist das?",
+    ),
+    "faces": Runnable(
+        module="ingest.face_pass", kind="faces", gpu=True,
+        argv=("--kind", "video"),
+        flags=("dry_run", "limit"),
+        hint="insightface auf der Grafikkarte. Nicht zusammen mit Captions oder Embeddings.",
+        label="Gesichter in Videos finden",
+        note="Nach dem Einlesen. ffmpeg holt Frames parallel in den Speicher, "
+             "insightface läuft auf einem Thread — Namen vergibt niemand still.",
+    ),
     "caption": Runnable(
         module="ingest.caption_pass", kind="caption", gpu=True,
         flags=("dry_run", "limit"),
         needs_models=(CAPTION_MODEL,),
-        hint=f"Ollama starten und `ollama pull {CAPTION_MODEL}`. "
-             "Ohne Ollama funktioniert alles außer den Beschreibungen.",
+        hint=f"LiteLLM starten; Pool `{CAPTION_MODEL}` muss in der Config stehen. "
+             "Ohne den Pool funktionieren alle anderen Funktionen weiter.",
         label="Bildbeschreibungen erzeugen",
-        note="Vision-Modell über alle Fotos ohne Beschreibung. Stunden, nicht Minuten.",
+        note="Erst wenn die Namen sitzen. Vision-Modell über Medien ohne "
+             "Beschreibung. Stunden, nicht Minuten.",
     ),
     "reembed": Runnable(
         module="tools.reembed_all", kind="reembed", gpu=True,
         flags=("dry_run", "limit"),
         needs_models=(EMBED_MODEL,),
-        hint=f"Ollama starten und `ollama pull {EMBED_MODEL}`.",
+        hint=f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
         label="Text-Vektoren neu bauen",
         note="Nach neuen Captions, Namen, Notizen — oder wenn sich die Regel geändert hat.",
     ),
@@ -118,10 +166,15 @@ def missing_requirements(spec: Runnable, models: Any = UNCHECKED) -> str:
     Oberfläche fragt. Zwei Wahrheiten darüber, was diese Installation kann,
     wären eine zu viel.
     """
-    return missing(
+    blocked = missing(
         modules=spec.needs_modules, models=spec.needs_models,
         hint=spec.hint, have_models=models,
     )
+    if blocked:
+        return blocked
+    if spec.needs_sources:
+        return sources_ready()
+    return ""
 
 
 @router.get("")
@@ -152,7 +205,7 @@ def all_jobs(limit: int = 20, offset: int = 0, kind: Optional[str] = None) -> di
 
 
 def _runnable_state(running: list[dict]) -> list[dict]:
-    models = ollama_models() if any(r.needs_models for r in RUNNABLE.values()) else None
+    models = llm_models() if any(r.needs_models for r in RUNNABLE.values()) else None
     out = []
     for key, r in RUNNABLE.items():
         blocked = missing_requirements(r, models)
@@ -323,7 +376,7 @@ def prune_jobs(req: PruneRequest) -> dict:
 
 
 class RunRequest(BaseModel):
-    job: Literal["caption", "reembed", "atlas"]
+    job: Literal["ingest", "faces", "caption", "reembed", "thumbs", "atlas"]
     #: Trockenlauf, wo das Werkzeug einen anbietet -- zählt und schätzt, schreibt nichts.
     dry_run: bool = False
     #: Obergrenze, um in Häppchen zu arbeiten.
@@ -339,6 +392,8 @@ def build_argv(spec: Runnable, *, dry_run: bool, limit: Optional[int]) -> list[s
     Start unerklaerlich, mit dem Fehler im Protokoll statt in der Antwort.
     """
     argv = [sys.executable, "-m", spec.module, *spec.argv]
+    if spec.needs_sources:
+        argv += ["--sources-file", str(sources_path())]
     if dry_run and "dry_run" in spec.flags:
         argv.append("--dry-run")
     if limit and "limit" in spec.flags:

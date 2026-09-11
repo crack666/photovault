@@ -147,3 +147,17 @@ def poster_image(file_path: str, duration: float | None = None):
 
     data = poster_jpeg(file_path, duration)
     return Image.open(BytesIO(data))
+
+
+def frame_image(file_path: str, ss: float = 0.0):
+    """Einzelbild als PIL -- fuer Gesichter auf dem Frame, das sie zeigt."""
+    from PIL import Image
+
+    return Image.open(BytesIO(frame_jpeg(file_path, ss)))
+
+
+def sample_images(file_path: str, duration: float | None = None) -> list[tuple[float, Any]]:
+    """Anfang/Mitte/Ende als (Zeitpunkt, PIL) -- Originale bleiben unangetastet."""
+    if duration is None:
+        duration = probe(file_path).get("duration")
+    return [(ss, frame_image(file_path, ss)) for ss in sample_offsets(duration)]

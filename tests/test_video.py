@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ingest.video import have_ffmpeg, poster_image, probe, sample_jpegs
+from ingest.video import have_ffmpeg, poster_image, probe, sample_images, sample_jpegs, frame_image
 
 pytestmark = pytest.mark.skipif(not have_ffmpeg(), reason="ffmpeg fehlt")
 
@@ -48,3 +48,18 @@ def test_longer_clip_yields_three_caption_jpegs(tmp_path):
     frames = sample_jpegs(str(clip))
     assert len(frames) == 3
     assert all(f[:2] == b"\xff\xd8" for f in frames)
+
+
+def test_frame_image_is_a_pil_at_the_asked_offset(tmp_path):
+    clip = _clip(tmp_path / "f.mp4", seconds=4.0)
+    img = frame_image(str(clip), 1.2)
+    assert img.size[0] > 0 and img.size[1] > 0
+
+
+def test_sample_images_carry_their_offset(tmp_path):
+    clip = _clip(tmp_path / "s.mp4", seconds=4.0)
+    frames = sample_images(str(clip))
+    assert len(frames) == 3
+    offsets = [ss for ss, _img in frames]
+    assert offsets == sorted(offsets)
+    assert len(set(offsets)) == 3

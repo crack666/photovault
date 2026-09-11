@@ -164,6 +164,7 @@ def get_thumb(
     pad: float = 0.35,
     image=None,
     content_hash: str | None = None,
+    extra: str | None = None,
 ) -> bytes:
     """JPEG liefern; beim ersten Mal erzeugen. `box` schneidet ein Gesicht aus.
 
@@ -171,12 +172,12 @@ def get_thumb(
     statt die Datei ein weiteres Mal zu dekodieren.
     """
     data, _warn = make_thumb(file_path, size=size, box=box, pad=pad, image=image,
-                             content_hash=content_hash)
+                             content_hash=content_hash, extra=extra)
     return data
 
 
 def cache_keys(file_path: str, box=None, pad: float = 0.35,
-               content_hash: str | None = None) -> tuple[str, list[str]]:
+               content_hash: str | None = None, extra: str | None = None) -> tuple[str, list[str]]:
     """(Schluessel zum Schreiben, Schluessel zum Suchen).
 
     Geschrieben wird unter dem Inhalts-Hash, sobald er bekannt ist -- gleiche
@@ -185,9 +186,13 @@ def cache_keys(file_path: str, box=None, pad: float = 0.35,
     aus der Zeit davor liegen.
 
     Der Zuschnitt eines Gesichts haengt am Kasten, nicht nur am Bild --
-    deshalb geht er in beide Schluessel ein.
+    deshalb geht er in beide Schluessel ein. Bei Videos kommt der Zeitpunkt
+    des Frames dazu, sonst träfe der Zuschnitt das Poster statt das Bild,
+    auf dem das Gesicht wirklich saß.
     """
     zusatz = f"|{box}|{pad}" if box else ""
+    if extra:
+        zusatz += f"|{extra}"
     pfad_key = f"{file_path}{zusatz}"
     if not content_hash:
         return pfad_key, [pfad_key]
@@ -202,10 +207,11 @@ def make_thumb(
     pad: float = 0.35,
     image=None,
     content_hash: str | None = None,
+    extra: str | None = None,
 ) -> tuple[bytes, str | None]:
     """Wie get_thumb, plus Warnung wenn die Datei unvollständig oder unlesbar ist."""
     size = normalize_size(size)
-    key, suchen = cache_keys(file_path, box, pad, content_hash)
+    key, suchen = cache_keys(file_path, box, pad, content_hash, extra=extra)
     vorhanden = _find_cached(suchen, size)
     if vorhanden is not None:
         try:

@@ -36,7 +36,7 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       LITELLM_URL: ${LITELLM_URL:-http://host.docker.internal:4000}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
-      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-qwen3.8:27b-ctx8k}
+      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-local}
       PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-embedder}
       MODEL_DIR: /models
     extra_hosts:

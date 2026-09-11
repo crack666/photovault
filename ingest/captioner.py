@@ -12,7 +12,14 @@ import logging
 import re
 from typing import Any
 
-from ingest.ollama_client import CAPTION_MODEL, CAPTION_NUM_CTX, ollama_url, post_json
+from ingest.ollama_client import (
+    CAPTION_MODEL,
+    CAPTION_NUM_CTX,
+    litellm_headers,
+    litellm_url,
+    ollama_url,
+    post_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +237,11 @@ class Captioner:
         self._url = ollama_url(ollama)
         self._model = model
         self._num_ctx = num_ctx
+        pool = litellm_url()
+        if pool:
+            logger.info("Captions via LiteLLM %s model=%s", pool, self._model)
+        else:
+            logger.info("Captions via Ollama %s model=%s", self._url, self._model)
 
     def caption(self, file_path: str, context: dict[str, Any] | None = None) -> str | None:
         result = self.caption_structured(file_path, context)
@@ -261,22 +273,7 @@ class Captioner:
                 images = [jpeg_b64(file_path)]
             if not images:
                 return None
-            payload = {
-                "model": self._model,
-                "stream": False,
-                "think": False,
-                "format": "json",
-                "options": caption_options(self._num_ctx),
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": build_caption_prompt(context),
-                        "images": images,
-                    }
-                ],
-            }
-            resp = post_json(f"{self._url}/api/chat", payload, timeout=180)
-            raw = ((resp.get("message") or {}).get("content") or "").strip()
+            raw = self._complete(build_caption_prompt(context), images)
             if not raw:
                 return None
             parsed = _parse_json(raw)
@@ -297,6 +294,58 @@ class Captioner:
         except Exception as e:
             logger.warning("Captioning failed for %s: %s", file_path, e)
             return None
+
+    def _complete(self, prompt: str, images: list[str]) -> str:
+        """LiteLLM `/v1/chat/completions`, sonst Ollama `/api/chat`.
+
+        Das Modell ist ein Pool-Alias (`local`). Welches Gewicht haengt, steht
+        nur in der LiteLLM-Config -- PhotoVault schickt keinen Ollama-Tag.
+        """
+        pool = litellm_url()
+        if pool:
+            return _content_from_openai(self._via_litellm(pool, prompt, images))
+        return _content_from_ollama(self._via_ollama(prompt, images))
+
+    def _via_litellm(self, pool: str, prompt: str, images: list[str]) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for blob in images:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{blob}"},
+            })
+        options = caption_options(self._num_ctx)
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": options.get("temperature", 0.2),
+            "max_tokens": options.get("num_predict", CAPTION_NUM_PREDICT),
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        return post_json(
+            f"{pool}/v1/chat/completions",
+            payload,
+            timeout=180,
+            headers=litellm_headers(),
+        )
+
+    def _via_ollama(self, prompt: str, images: list[str]) -> dict[str, Any]:
+        return post_json(
+            f"{self._url}/api/chat",
+            {
+                "model": self._model,
+                "stream": False,
+                "think": False,
+                "format": "json",
+                "options": caption_options(self._num_ctx),
+                "messages": [{
+                    "role": "user",
+                    "content": prompt,
+                    "images": images,
+                }],
+            },
+            timeout=180,
+        )
 
 
 def jpeg_b64(file_path: str, image=None, max_side: int = 1024) -> str:
@@ -320,6 +369,17 @@ def jpeg_b64(file_path: str, image=None, max_side: int = 1024) -> str:
 
 #: Alter Name, bis nichts mehr darauf zeigt.
 _jpeg_b64 = jpeg_b64
+
+
+def _content_from_openai(resp: dict[str, Any]) -> str:
+    choices = resp.get("choices") or []
+    if not choices:
+        return ""
+    return str(((choices[0].get("message") or {}).get("content") or "")).strip()
+
+
+def _content_from_ollama(resp: dict[str, Any]) -> str:
+    return str(((resp.get("message") or {}).get("content") or "")).strip()
 
 
 def _parse_json(raw: str) -> dict[str, Any] | None:

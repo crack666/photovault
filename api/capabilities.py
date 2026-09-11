@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, ollama_url
+from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, litellm_headers, litellm_url, ollama_url
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,24 @@ def ollama_models() -> Optional[set[str]]:
     return {str(m.get("name") or "") for m in data.get("models", [])}
 
 
+def llm_models() -> Optional[set[str]]:
+    """Pool-Aliase bei LiteLLM, sonst Ollama-Tags.
+
+    PhotoVault kennt `local` und `embedder`. Ob dahinter ctx8k oder ein
+    anderes Gewicht haengt, sieht nur der Proxy.
+    """
+    pool = litellm_url()
+    if not pool:
+        return ollama_models()
+    try:
+        req = urllib.request.Request(f"{pool}/v1/models", headers=litellm_headers())
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        return None
+    return {str(m.get("id") or "") for m in data.get("data", [])}
+
+
 def missing(
     modules: tuple[str, ...] = (),
     models: tuple[str, ...] = (),
@@ -72,9 +90,10 @@ def missing(
     if gone:
         return f"{', '.join(gone)} nicht installiert. {hint}".strip()
     if models:
-        pool = ollama_models() if have_models is UNCHECKED else have_models
+        pool = llm_models() if have_models is UNCHECKED else have_models
         if pool is None:
-            return f"Ollama nicht erreichbar ({ollama_url()}). {hint}".strip()
+            target = litellm_url() or ollama_url()
+            return f"LLM-Pool nicht erreichbar ({target}). {hint}".strip()
         absent = [m for m in models if m not in pool]
         if absent:
             return f"Modell fehlt: {', '.join(absent)}. {hint}".strip()
@@ -87,21 +106,21 @@ FEATURES: dict[str, dict] = {
     "freetext": {
         "label": "Freitextsuche",
         "models": (EMBED_MODEL,),
-        "hint": f"Ollama starten und `ollama pull {EMBED_MODEL}`.",
+        "hint": f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
         "lost": "Suche nach Personen, Jahr, Ort, Album und Tags funktioniert weiter — "
                 "nur das Sortieren nach einem getippten Satz nicht.",
     },
     "captions": {
         "label": "Bildbeschreibungen",
         "models": (CAPTION_MODEL,),
-        "hint": f"Ollama starten und `ollama pull {CAPTION_MODEL}`.",
+        "hint": f"LiteLLM starten; Pool `{CAPTION_MODEL}` muss in der Config stehen.",
         "lost": "Die Kontinente der Karte tragen dann ihre Szenen-Tags als Namen "
                 "statt der Beschreibungen.",
     },
     "reembed": {
         "label": "Text-Vektoren neu rechnen",
         "models": (EMBED_MODEL,),
-        "hint": f"Ollama starten und `ollama pull {EMBED_MODEL}`.",
+        "hint": f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
         "lost": "Notizen und Beschreibungen greifen trotzdem als Filter — nur in der "
                 "Rangfolge der Freitextsuche nicht.",
     },
@@ -121,7 +140,7 @@ def snapshot() -> dict:
     if cached and now - stamp < TTL_SECONDS:
         return cached
 
-    pool = ollama_models()
+    pool = llm_models()
     features = {}
     for key, spec in FEATURES.items():
         why = missing(
@@ -158,7 +177,7 @@ def snapshot() -> dict:
     }
 
     state = {
-        "ollama": {"url": ollama_url(), "reachable": pool is not None,
+        "ollama": {"url": litellm_url() or ollama_url(), "reachable": pool is not None,
                    "models": sorted(pool) if pool else []},
         "accelerator": _accelerator(),
         "features": features,
