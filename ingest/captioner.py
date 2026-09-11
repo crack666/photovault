@@ -313,6 +313,26 @@ class Captioner:
             logger.warning("Captioning failed for %s: %s", file_path, e)
             return None
 
+    def ask_json(self, prompt: str) -> dict[str, Any] | None:
+        """Eine Textfrage, eine JSON-Antwort -- ohne Bild.
+
+        Fuer Aufgaben, die das Sprachmodell hinter den Captions auch ohne
+        Bild loesen kann, etwa Kontinente benennen. Nutzt denselben Weg wie
+        die Captions (Pool oder Ollama, `think` aus, JSON-Format), damit es
+        eine einzige Stelle gibt, die weiss, wie das Modell erreicht wird.
+
+        `None` bei jedem Fehler: der Aufrufer hat immer einen Rueckfall, und
+        eine Karte ohne Titel ist besser als keine Karte.
+        """
+        try:
+            raw = self._complete(prompt, [])
+        except Exception as e:
+            logger.warning("Textanfrage fehlgeschlagen: %s", e)
+            return None
+        if not raw:
+            return None
+        return _parse_json(raw)
+
     def _complete(self, prompt: str, images: list[str]) -> str:
         """LiteLLM `/v1/chat/completions`, sonst Ollama `/api/chat`.
 

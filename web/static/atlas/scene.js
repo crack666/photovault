@@ -2018,6 +2018,15 @@ export function createScene(canvas, model, hooks = {}) {
       layout = name;
       toX = model.layouts[name].x;
       toY = model.layouts[name].y;
+      /* Die Themen-Anordnung bringt ihre eigenen Kontinente mit. Der Satz
+         wird am Modell getauscht, damit alle Leser von `model.cl` den
+         richtigen sehen -- und die Farbeimer muessen neu, weil die Farbe
+         am Kontinent haengt. */
+      const wanted = model.layouts[name].clusterSet || "bedeutung";
+      if (wanted !== model.clusterSetName) {
+        model.useClusterSet(wanted);
+        rebuildBuckets();
+      }
       mix = 0;
       mixStart = performance.now();
       schedule();

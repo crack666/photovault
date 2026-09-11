@@ -15,13 +15,18 @@ import { showLightbox } from "../lightbox/index.js";
 import {
   COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
   personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
-  spaceCounts, tagCounts, tidiness, visibleMask,
+  spaceCounts, tagCounts, termsOf, tidiness, visibleMask,
 } from "./model.js";
 import { createScene } from "./scene.js";
 
 const LENSES = [
   { id: "bedeutung", label: "Bedeutung", hint: "Nähe heißt: sieht sich ähnlich" },
   { id: "zeit", label: "Zeit × Bedeutung", hint: "waagerecht die Jahre, senkrecht dieselbe Bedeutungsachse" },
+  /* Nur, wenn der Bau sie mitgeliefert hat (`themes` in atlas.json). Die
+     Themen-Anordnung hat ihre eigenen Kontinente -- Schubladen nach dem,
+     was die Beschreibungen sagen, nicht nach dem, wie die Bilder aussehen. */
+  { id: "themen", label: "Themen", hint: "Nähe heißt: wird ähnlich beschrieben — Schubladen statt Bildstile",
+    needs: (m) => Boolean(m.layouts.themen) },
 ];
 
 /* Wie die Vorschaubilder auf das Fenster verteilt werden.
@@ -399,7 +404,8 @@ function watchBarHeight() {
 /* ---- Werkzeugleiste ---------------------------------------------------- */
 
 function buildToolbar() {
-  $("atlas-lenses").innerHTML = LENSES.map((l, i) =>
+  const lenses = LENSES.filter((l) => !l.needs || l.needs(model));
+  $("atlas-lenses").innerHTML = lenses.map((l, i) =>
     `<button class="chip${i === 0 ? " on" : ""}" data-lens="${l.id}" title="${escapeHtml(l.hint)}">${l.label}</button>`
   ).join("");
   $("atlas-lenses").onclick = (e) => {
@@ -407,6 +413,10 @@ function buildToolbar() {
     if (!b) return;
     $("atlas-lenses").querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === b));
     scene.setLayout(b.dataset.lens);
+    // Die Themen bringen andere Kontinente mit -- alles, was deren Namen
+    // einmal in den DOM geschrieben hat, muss neu.
+    buildJump();
+    renderFooter();
   };
 
   $("atlas-levels").innerHTML =
@@ -507,12 +517,9 @@ function buildToolbar() {
 
   buildControls();
 
-  const jump = $("atlas-jump");
-  jump.innerHTML = "<option value=''>Kontinent anfliegen …</option>" +
-    [...model.clusters].sort((a, b) => b.n - a.n).map((c) =>
-      `<option value="${c.i}">${escapeHtml(model.clusterLabel[c.i])} — ${num(c.n)}</option>`
-    ).join("");
-  jump.onchange = () => {
+  buildJump();
+  $("atlas-jump").onchange = () => {
+    const jump = $("atlas-jump");
     const c = model.clusters[Number(jump.value)];
     if (!c) return;
     scene.focusCluster(c);
@@ -557,8 +564,23 @@ function buildToolbar() {
     paintSelection();
   };
 
+  renderFooter();
+}
+
+/** Die Sprungliste -- je nach Anordnung Kontinente oder Schubladen. */
+function buildJump() {
+  const jump = $("atlas-jump");
+  const was = model.clusterSetName === "themen" ? "Schublade" : "Kontinent";
+  jump.innerHTML = `<option value=''>${was} anfliegen …</option>` +
+    [...model.clusters].filter((c) => c.n > 0).sort((a, b) => b.n - a.n).map((c) =>
+      `<option value="${c.i}">${escapeHtml(model.clusterLabel[c.i])} — ${num(c.n)}</option>`
+    ).join("");
+}
+
+function renderFooter() {
+  const was = model.clusterSetName === "themen" ? "Schubladen" : "Kontinente";
   $("atlas-built").textContent =
-    `${num(model.n)} Fotos · ${model.clusters.length} Kontinente · ${model.space.toUpperCase()} · ${model.builtAt.slice(0, 10)}`;
+    `${num(model.n)} Fotos · ${model.clusters.length} ${was} · ${model.space.toUpperCase()} · ${model.builtAt.slice(0, 10)}`;
 }
 
 /* ---- Regler -----------------------------------------------------------
@@ -853,6 +875,7 @@ function showHover(i, sx, sy) {
       <img src="${thumbUrl(model.ids[i], 160)}" alt="">
       <div>
         <b>${escapeHtml(model.clusterLabel[c.i])}</b>
+        ${c.title ? `<span class="muted">${escapeHtml(termsOf(c))}</span>` : ""}
         ${wer.length ? `<span class="who">${escapeHtml(wer.join(", "))}</span>` : ""}
         <span>${model.year[i] > 0 ? model.year[i] : "ohne Datum"} · ${escapeHtml(model.channels[model.ch[i]])}</span>
         <span class="muted">${stateWords(model.fl[i])}${stack ? " · im Stapel" : ""}</span>
