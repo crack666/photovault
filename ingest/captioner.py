@@ -29,37 +29,55 @@ JSON_SCHEMA = (
 )
 
 
-#: Obergrenze fuer `scene_tags`. CLIP liefert ~4, das LLM bis 8 -- 16 laesst
-#: Luft und deckelt zugleich das Wachstum bei wiederholten Caption-Laeufen.
+#: Obergrenze fuer `scene_tags`. Das LLM liefert bis 8; 16 laesst Luft fuer
+#: den Fall, dass einmal mehr kommt, ohne dass die Liste ins Unermessliche
+#: waechst.
 MAX_TAGS = 16
 
 #: Tokens fuer die JSON-Antwort. Darunter bricht der Rahmen mitten im Satz ab.
 CAPTION_NUM_PREDICT = 512
 
 
-def merge_tags(existing: list[str], extra: list[str], limit: int = MAX_TAGS) -> list[str]:
-    """CLIP-Tags und LLM-Tags zusammenfuehren, ohne Dubletten.
+def fold_tag(tag: str) -> str:
+    """Umlautgefaltet und kleingeschrieben -- der Vergleichsschluessel.
 
-    Naiv verglichen stehen hinterher `getraenke` (CLIP-Label, ASCII) und
-    `getränke` (LLM, echtes Deutsch) nebeneinander im Payload und blaehen
-    Filterlisten auf. Verglichen wird deshalb umlautgefaltet; behalten wird die
-    Schreibweise, die zuerst da war.
-
-    Das Limit deckelt das Wachstum: der Caption-Lauf ist auf Wiederholung
-    ausgelegt, und ohne Grenze legt jeder Durchlauf ein paar neue Formulierungen
-    obendrauf.
+    `getraenke` (CLIP-Label, ASCII) und `getränke` (LLM, echtes Deutsch) sind
+    ein Etikett, nicht zwei. Sonst stehen beide im Payload und blaehen jede
+    Filterliste auf.
     """
-    def fold(tag: str) -> str:
-        t = tag.strip().lower()
-        for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
-            t = t.replace(a, b)
-        return t.replace("-", " ").replace("_", " ")
+    t = (tag or "").strip().lower()
+    for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        t = t.replace(a, b)
+    return t.replace("-", " ").replace("_", " ")
 
-    out = list(existing)
-    seen = {fold(t) for t in out}
-    for tag in extra:
+
+def merge_tags(existing: list[str], extra: list[str], limit: int = MAX_TAGS) -> list[str]:
+    """Die Etiketten aus der Beschreibung gewinnen; CLIP ist der Rueckfall.
+
+    `existing` sind die CLIP-Etiketten (oder der letzte Stand), `extra` die
+    aus der Bildbeschreibung. Bis hierher wurden beide zusammengelegt, CLIP
+    vorn. Nachgemessen an 400 Fotos war das falsch herum: CLIP raet ueber 44
+    feste Begriffe, und selbst im obersten Aehnlichkeitsband -- vier Prozent
+    des Bestands -- stimmte nur jeder vierte Spitzenbegriff. Ein Wundfoto
+    trug `radfahren, skifahren, screenshot, hund, kinder` *vor* den sechs
+    richtigen Etiketten aus der Beschreibung, und war unter "skifahren"
+    filterbar. Eine Schwelle rettet das nicht: die Kosinus-Verteilung der
+    richtigen und der falschen Treffer liegt fast deckungsgleich.
+
+    Deshalb: kommen Etiketten aus der Beschreibung, sind sie das Ergebnis.
+    Kommen keine -- kein Vision-Modell, keine Grafikkarte, Antwort ohne
+    Etiketten --, bleiben die groben CLIP-Etiketten stehen. Grob ist besser
+    als nichts, aber nicht besser als richtig.
+
+    Dubletten innerhalb der Liste fallen umlautgefaltet zusammen; behalten
+    wird die zuerst genannte Schreibweise.
+    """
+    quelle = extra if any((t or "").strip() for t in extra) else existing
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in quelle:
         tag = (tag or "").strip()
-        key = fold(tag)
+        key = fold_tag(tag)
         if not key or key in seen:
             continue
         seen.add(key)

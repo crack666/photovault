@@ -257,13 +257,19 @@ def test_run_writes_exif_after_the_index(wired, monkeypatch):
     assert client.set_payload_calls, "Index kommt vor der Datei"
 
 
-def test_llm_tags_are_merged_not_replaced(wired, monkeypatch):
+def test_llm_tags_replace_clip_tags(wired, monkeypatch):
+    """Dieser Test hiess `test_llm_tags_are_merged_not_replaced` und legte
+    das Gegenteil fest. Die Umkehr ist gemessen: an 400 Fotos stimmte selbst
+    im obersten Aehnlichkeitsband nur jeder vierte CLIP-Spitzenbegriff, und
+    zusammengelegt standen die falschen vor den richtigen. Die vorhandenen
+    `party, nacht` sind CLIP-Etiketten; kommt `fest` aus der Beschreibung,
+    ist `fest` das Ergebnis."""
     client = FakeClient([_Point(0, _payload(scene_tags=["party", "nacht"]))])
     monkeypatch.setattr(caption_pass, "rebuild_text_vectors",
                         lambda *a, **kw: {"updated": 1})
     caption_pass.run(client, workers=1, io_workers=1, track=False)
     tags = client.set_payload_calls[0]["payload"]["scene_tags"]
-    assert tags == ["party", "nacht", "fest"]
+    assert tags == ["fest"]
 
 
 def test_unreadable_photo_is_counted_and_skipped(wired, monkeypatch):
@@ -371,17 +377,40 @@ def test_caption_options_respect_the_caller():
 # --------------------------------------------------------------------------
 
 def test_merge_tags_folds_umlauts():
-    """CLIP liefert `getraenke`, das LLM `getränke` — das ist ein Tag, nicht zwei."""
+    """CLIP liefert `getraenke`, das LLM `getränke` — das ist ein Tag, nicht zwei.
+
+    Behalten wird jetzt die Schreibweise aus der Beschreibung: echtes Deutsch
+    statt des ASCII-Labels. Vorher gewann `getraenke`, nur weil es zuerst da
+    war.
+    """
     from ingest.captioner import merge_tags
 
-    assert merge_tags(["getraenke"], ["getränke"]) == ["getraenke"]
-    assert merge_tags(["gruene-waende"], ["grüne wände"]) == ["gruene-waende"]
+    assert merge_tags(["getraenke"], ["getränke"]) == ["getränke"]
+    assert merge_tags(["gruene-waende"], ["grüne wände"]) == ["grüne wände"]
+    # Dubletten innerhalb der Beschreibung fallen ebenfalls zusammen.
+    assert merge_tags([], ["Getränke", "getraenke", "bier"]) == ["Getränke", "bier"]
 
 
-def test_merge_tags_keeps_genuinely_new_ones_in_order():
+def test_beschreibung_gewinnt_ueber_clip():
+    """Das Wundfoto: CLIP riet `radfahren, skifahren, screenshot, hund,
+    kinder`, die Beschreibung sagte `knie, wunde, naht`. Zusammengelegt stand
+    das Foto unter "skifahren" im Filter. Kommen Etiketten aus der
+    Beschreibung, sind sie das Ergebnis -- nicht der Anhang."""
     from ingest.captioner import merge_tags
 
-    assert merge_tags(["party"], ["bier", "party", "lächeln"]) == ["party", "bier", "lächeln"]
+    clip = ["radfahren", "skifahren", "screenshot", "hund", "kinder"]
+    llm = ["knie", "wunde", "naht"]
+    assert merge_tags(clip, llm) == ["knie", "wunde", "naht"]
+
+
+def test_ohne_beschreibung_bleibt_clip_der_rueckfall():
+    """Ohne Grafikkarte gibt es keine Beschreibung. Grob ist dann besser als
+    nichts -- aber nur dann."""
+    from ingest.captioner import merge_tags
+
+    assert merge_tags(["party", "innenraum"], []) == ["party", "innenraum"]
+    # Eine Antwort, die nur Leerraum enthaelt, zaehlt als keine.
+    assert merge_tags(["party"], ["", "  "]) == ["party"]
 
 
 def test_merge_tags_drops_empties():
@@ -428,7 +457,9 @@ def test_repeated_merges_converge():
     tags = ["party", "getraenke"]
     for _ in range(10):
         tags = merge_tags(tags, ["getränke", "bier", "party"])
-    assert tags == ["party", "getraenke", "bier"]
+    # Jeder Lauf ersetzt, statt anzuhaengen -- die Liste kann nicht wachsen,
+    # und der letzte Stand ist genau das, was die Beschreibung zuletzt sagte.
+    assert tags == ["getränke", "bier", "party"]
 
 
 def test_a_blip_does_not_mark_photos_unreadable(wired, monkeypatch):
