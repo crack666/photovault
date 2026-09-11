@@ -74,6 +74,41 @@ STOPWORDS = set(
     """.split()
 )
 
+#: Zeitwoerter beschreiben kein Motiv. Sie stehen in jeder Caption
+#: ("aufgenommen am 12. März 2023"), sind aber je Monat selten genug, um die
+#: Dokumentfrequenz-Schranke zu unterlaufen -- und wurden so Kontinentname:
+#: `august` in zwei von 40, `märz` in zwei, dazu `september`, `juni`,
+#: `montag`. Die Zeit hat die Karte laengst, als Jahresbaender.
+STOPWORDS |= set(
+    """
+    januar februar märz april mai juni juli august september oktober november dezember
+    montag dienstag mittwoch donnerstag freitag samstag sonntag woche wochenende
+    täglichen täglich morgens mittags abends nachts
+    """.split()
+)
+
+#: Unterlagen und Fuellwoerter. `holzoberfläche` wurde Name eines Haufens
+#: aus 480 Nahaufnahmen von Dingen: es stand in 37 Beschreibungen, immer als
+#: das, worauf etwas *liegt* ("auf einer hellen Holzoberfläche"), und
+#: gewann, weil es im ganzen Bestand so selten ist, dass die PMI explodiert.
+#: Ein Unterlage-Wort beschreibt nie das Motiv -- anders als `tisch`, der
+#: bei `flasche · bier · glas · tisch` die Szene *ist* und deshalb bleibt.
+#: `szene` und `einen` sind Floskeln dieses Caption-Modells, die beim
+#: Nachruecken sichtbar wurden.
+STOPWORDS |= set(
+    """
+    oberfläche holzoberfläche tischplatte untergrund unterlage laminatboden fußboden
+    szene einen
+    """.split()
+)
+
+#: Mindestanteil der Captions eines Kontinents, in denen ein Wort stehen
+#: muss. Gemessen an allen 40 Kontinenten: 10 % waere ein Netto-Verlust --
+#: es nimmt `abiball · silvester`, `funken`, `videospiel`, `straße · gebäude`
+#: mit, lauter unterscheidende Ereignis- und Motivwoerter, die eben auch bei
+#: 5-10 % liegen, und laesst Fuellwoerter nachruecken. 5 % bleibt.
+MIN_SHARE = 0.05
+
 _RE_WORD = re.compile(r"[a-zA-ZÄÖÜäöüß]{4,}")
 
 #: Zweites Netz unter der Wortliste: was in mehr als einem Fuenftel aller
@@ -329,8 +364,8 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
         scored = []
         for term, seen_here in hits[c].items():
             # Ein Wort aus einer einzigen Caption beschreibt ein Foto, keinen
-            # Kontinent -- und unter 5 % der Captions ist es Beifang.
-            if seen_here < 3 or seen_here / local < 0.05:
+            # Kontinent -- und unter MIN_SHARE der Captions ist es Beifang.
+            if seen_here < 3 or seen_here / local < MIN_SHARE:
                 continue
             p_all = doc_freq[term] / n_docs
             if p_all > MAX_DOC_FREQ:
@@ -343,10 +378,54 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
         scored.sort(reverse=True)
         out.append(
             {
-                "terms": [t for _, t in scored[:top_n]],
+                "terms": distinct_stems([t for _, t in scored], top_n),
                 "cap_share": round(int(captioned[c]) / max(size, 1), 3),
             }
         )
+    return out
+
+
+def distinct_stems(terms: list[str], top_n: int) -> list[str]:
+    """Die ersten `top_n` Begriffe, ohne dass einer den Stamm eines anderen
+    wiederholt.
+
+    Vier Plaetze hat ein Kontinentname, und in 9 von 40 war einer davon
+    verschenkt: `kinder · kindern`, `autos · auto`, `schlafen · schläft`,
+    `verschneite · verschneiten`, `holzoberfläche · oberfläche`. Zwei
+    Formen desselben Worts sagen nicht mehr als eine.
+
+    Kein Stemmer -- der muesste deutsche Flexion kennen und kaeme mit dem
+    naechsten Caption-Modell aus dem Tritt. Stattdessen der gemeinsame
+    Anfang: teilen sich zwei Begriffe die ersten vier Buchstaben und ist
+    einer im anderen enthalten oder unterscheiden sie sich nur in der
+    Endung, bleibt der besser bewertete. `kind`/`kinder` faellt zusammen,
+    `oberfläche`/`holzoberfläche` ebenso (Teilwort am Ende); `garten`/`gas`
+    nicht.
+    """
+    def verwandt(a: str, b: str) -> bool:
+        if a == b:
+            return True
+        kurz, lang = (a, b) if len(a) <= len(b) else (b, a)
+        if len(kurz) < 4:
+            return False
+        # Teilwort: `oberfläche` in `holzoberfläche`, `kind` in `kinder`.
+        if kurz in lang and (lang.startswith(kurz) or lang.endswith(kurz)):
+            return True
+        # Flexion: gleicher Anfang, Rest ist nur Endung (<= 3 Zeichen je Seite).
+        gemeinsam = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            gemeinsam += 1
+        return gemeinsam >= 5 and len(a) - gemeinsam <= 3 and len(b) - gemeinsam <= 3
+
+    out: list[str] = []
+    for t in terms:
+        if any(verwandt(t, d) for d in out):
+            continue
+        out.append(t)
+        if len(out) >= top_n:
+            break
     return out
 
 
