@@ -165,14 +165,16 @@ def get_thumb(
     image=None,
     content_hash: str | None = None,
     extra: str | None = None,
+    poster_ss: float | None = None,
 ) -> bytes:
     """JPEG liefern; beim ersten Mal erzeugen. `box` schneidet ein Gesicht aus.
 
     `image` ist ein bereits geladenes PIL-Image -- der Ingest reicht es durch,
-    statt die Datei ein weiteres Mal zu dekodieren.
+    statt die Datei ein weiteres Mal zu dekodieren. `poster_ss` ist bei Videos
+    der Zeitpunkt des Frames, der das Video vertritt.
     """
     data, _warn = make_thumb(file_path, size=size, box=box, pad=pad, image=image,
-                             content_hash=content_hash, extra=extra)
+                             content_hash=content_hash, extra=extra, poster_ss=poster_ss)
     return data
 
 
@@ -208,6 +210,7 @@ def make_thumb(
     image=None,
     content_hash: str | None = None,
     extra: str | None = None,
+    poster_ss: float | None = None,
 ) -> tuple[bytes, str | None]:
     """Wie get_thumb, plus Warnung wenn die Datei unvollständig oder unlesbar ist."""
     size = normalize_size(size)
@@ -220,7 +223,7 @@ def make_thumb(
             pass
 
     cached = _cache_path(key, size)
-    data, warn = _render(file_path, size, box, pad, image)
+    data, warn = _render(file_path, size, box, pad, image, poster_ss=poster_ss)
     if warn is None:
         warn = jpeg_truncation_hint(file_path)
     try:
@@ -253,7 +256,8 @@ def jpeg_truncation_hint(file_path: str) -> str | None:
     return None
 
 
-def _render(file_path: str, size: int, box: list | None, pad: float, image=None) -> tuple[bytes, str | None]:
+def _render(file_path: str, size: int, box: list | None, pad: float, image=None,
+            poster_ss: float | None = None) -> tuple[bytes, str | None]:
     from PIL import Image, ImageFile, ImageOps
 
     # Abgebrochene Kamera-JPEGs (Transfer, volle Karte) sollen eine Vorschau
@@ -266,9 +270,13 @@ def _render(file_path: str, size: int, box: list | None, pad: float, image=None)
         try:
             suffix = src.suffix.lower()
             if suffix in VIDEO_EXTENSIONS:
-                from ingest.video import poster_image
+                # Der Frame, der das Video vertritt -- vom Ingest als Medoid
+                # der Caption-Frames gewaehlt. Ohne Angabe der alte feste
+                # Zeitpunkt bei zehn Prozent.
+                from ingest.video import frame_image, poster_image
 
-                image = poster_image(file_path)
+                image = (frame_image(file_path, poster_ss) if poster_ss is not None
+                         else poster_image(file_path))
             else:
                 if suffix not in IMAGE_EXT or not src.is_file():
                     raise FileNotFoundError(file_path)

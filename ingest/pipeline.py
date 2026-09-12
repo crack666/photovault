@@ -182,6 +182,9 @@ class PhotoRecord:
     #: photo (Voreinstellung, auch wenn das Feld im Index fehlt) oder video.
     kind: str = "photo"
     duration_s: Optional[float] = None
+    #: Zeitpunkt des Frames, der das Video vertritt -- Vektor und Poster.
+    #: Gewaehlt als Medoid der Caption-Frames, siehe `ingest/video_clip.py`.
+    poster_ss: Optional[float] = None
 
 
 class IngestPipeline:
@@ -371,6 +374,19 @@ class IngestPipeline:
                             sr = scene.process(fp, image=rgb)
                         record.scene_tags = sr["tags"]
                         record.clip_embedding = sr["embedding"]
+                    elif getattr(record, "_frames", None):
+                        # Video: die Caption-Frames einbetten, der Medoid
+                        # vertritt das Video -- als Vektor und als Poster.
+                        from ingest.video_clip import clip_video
+
+                        with t.stage("clip"):
+                            vc = clip_video(scene, record._frames)
+                        record._frames = None
+                        if vc["embedding"]:
+                            record.clip_embedding = vc["embedding"]
+                            record.scene_tags = vc["tags"]
+                            record.poster_ss = vc["poster_ss"]
+                            rgb = vc["frame"]
 
                     if self.config.thumbs:
                         # Jetzt gleich, solange die Datei ohnehin gelesen wird --
@@ -543,7 +559,10 @@ class IngestPipeline:
 
                     with _Timed(clock, "  io:caption_jpeg"):
                         record._caption_b64 = jpeg_b64(fp, image=rgb)
-                if cfg.thumbs:
+                # Bei Videos nicht jetzt: das Poster steht erst fest, wenn
+                # die GPU den Medoid gewaehlt hat. Sonst laege das Bild bei
+                # zehn Prozent im Cache, und der Medoid kaeme nie zum Zug.
+                if cfg.thumbs and record.kind != "video":
                     with _Timed(clock, "  io:thumb"):
                         _make_thumb(fp, rgb, record.content_sha256)
 
@@ -557,6 +576,11 @@ class IngestPipeline:
                         record._bgr = to_bgr(rgb)
                     with _Timed(clock, "  io:clip_pre"):
                         record._clip = scene.preprocess(rgb)
+                elif getattr(record, "_frames", None):
+                    # Video: jeden Caption-Frame vorverarbeiten. Die GPU
+                    # bettet sie im Stapel ein und waehlt den Medoid.
+                    with _Timed(clock, "  io:clip_pre"):
+                        record._clip = [scene.preprocess(img) for _, img in record._frames]
             # Das grosse PIL-Bild wird ab hier nicht mehr gebraucht.
             record._prior = prior
             return record
@@ -578,20 +602,47 @@ class IngestPipeline:
                     record.person_suggestions = [
                         s["id"] for s in matcher.suggest(record.face_embedding)
                     ]
-            with_image = [r for r in batch if r._clip is not None]
+            # Fotos tragen einen Tensor, Videos eine Liste (je Frame einer).
+            # Alle in einen Stapel; hinterher gehoert jedes Ergebnis wieder
+            # seinem Record -- und ein Video bekommt den Medoid seiner Frames.
+            from ingest.video_clip import choose
+
+            tensors, owner = [], []
+            for r in batch:
+                if r._clip is None:
+                    continue
+                if isinstance(r._clip, list):
+                    for t_ in r._clip:
+                        tensors.append(t_)
+                        owner.append(r)
+                else:
+                    tensors.append(r._clip)
+                    owner.append(r)
             with _Timed(clock, "  gpu:clip"):
-                results = scene.encode_tensors([r._clip for r in with_image])
-            for record, sr in zip(with_image, results):
-                record.scene_tags = sr["tags"]
-                record.clip_embedding = sr["embedding"]
-                normalizer.normalize(record)
+                results = scene.encode_tensors(tensors)
+            je_record: dict[int, list[dict]] = {}
+            for r, sr in zip(owner, results):
+                je_record.setdefault(id(r), []).append(sr)
             for record in batch:
-                if record._clip is None:
-                    normalizer.normalize(record)
+                got = je_record.get(id(record))
+                if got and isinstance(record._clip, list):
+                    vc = choose(got, record._frames or [])
+                    if vc["embedding"]:
+                        record.clip_embedding = vc["embedding"]
+                        record.scene_tags = vc["tags"]
+                        record.poster_ss = vc["poster_ss"]
+                        # Jetzt steht das Poster fest.
+                        if cfg.thumbs and vc["frame"] is not None:
+                            _make_thumb(record.file_path, vc["frame"], record.content_sha256)
+                elif got:
+                    record.scene_tags = got[0]["tags"]
+                    record.clip_embedding = got[0]["embedding"]
+                normalizer.normalize(record)
                 # Speicher sofort freigeben -- sonst haelt die Warteschlange
                 # dutzende dekodierte Bilder gleichzeitig.
                 record._bgr = None
                 record._clip = None
+                record._frames = None
 
         def caption_one(record):
             """Eine Caption holen und ins Record schreiben. Laeuft im Pool."""
@@ -1038,8 +1089,16 @@ def _load_image(file_path: str):
 
 
 def _load_video(file_path: str, record: PhotoRecord):
-    """Poster-Frame als RGB -- das Original bleibt Video."""
-    from ingest.video import VideoToolMissing, poster_image, probe
+    """Die Caption-Frames als RGB -- das Original bleibt Video.
+
+    Der erste Frame liegt bei zehn Prozent, also genau dort, wo bisher das
+    Poster geholt wurde: fuer kurze Clips kostet das nichts extra, fuer
+    laengere zwei ffmpeg-Aufrufe mehr. Alle Frames bleiben am Record
+    (`_frames`), damit der CLIP-Schritt den Medoid waehlen kann -- der wird
+    dann Vektor *und* Poster. Bis dahin vertritt der erste Frame das Video.
+    """
+    from ingest.video import VideoToolMissing, probe
+    from ingest.video_clip import sample_frames
 
     try:
         info = probe(file_path)
@@ -1048,11 +1107,15 @@ def _load_video(file_path: str, record: PhotoRecord):
         return None, None, None
     record.duration_s = info.get("duration")
     try:
-        rgb = poster_image(file_path, info.get("duration"))
-        return rgb, rgb, None
+        frames = sample_frames(file_path, info.get("duration"))
     except Exception as e:
-        logger.warning("Video poster failed for %s: %s", file_path, e)
+        logger.warning("Video frames failed for %s: %s", file_path, e)
         return None, None, "unreadable"
+    if not frames:
+        return None, None, "unreadable"
+    record._frames = frames
+    rgb = frames[0][1]
+    return rgb, rgb, None
 
 
 def _make_thumb(file_path: str, image=None, content_hash: str | None = None) -> None:

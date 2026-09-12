@@ -8,7 +8,7 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js";
+import { FLAG, colorFor, spreadPoint } from "./model.js";
 import { thumbUrl } from "../core/api.js";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
@@ -1700,6 +1700,26 @@ export function createScene(canvas, model, hooks = {}) {
     stats.unruhe = repel ? Math.round(unruhe * 10) / 10 : 0;
   }
 
+  /** Abspiel-Dreieck in der Ecke einer Kachel -- klein, damit es das Bild nicht verdeckt. */
+  function drawPlayBadge(sx, sy, bw, bh) {
+    const r = Math.max(5, Math.min(11, bw * 0.16));
+    const cx = sx + bw / 2 - r - 3, cy = sy + bh / 2 - r - 3;
+    ctx.save();
+    ctx.globalAlpha = Math.min(ctx.globalAlpha, 0.9);
+    ctx.fillStyle = "rgba(10,12,16,0.75)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e8edf3";
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.35, cy - r * 0.5);
+    ctx.lineTo(cx + r * 0.55, cy);
+    ctx.lineTo(cx - r * 0.35, cy + r * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   /** Den Plan aufs Bild bringen -- und dabei messen, was es kostet. */
   function paintThumbs(picked) {
     let imgMs = 0;
@@ -1715,6 +1735,9 @@ export function createScene(canvas, model, hooks = {}) {
         ctx.lineWidth = 1.5;
         ctx.strokeRect(sx - bw / 2, sy - bh / 2, bw, bh);
       }
+      // Ein Video sieht auf der Karte aus wie ein Foto -- die Kachel ist
+      // sein Poster. Ohne Zeichen wundert man sich beim Klick.
+      if (model.fl[i] & FLAG.VIDEO) drawPlayBadge(sx, sy, bw, bh);
       ctx.globalAlpha = 1;
       imgMs += performance.now() - tImg;
       shown.push([i, sx - bw / 2, sy - bh / 2, bw, bh]);

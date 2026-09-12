@@ -161,6 +161,7 @@ class QdrantWriter:
             "file_path": record.file_path,
             "kind": getattr(record, "kind", None) or "photo",
             "duration_s": getattr(record, "duration_s", None),
+            "poster_ss": getattr(record, "poster_ss", None),
             "person_ids": record.person_ids,
             "face_count": record.face_count,
             "face_boxes": record.face_boxes,

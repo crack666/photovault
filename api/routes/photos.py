@@ -345,7 +345,7 @@ def photo_thumb(point_id: str, size: int = 320):
     try:
         points = q.retrieve(
             collection_name=PHOTOS, ids=[point_id],
-            with_payload=["file_path", "file_warning", "content_sha256"],
+            with_payload=["file_path", "file_warning", "content_sha256", "poster_ss"],
         )
     except Exception as e:
         raise HTTPException(404, f"Foto nicht gefunden: {e}") from e
@@ -361,7 +361,8 @@ def photo_thumb(point_id: str, size: int = 320):
         # den Pfad zurueck -- die Umstellung ist damit nicht stufenweise
         # kaputt, sondern stufenweise besser.
         data, warn = make_thumb(path, size=size,
-                                content_hash=payload.get("content_sha256"))
+                                content_hash=payload.get("content_sha256"),
+                                poster_ss=payload.get("poster_ss"))
     except Exception as e:
         logger.warning("Thumb failed for %s: %s", path, e)
         err = media_http_error(e, path)

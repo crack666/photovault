@@ -51,7 +51,9 @@ class TestCollect:
             _Point("b", {"file_path": "/b.jpg"}, {}),
             _Point("c", {"file_path": "/c.jpg"}, {"clip": None}),
         ])
-        assert backfill_clip.collect(c, "photos", None) == [("b", "/b.jpg"), ("c", "/c.jpg")]
+        # Hinter Kennung und Pfad: Video? Beschreibung? -- beides hier nein.
+        assert backfill_clip.collect(c, "photos", None) == [
+            ("b", "/b.jpg", False, False), ("c", "/c.jpg", False, False)]
 
     def test_prefix_grenzt_ein(self):
         c = FakeClient([
@@ -59,7 +61,7 @@ class TestCollect:
             _Point("c", {"file_path": "/mnt/photo/Handys/y.jpg"}, {}),
         ])
         got = backfill_clip.collect(c, "photos", "/mnt/photo/Fotos")
-        assert got == [("b", "/mnt/photo/Fotos/x.jpg")]
+        assert got == [("b", "/mnt/photo/Fotos/x.jpg", False, False)]
 
     def test_punkt_ohne_pfad_wird_uebersprungen(self):
         c = FakeClient([_Point("b", {}, {})])
@@ -145,3 +147,13 @@ class TestRun:
         aufgaben = [(str(i), f"/{i}.jpg") for i in range(5)]
         got = backfill_clip.run(c, "photos", aufgaben, "/models", 0.2, batch=2)
         assert got["done"] == 5 and len(c.vectors) == 5
+
+
+class TestCollectKennzeichnet:
+    def test_video_und_beschreibung_werden_mitgegeben(self):
+        c = FakeClient([
+            _Point("v", {"file_path": "/v.mp4", "kind": "video"}, {}),
+            _Point("b", {"file_path": "/b.jpg", "caption_de": "Ein Hund."}, {}),
+        ])
+        assert backfill_clip.collect(c, "photos", None) == [
+            ("v", "/v.mp4", True, False), ("b", "/b.jpg", False, True)]

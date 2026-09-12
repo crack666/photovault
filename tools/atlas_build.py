@@ -138,6 +138,7 @@ FLAG_NO_CLOCK = 1 << 5  #: Datum ohne echte Uhrzeit
 FLAG_FACES_UNNAMED = 1 << 6  #: Gesichter erkannt, keines benannt
 FLAG_IN_STACK = 1 << 7  #: Teil eines Nahduplikat-Stapels
 FLAG_STACK_HEAD = 1 << 8  #: das gezeigte Bild dieses Stapels
+FLAG_VIDEO = 1 << 9  #: ein Video -- die Kachel zeigt sein Poster, nicht das Ganze
 
 
 # --------------------------------------------------------------------------
@@ -187,6 +188,7 @@ def load_points(qc: Any, space: str, limit: int | None = None) -> tuple[np.ndarr
                     "face_count": int(payload.get("face_count") or 0),
                     "folder": payload.get("folder_name") or "",
                     "file_path": payload.get("file_path") or "",
+                    "kind": payload.get("kind") or "photo",
                 }
             )
         if offset is None or (limit and len(meta) >= limit):
@@ -710,6 +712,8 @@ def photo_flags(m: dict, in_stack: bool, is_head: bool) -> int:
         flags |= FLAG_IN_STACK
         if is_head:
             flags |= FLAG_STACK_HEAD
+    if m.get("kind") == "video":
+        flags |= FLAG_VIDEO
     return flags
 
 

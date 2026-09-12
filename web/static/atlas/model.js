@@ -14,6 +14,7 @@ export const FLAG = {
   FACES_UNNAMED: 1 << 6,
   IN_STACK: 1 << 7,
   STACK_HEAD: 1 << 8,
+  VIDEO: 1 << 9,
 };
 
 const DAY_MS = 86400000;
