@@ -64,10 +64,29 @@ def shrink(image: Any, max_side: int = FRAME_MAX_SIDE) -> Any:
 
 
 def sample_frames(file_path: str, duration: float | None = None) -> list[tuple[float, Any]]:
-    """Die Caption-Frames als (Zeitpunkt, PIL), schon verkleinert."""
-    from ingest.video import sample_images
+    """Die Caption-Frames als (Zeitpunkt, PIL), schon verkleinert.
 
-    return [(ss, shrink(img)) for ss, img in sample_images(file_path, duration)]
+    Ein Offset, an dem ffmpeg nichts liefert, faellt weg statt das Video
+    zu kosten. Der Fall ist real: ein aus einem GIF gewandelter Clip
+    meldete 3,24 s Dauer, hatte aber vor 90 % keinen Frame mehr -- ffmpeg
+    beendete sich mit 0 und leerer Ausgabe. Erst wenn kein einziger
+    Frame kommt, ist die Datei wirklich nicht lesbar.
+    """
+    from ingest.video import frame_image, probe, sample_offsets
+
+    if duration is None:
+        duration = probe(file_path).get("duration")
+    out: list[tuple[float, Any]] = []
+    letzter: Exception | None = None
+    for ss in sample_offsets(duration):
+        try:
+            out.append((ss, shrink(frame_image(file_path, ss))))
+        except Exception as e:  # ein Offset, nicht das Video
+            letzter = e
+            logger.debug("kein Frame bei %.2fs in %s: %s", ss, file_path, e)
+    if not out and letzter is not None:
+        raise letzter
+    return out
 
 
 def choose(results: list[dict], frames: list[tuple[float, Any]]) -> dict:

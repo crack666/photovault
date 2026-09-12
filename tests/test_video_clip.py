@@ -231,3 +231,32 @@ class TestVideoFlag:
         assert photo_flags(m, False, False) & FLAG_VIDEO
         m["kind"] = "photo"
         assert not photo_flags(m, False, False) & FLAG_VIDEO
+
+
+class TestSampleFramesRobust:
+    def test_ein_leerer_offset_kostet_nicht_das_video(self, monkeypatch):
+        """Ein aus einem GIF gewandelter Clip meldete 3,24 s, hatte aber vor
+        90 % keinen Frame mehr. Zwei von drei Frames sind ein Video."""
+        from PIL import Image
+
+        from ingest import video_clip
+
+        def frame_image(path, ss):
+            if ss > 2.5:
+                raise RuntimeError("ffmpeg frame exit 0: ")
+            return Image.new("RGB", (32, 24))
+
+        monkeypatch.setattr("ingest.video.frame_image", frame_image)
+        monkeypatch.setattr("ingest.video.sample_offsets", lambda d: [0.32, 1.62, 2.92])
+        frames = video_clip.sample_frames("/gif.mp4", 3.24)
+        assert [ss for ss, _ in frames] == [0.32, 1.62]
+
+    def test_gar_kein_frame_ist_ein_fehler(self, monkeypatch):
+        from ingest import video_clip
+
+        monkeypatch.setattr("ingest.video.frame_image",
+                            lambda p, ss: (_ for _ in ()).throw(RuntimeError("kaputt")))
+        monkeypatch.setattr("ingest.video.sample_offsets", lambda d: [0.0])
+        import pytest
+        with pytest.raises(RuntimeError):
+            video_clip.sample_frames("/x.mp4", 1.0)
