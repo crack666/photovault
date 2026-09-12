@@ -135,7 +135,7 @@ class TestBackfillVideo:
         monkeypatch.setattr("ingest.video_clip.sample_frames",
                             lambda p, d=None: [(1.0, "a"), (5.0, "b"), (9.0, "c")])
         geleert = []
-        monkeypatch.setattr("api.thumbs.drop_cached", lambda fp: geleert.append(fp) or 1)
+        monkeypatch.setattr("api.thumbs.drop_cached", lambda fp, h=None: geleert.append((fp, h)) or 1)
 
         class Q:
             def __init__(self):
@@ -150,12 +150,12 @@ class TestBackfillVideo:
                     self.payloads.setdefault(str(i), {}).update(payload)
 
         q = Q()
-        got = bc.run(q, "photos", [("v", "/clip.mp4", True, False)], "/models", 0.2)
+        got = bc.run(q, "photos", [("v", "/clip.mp4", True, False, "abc")], "/models", 0.2)
         assert got["done"] == 1
         assert q.vectors["v"] == {"clip": [1.0, 0.0]} or q.vectors["v"] == {"clip": [0.9, 0.1]}
         assert q.payloads["v"]["poster_ss"] in (1.0, 5.0)
         assert "scene_tags" in q.payloads["v"]          # keine Beschreibung -> CLIP ist Rueckfall
-        assert geleert == ["/clip.mp4"]
+        assert geleert == [("/clip.mp4", "abc")]     # mit Inhalts-Hash, sonst Leerlauf
 
     def test_mit_beschreibung_bleiben_die_etiketten_unangetastet(self, monkeypatch):
         """Vorher schrieb der Lauf CLIP-Etiketten bedingungslos -- bei einem

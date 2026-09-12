@@ -169,7 +169,7 @@ def welt(tmp_path, monkeypatch):
 
     monkeypatch.setattr(trash_route, "client", lambda: fake)
     monkeypatch.setattr(events_route, "client", lambda: fake)
-    monkeypatch.setattr(trash_route, "drop_cached", lambda path: 0)
+    monkeypatch.setattr(trash_route, "drop_cached", lambda path, content_hash=None: 0)
     monkeypatch.setattr(trash_route, "TRASH_LOG", tmp_path / "logs")
     return SimpleNamespace(q=fake, files=dateien, tmp=tmp_path)
 

@@ -300,3 +300,31 @@ class TestResolveCache:
         monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
         monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "gibtsnicht")
         assert th._resolve_cache() == tmp_path / "data" / "thumbs"
+
+
+class TestDropCached:
+    """Seit Stufe 3 liegen die Kacheln unter dem Inhalts-Hash. `drop_cached`
+    kannte nur den Pfad und war damit ein Leerlauf: das endgueltige Loeschen
+    meldete still `thumbs: 0`, das Geisterbild blieb. Aufgefallen, als ein
+    "verworfenes" Video-Poster in vier Millisekunden aus dem Cache kam."""
+
+    def test_loescht_die_inhalts_kachel_mit_hash(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        lege(tmp_path, "sha256:abc", 160)
+        lege(tmp_path, "sha256:abc", 320)
+        lege(tmp_path, "/a.jpg", 160)
+        assert th.drop_cached("/a.jpg", "abc") == 3
+        assert not list(tmp_path.rglob("*.jpg"))
+
+    def test_ohne_hash_bleibt_die_inhalts_kachel(self, tmp_path, monkeypatch):
+        """Die Grenze ehrlich benannt: ohne Hash nur der Pfad-Schluessel."""
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        lege(tmp_path, "sha256:abc", 160)
+        assert th.drop_cached("/a.jpg") == 0
+        assert len(list(tmp_path.rglob("*.jpg"))) == 1

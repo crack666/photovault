@@ -316,28 +316,36 @@ def _render(file_path: str, size: int, box: list | None, pad: float, image=None,
     return buf.getvalue(), warn
 
 
-def drop_cached(file_path: str) -> int:
+def drop_cached(file_path: str, content_hash: str | None = None) -> int:
     """Alle Vorschaubilder zu einer Datei wegwerfen.
 
     Beim endgueltigen Loeschen bleibt sonst der Cache als Geisterbild zurueck:
     das Foto ist weg, aber die Oberflaeche zeigt es weiter, bis der Eintrag
     zufaellig verdraengt wird.
 
-    Geraeumt werden beide Orte. Bliebe am alten eines liegen, waere es nach
-    dem Loeschen weiter zu sehen -- genau das Geisterbild, das diese Funktion
-    verhindern soll.
+    Geraeumt werden beide Orte und **beide Schluessel**. Seit Stufe 3 liegen
+    die Kacheln unter dem Inhalts-Hash; diese Funktion kannte nur den
+    Pfad-Schluessel und war damit fuer fast jede Kachel ein Leerlauf -- das
+    endgueltige Loeschen meldete still `thumbs: 0`, und das Geisterbild, das
+    sie verhindern soll, blieb liegen. Aufgefallen beim Video-Nachziehen:
+    das alte Poster kam nach dem "Verwerfen" in vier Millisekunden aus dem
+    Cache. Wer den Hash hat, gibt ihn mit; ohne ihn bleibt es beim Pfad.
     """
+    keys = [file_path]
+    if content_hash:
+        keys.append(f"sha256:{content_hash}")
     gone = 0
-    for size in ALLOWED_SIZES:
-        for basis in {CACHE_DIR, LEGACY_CACHE}:
-            target = basis / _rel(file_path, size)
-            try:
-                target.unlink()
-                gone += 1
-            except FileNotFoundError:
-                pass
-            except OSError as e:
-                logger.debug("Thumb %s nicht loeschbar: %s", target, e)
+    for key in keys:
+        for size in ALLOWED_SIZES:
+            for basis in {CACHE_DIR, LEGACY_CACHE}:
+                target = basis / _rel(key, size)
+                try:
+                    target.unlink()
+                    gone += 1
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    logger.debug("Thumb %s nicht loeschbar: %s", target, e)
     return gone
 
 

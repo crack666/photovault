@@ -40,8 +40,8 @@ logger = logging.getLogger(__name__)
 BATCH = 32
 
 
-def collect(qc, collection: str, prefix: str | None) -> list[tuple[str, str, bool, bool]]:
-    """[(Punkt-ID, Dateipfad, ist_video, hat_caption)] fuer Punkte ohne clip-Vektor.
+def collect(qc, collection: str, prefix: str | None) -> list[tuple]:
+    """[(Punkt-ID, Dateipfad, ist_video, hat_caption, inhalts_hash)] fuer Punkte ohne clip-Vektor.
 
     Gelesen wird mit `with_vectors=["clip"]` statt ueber einen Filter: eine
     fehlende *Vektor*-Komponente ist keine Payload-Eigenschaft, nach der man
@@ -53,7 +53,7 @@ def collect(qc, collection: str, prefix: str | None) -> list[tuple[str, str, boo
     while True:
         batch, offset = qc.scroll(
             collection_name=collection, limit=512, offset=offset,
-            with_payload=["file_path", "kind", "caption_de"], with_vectors=["clip"],
+            with_payload=["file_path", "kind", "caption_de", "content_sha256"], with_vectors=["clip"],
         )
         for p in batch:
             if (p.vector or {}).get("clip"):
@@ -62,7 +62,8 @@ def collect(qc, collection: str, prefix: str | None) -> list[tuple[str, str, boo
             fp = pl.get("file_path") or ""
             if not fp or (prefix and not fp.startswith(prefix)):
                 continue
-            out.append((str(p.id), fp, pl.get("kind") == "video", bool(pl.get("caption_de"))))
+            out.append((str(p.id), fp, pl.get("kind") == "video", bool(pl.get("caption_de")),
+                        pl.get("content_sha256")))
         if offset is None:
             return out
 
@@ -170,6 +171,7 @@ def run(qc, collection: str, aufgaben: list[tuple], model_dir: str,
         for pid, fp, *rest in stapel:
             ist_video = bool(rest[0]) if rest else False
             hat_caption = bool(rest[1]) if len(rest) > 1 else False
+            inhalt = rest[2] if len(rest) > 2 else None
             frames = None
             if ist_video:
                 try:
@@ -194,7 +196,7 @@ def run(qc, collection: str, aufgaben: list[tuple], model_dir: str,
                 pl["poster_ss"] = got["poster_ss"]
                 # Das alte Poster (fester Zeitpunkt) liegt im Cache -- weg
                 # damit, sonst zeigt die Karte weiter das Schwarzbild.
-                drop_cached(fp)
+                drop_cached(fp, inhalt)
             if pl:
                 payload_je_id[pid] = pl
 
