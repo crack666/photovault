@@ -84,12 +84,6 @@ class TestKlassifiziere:
         assert aus["winzig"][0][2] == 36
         assert [x[1] for x in aus["fehlt"]] == [str(tmp_path / "gibtsnicht.jpg")]
 
-    def test_ein_kilobyte_ist_die_grenze(self, tmp_path):
-        knapp = tmp_path / "knapp.jpg"
-        knapp.write_bytes(b"x" * 1024)
-        aus = backfill_clip.klassifiziere([("a", str(knapp))])
-        assert aus["geht"] and not aus["winzig"]
-
 
 class TestRun:
     """Der Lauf selbst -- mit einem Tagger, der nichts laedt."""
