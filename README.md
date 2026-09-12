@@ -569,6 +569,26 @@ Prüfen, dass die Gesichtserkennung wirklich auf der GPU landet — ohne
 ~/.venvs/photovault/bin/python -c "import onnxruntime;print(onnxruntime.get_available_providers())"
 ```
 
+### Tests
+
+```bash
+~/.venvs/photovault/bin/python -m pytest -q
+```
+
+Ein Einstieg für alles: `pytest` nimmt auch die JavaScript-Tests des Atlas
+mit (`tests/js/*.test.mjs`, Nodes eingebauter Testläufer, keine
+Abhängigkeit) — über `node` im PATH oder, unter WSL, das Windows-Node per
+Interop. Fehlt beides, wird sichtbar übersprungen. Von Hand:
+`node --test tests/js/model.test.mjs`.
+
+Die Regel für neue Tests: **ein Warum, oder ein Pfad, der sonst still
+bricht.** Wer beides nicht nennen kann, schreibt ihn nicht. Gemessen am
+12.09.2026: 1.020 Tests, davon 164 mit einem einzigen `assert` gegen ein
+Literal — dünn ist nicht gleich sinnlos (ein 400 auf eine leere Liste ist ein
+Vertrag), aber „der Code sagt dasselbe" reicht nicht. Die Suite läuft in
+15–25 s; nicht die Zahl kostet, sondern Tests, die einen Umbau blockieren,
+ohne ein Verhalten zu schützen.
+
 ### Starten, ohne etwas zu beantworten
 
 `start-local.sh` ist der Starter für diesen Modus: er prüft, statt zu fragen,
