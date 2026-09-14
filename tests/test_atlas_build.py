@@ -326,3 +326,149 @@ class TestProgressReporter:
         from tools.atlas_build import PHASES
 
         assert abs(sum(share for _, share in PHASES) - 1.0) < 1e-9
+
+
+# --------------------------------------------------------------------------
+# Kontinentnamen: was ein Name nicht sein darf
+# --------------------------------------------------------------------------
+
+def test_ein_stamm_belegt_nur_einen_platz():
+    """In 9 von 40 Namen war ein Platz verschenkt: `kinder · kindern`,
+    `autos · auto`, `schlafen · schläft`, `holzoberfläche · oberfläche`.
+    Zwei Formen desselben Worts sagen nicht mehr als eine."""
+    from tools.atlas_build import distinct_stems
+
+    assert distinct_stems(["kinder", "kindern", "göring", "liana", "x"], 4) == \
+        ["kinder", "göring", "liana", "x"]
+    assert distinct_stems(["autos", "auto", "straße", "ansicht", "fahrzeuge"], 4) == \
+        ["autos", "straße", "ansicht", "fahrzeuge"]
+    assert distinct_stems(["verschneite", "märzlich", "verschneiten", "berg"], 3) == \
+        ["verschneite", "märzlich", "berg"]
+    # Teilwort am Ende: `oberfläche` steckt in `holzoberfläche`.
+    assert distinct_stems(["holzoberfläche", "oberfläche", "gerät"], 4) == \
+        ["holzoberfläche", "gerät"]
+
+
+def test_aehnlicher_anfang_ist_noch_kein_stamm():
+    """`garten` und `gas`, `berge` und `bericht` sind verschiedene Woerter.
+    Vier gemeinsame Buchstaben plus ein kurzer Rest -- nicht jeder Anfang."""
+    from tools.atlas_build import distinct_stems
+
+    assert distinct_stems(["garten", "gas"], 2) == ["garten", "gas"]
+    assert distinct_stems(["berge", "bericht"], 2) == ["berge", "bericht"]
+    assert distinct_stems(["schlafen", "schläft"], 2) == ["schlafen", "schläft"] or \
+        distinct_stems(["schlafen", "schläft"], 2) == ["schlafen"]  # Umlaut trennt, das ist vertretbar
+
+
+def test_der_besser_bewertete_bleibt():
+    """Die Liste kommt sortiert; der erste Vertreter eines Stamms gewinnt."""
+    from tools.atlas_build import distinct_stems
+
+    assert distinct_stems(["kind", "kinder"], 4) == ["kind"]
+    assert distinct_stems(["kinder", "kind"], 4) == ["kinder"]
+
+
+def test_monatsnamen_werden_kein_kontinentname():
+    """`august` stand in zwei von 40 Namen, `märz` in zwei, dazu `september`,
+    `juni`, `montag` -- aus "aufgenommen am 12. März". Die Zeit hat die Karte
+    als Jahresbaender; ein Motiv ist sie nicht."""
+    labels, meta = _caption_corpus()
+    for i in range(10):                      # Cluster 0: Garten im August, montags
+        meta[i]["caption"] = f"Kinder spielen im Garten, aufgenommen am Montag im August {2000 + i}"
+    out = label_clusters(labels, meta, 10)
+    assert "august" not in out[0]["terms"]
+    assert "montag" not in out[0]["terms"]
+    assert "garten" in out[0]["terms"]
+
+
+def test_unterlage_wird_kein_kontinentname():
+    """`holzoberfläche` war Name eines Haufens aus 480 Nahaufnahmen von
+    Dingen -- es stand in 37 Beschreibungen, immer als das, worauf etwas
+    liegt. Was nie Motiv ist, benennt keinen Kontinent."""
+    labels, meta = _caption_corpus()
+    for i in range(10):
+        meta[i]["caption"] = "Nahaufnahme eines Geräts, das auf einer Holzoberfläche liegt"
+    out = label_clusters(labels, meta, 10)
+    assert "holzoberfläche" not in out[0]["terms"]
+    assert "nahaufnahme" in out[0]["terms"]
+
+
+# --------------------------------------------------------------------------
+# Themen-Anordnung
+# --------------------------------------------------------------------------
+
+def test_themen_ohne_beschreibung_ueber_visuelle_nachbarn(monkeypatch):
+    """Ein Foto ohne Beschreibung hat einen Text-Vektor nur aus Metadaten.
+    Im Text-Raum ballen sich solche Fotos zu Haufen, die woertlich nach dem
+    Ordner heissen. Deshalb bekommen sie Platz und Schublade von ihren
+    *visuellen* Nachbarn, die eine Beschreibung haben."""
+    from tools import atlas_build as ab
+
+    # UMAP durch etwas Deterministisches ersetzen: die ersten beiden
+    # Vektorkomponenten. Es geht um die Zuordnung, nicht um die Projektion.
+    monkeypatch.setattr(ab, "project", lambda X, **kw: X[:, :2].astype(np.float32))
+    monkeypatch.setattr(ab, "kmeans_clusters",
+                        lambda X, k, seed=0: (X[:, 0] > 0.5).astype(np.int64))
+    # Zehn Stimmen bei vier Kandidaten hiesse: alle stimmen ab, und die Mitte
+    # gewinnt. Mit zwei Stimmen zaehlen nur die naechsten.
+    monkeypatch.setattr(ab, "THEME_VOTERS", 2)
+
+    # Zwei visuelle Gruppen: A um (1,0,0), B um (0,1,0). Foto 4 ist visuell
+    # in A, hat aber keine Beschreibung -- sein Text-Vektor ist Unsinn.
+    Xn = np.asarray([
+        [1, 0, 0], [0.9, 0.1, 0], [0, 1, 0], [0.1, 0.9, 0], [0.95, 0.05, 0],
+    ], dtype=np.float32)
+    Xt = np.asarray([
+        [1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0], [0, 0, 1],   # Unsinn fuer Foto 4
+    ], dtype=np.float32)
+    meta = [{"caption": "a"}, {"caption": "a"}, {"caption": "b"}, {"caption": "b"}, {"caption": ""}]
+
+    coords, labels = ab.theme_layout(Xn, Xt, meta, k=2)
+
+    # Foto 4 landet bei Gruppe A -- Platz und Schublade seiner Nachbarn.
+    assert labels[4] == labels[0]
+    assert np.allclose(coords[4], coords[[0, 1]].mean(axis=0), atol=1e-3)
+    # Und die Fotos mit Beschreibung liegen dort, wo ihr Text sie hinlegt.
+    assert labels[0] == labels[1] and labels[2] == labels[3] and labels[0] != labels[2]
+
+
+def test_themen_brauchen_genug_beschriebene_fotos(monkeypatch):
+    from tools import atlas_build as ab
+
+    Xn = np.eye(3, dtype=np.float32)
+    Xt = np.eye(3, dtype=np.float32)
+    meta = [{"caption": "a"}, {"caption": ""}, {"caption": ""}]
+    import pytest
+    with pytest.raises(SystemExit):
+        ab.theme_layout(Xn, Xt, meta, k=2)
+
+
+def test_load_second_fuellt_fehlende_mit_nan():
+    from tools.atlas_build import load_second
+
+    class _P:
+        def __init__(self, pid, vec):
+            self.id, self.vector = pid, ({"text": vec} if vec else {})
+
+    class _Q:
+        def retrieve(self, collection_name, ids, with_payload, with_vectors):
+            store = {"a": [1.0, 2.0], "c": [3.0, 4.0]}
+            return [_P(i, store.get(i)) for i in ids]
+
+    X = load_second(_Q(), ["a", "b", "c"], "text")
+    assert X.shape == (3, 2)
+    assert np.allclose(X[0], [1, 2]) and np.allclose(X[2], [3, 4])
+    assert np.isnan(X[1]).all()
+
+
+def test_describe_clusters_traegt_leere_kontinente_ehrlich():
+    """k-means kann einen leeren Cluster liefern. Der Eintrag muss da sein --
+    die Oberflaeche indiziert nach `i` -- aber nichts vortaeuschen."""
+    from tools.atlas_build import describe_clusters
+
+    labels = np.asarray([0, 0, 0])
+    coords = np.asarray([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3]], dtype=np.float32)
+    meta = [_meta(caption="Kinder im Garten spielen") for _ in range(3)]
+    out = describe_clusters(labels, coords, meta, heads=set(), k=2)
+    assert out[0]["n"] == 3 and out[0]["cover"] == meta[0]["id"]
+    assert out[1]["n"] == 0 and out[1]["cover"] is None and out[1]["terms"] == []

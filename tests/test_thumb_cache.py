@@ -175,6 +175,14 @@ class TestSchluessel:
         b, _ = cache_keys("/a.jpg", box=[1, 2, 3, 4], pad=0.5, content_hash="x")
         assert a != b
 
+    def test_video_frame_geht_in_den_schluessel_ein(self):
+        from api.thumbs import cache_keys
+
+        poster, _ = cache_keys("/a.mp4", box=[1, 2, 3, 4], content_hash="abc")
+        mitte, _ = cache_keys("/a.mp4", box=[1, 2, 3, 4], content_hash="abc", extra="ss=1.7")
+        ende, _ = cache_keys("/a.mp4", box=[1, 2, 3, 4], content_hash="abc", extra="ss=3.1")
+        assert poster != mitte != ende
+
     def test_leerer_hash_gilt_als_keiner(self):
         from api.thumbs import cache_keys
 
@@ -292,3 +300,31 @@ class TestResolveCache:
         monkeypatch.setattr(th, "DEFAULT_CACHE", tmp_path / "data" / "thumbs")
         monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "gibtsnicht")
         assert th._resolve_cache() == tmp_path / "data" / "thumbs"
+
+
+class TestDropCached:
+    """Seit Stufe 3 liegen die Kacheln unter dem Inhalts-Hash. `drop_cached`
+    kannte nur den Pfad und war damit ein Leerlauf: das endgueltige Loeschen
+    meldete still `thumbs: 0`, das Geisterbild blieb. Aufgefallen, als ein
+    "verworfenes" Video-Poster in vier Millisekunden aus dem Cache kam."""
+
+    def test_loescht_die_inhalts_kachel_mit_hash(self, tmp_path, monkeypatch):
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        lege(tmp_path, "sha256:abc", 160)
+        lege(tmp_path, "sha256:abc", 320)
+        lege(tmp_path, "/a.jpg", 160)
+        assert th.drop_cached("/a.jpg", "abc") == 3
+        assert not list(tmp_path.rglob("*.jpg"))
+
+    def test_ohne_hash_bleibt_die_inhalts_kachel(self, tmp_path, monkeypatch):
+        """Die Grenze ehrlich benannt: ohne Hash nur der Pfad-Schluessel."""
+        import api.thumbs as th
+
+        monkeypatch.setattr(th, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(th, "LEGACY_CACHE", tmp_path / "alt")
+        lege(tmp_path, "sha256:abc", 160)
+        assert th.drop_cached("/a.jpg") == 0
+        assert len(list(tmp_path.rglob("*.jpg"))) == 1

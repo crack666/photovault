@@ -8,7 +8,7 @@
    Bilder à 6 px ohnehin Matsch; sichtbar bleibt dort ein Leitbild je
    Kontinent. */
 
-import { colorFor, spreadPoint } from "./model.js";
+import { FLAG, colorFor, spreadPoint } from "./model.js";
 import { thumbUrl } from "../core/api.js";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
@@ -307,6 +307,8 @@ export function createScene(canvas, model, hooks = {}) {
   const cam = { scale: 1, tx: 0, ty: 0 };
 
   let layout = "bedeutung";
+  /** Kontinente, deren Schild der letzte Frame gezeichnet hat. */
+  const labelsShown = new Set();
   let colorMode = "kontinent";
   let mode = "fotos";       // "fotos" | "serien"
   let minEventSize = 3;
@@ -1698,6 +1700,26 @@ export function createScene(canvas, model, hooks = {}) {
     stats.unruhe = repel ? Math.round(unruhe * 10) / 10 : 0;
   }
 
+  /** Abspiel-Dreieck in der Ecke einer Kachel -- klein, damit es das Bild nicht verdeckt. */
+  function drawPlayBadge(sx, sy, bw, bh) {
+    const r = Math.max(5, Math.min(11, bw * 0.16));
+    const cx = sx + bw / 2 - r - 3, cy = sy + bh / 2 - r - 3;
+    ctx.save();
+    ctx.globalAlpha = Math.min(ctx.globalAlpha, 0.9);
+    ctx.fillStyle = "rgba(10,12,16,0.75)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e8edf3";
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.35, cy - r * 0.5);
+    ctx.lineTo(cx + r * 0.55, cy);
+    ctx.lineTo(cx - r * 0.35, cy + r * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   /** Den Plan aufs Bild bringen -- und dabei messen, was es kostet. */
   function paintThumbs(picked) {
     let imgMs = 0;
@@ -1713,6 +1735,9 @@ export function createScene(canvas, model, hooks = {}) {
         ctx.lineWidth = 1.5;
         ctx.strokeRect(sx - bw / 2, sy - bh / 2, bw, bh);
       }
+      // Ein Video sieht auf der Karte aus wie ein Foto -- die Kachel ist
+      // sein Poster. Ohne Zeichen wundert man sich beim Klick.
+      if (model.fl[i] & FLAG.VIDEO) drawPlayBadge(sx, sy, bw, bh);
       ctx.globalAlpha = 1;
       imgMs += performance.now() - tImg;
       shown.push([i, sx - bw / 2, sy - bh / 2, bw, bh]);
@@ -1768,6 +1793,9 @@ export function createScene(canvas, model, hooks = {}) {
   function labelAt(sx, sy) {
     if (mode === "serien" || cam.scale > 6000) return -1;
     for (const c of model.clusters) {
+      // Nur, was der letzte Frame auch gezeichnet hat -- ein Klick darf
+      // kein Schild treffen, das der Kollisionsschutz weggelassen hat.
+      if (!labelsShown.has(c.i)) continue;
       const [wx, wy] = clusterAnchor(c.i);
       const cx = toScreenX(wx), cy = toScreenY(wy);
       const label = model.clusterLabel[c.i];
@@ -1797,13 +1825,27 @@ export function createScene(canvas, model, hooks = {}) {
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    for (const c of model.clusters) {
+    /* Grosse Kontinente zuerst, und ein Schild, das ein schon gezeichnetes
+       ueberdeckt, faellt weg. Die Themen-Anordnung hat 60 Schubladen auf
+       einer kompakten Karte -- Text-Einbettungen bilden eher einen Klumpen
+       als Inseln --, und ohne das lagen im Zentrum zwanzig Schilder
+       uebereinander. Beim Hineinzoomen ruecken sie auseinander und kommen
+       von selbst wieder. */
+    const placed = [];
+    labelsShown.clear();
+    const clusters = [...model.clusters].filter((c) => c.n > 0).sort((a, b) => b.n - a.n);
+    for (const c of clusters) {
       const [wx, wy] = clusterAnchor(c.i);
       const sx = toScreenX(wx), sy = toScreenY(wy);
       if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
       const label = model.clusterLabel[c.i];
       const weak = c.cap_share < 0.15;
-      ctx.font = `${weak ? 400 : 600} ${Math.min(15, 10 + c.n / 90)}px system-ui, sans-serif`;
+      const px = Math.min(15, 10 + c.n / 90);
+      const halfW = label.length * px * 0.3 + 6, halfH = px * 0.75;
+      if (placed.some((p) => Math.abs(p.x - sx) < p.hw + halfW && Math.abs(p.y - sy) < p.hh + halfH)) continue;
+      placed.push({ x: sx, y: sy, hw: halfW, hh: halfH });
+      labelsShown.add(c.i);
+      ctx.font = `${weak ? 400 : 600} ${px}px system-ui, sans-serif`;
       ctx.lineWidth = 3.5;
       ctx.strokeStyle = "rgba(10,12,16,0.85)";
       ctx.globalAlpha = strength * (weak ? 0.5 : 0.95);
@@ -2018,6 +2060,15 @@ export function createScene(canvas, model, hooks = {}) {
       layout = name;
       toX = model.layouts[name].x;
       toY = model.layouts[name].y;
+      /* Die Themen-Anordnung bringt ihre eigenen Kontinente mit. Der Satz
+         wird am Modell getauscht, damit alle Leser von `model.cl` den
+         richtigen sehen -- und die Farbeimer muessen neu, weil die Farbe
+         am Kontinent haengt. */
+      const wanted = model.layouts[name].clusterSet || "bedeutung";
+      if (wanted !== model.clusterSetName) {
+        model.useClusterSet(wanted);
+        rebuildBuckets();
+      }
       mix = 0;
       mixStart = performance.now();
       schedule();

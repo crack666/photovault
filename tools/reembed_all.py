@@ -71,6 +71,9 @@ def main() -> None:
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    from ingest.ollama_client import apply_llm_env
+
+    apply_llm_env()
     qc = client()
     ids = collect(qc, args.collection, args.prefix)
     if args.limit:

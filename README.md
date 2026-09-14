@@ -438,6 +438,18 @@ anderswo. Prompt-Floskeln fallen doppelt heraus — über eine Wortliste und
 aller Captions). Ein Kontinent ohne Captions bekommt keinen erfundenen Namen,
 sondern seine Tags und einen sichtbaren Vorbehalt.
 
+**Titel vom Sprachmodell, Rangwörter als Untertitel.** Vier Rangwörter sind
+die Ausgabe eines Rankings, kein Name — `nahaufnahme · gerät · kabel ·
+dunklen` beschriftet niemand so eine Schublade. Der Bau zeigt dem Modell
+hinter den Captions je Kontinent die Rangwörter und acht Beschreibungen und
+lässt es titeln: „Freizeit im Freien", „Klettern in der Halle". Wo ein Haufen
+kein Thema hat, sagt es das („Diverse Nahaufnahmen") — ehrlicher als
+Rangwörter, die eines vortäuschen. Ohne erreichbares Modell bleiben die
+Rangwörter; nach dem ersten Ausfall wird nicht weiter gefragt.
+`PHOTOVAULT_TITLE_MODEL` wählt einen anderen Pool-Alias, wenn das
+Caption-Modell dafür zu schwer ist (gemessen 2026-09-12: 27B mit 262k
+Kontext, rund eine Minute je Titel bei voller GPU).
+
 **Was die Karte nicht weiß: wer zu sehen ist.** CLIP kodiert, wie ein Bild
 *aussieht* — nicht, wer darauf ist. Ein Ganzkörper-Spiegelselfie landet neben
 anderen Ganzkörper-Spiegelselfies, gleich wer davorsteht: die zwölf nächsten
@@ -448,12 +460,29 @@ Kontinente (Strand, Dokumente, Skiurlaub) in Personenhaufen. Wer wissen will,
 wo eine Person liegt, wählt sie in der Leiste: ihre Fotos leuchten auf, der
 Rest tritt zurück. Beim Überfahren nennt die Karte ohnehin, wer bestätigt ist.
 
-Der Vektorraum ist umschaltbar: `--space text` legt die Karte über die
-grounded Textvektoren statt über CLIP, und „Mehr davon" nimmt `using=text`.
-Der Textvektor enthält Album, Datum, Personen und Caption — er antwortet auf
-„geht worum", nicht auf „sieht aus wie". Achtung: laut den Messungen in
-[docs/performance.md](docs/performance.md) liegen Fotos desselben Albums dort
-bei Cosinus 0,95–0,997; die Karte zeigt dann eher Alben als Themen.
+**Zwei Anordnungen, nicht eine gemischte.** Neben „Bedeutung" (Nähe heißt:
+sieht ähnlich aus) gibt es „Themen": dieselben Fotos, angeordnet und
+geclustert nach dem Textvektor ihrer Beschreibung — Nähe heißt: wird ähnlich
+beschrieben. Die visuellen Kontinente sind Bildstile (Nahaufnahmen, dunkle
+Innenräume, Himmel); die Themen sind Schubladen (`silvester · nacht · funken`,
+`tisch · teller · essen · restaurant`, `pferd · frisst · wiese`), mit 60
+statt 40, weil Themen feiner sind als Stile. Fotos ohne Beschreibung stehen
+dort, wo ihre zehn nächsten *visuellen* Nachbarn mit Beschreibung liegen —
+ihr Textvektor bestünde nur aus Metadaten, und ein Probebau ergab daraus
+sieben Haufen, die wörtlich nach dem Ordner hießen.
+
+Warum nicht beides in eine Distanz mischen: die 20 nächsten Nachbarn eines
+Fotos überlappen sich zwischen den beiden Räumen im Median zu 0,14 (gemessen
+2026-09-11 an 400 Fotos). Eine Mischung schärft die visuelle Karte nicht, sie
+ersetzt sie — und welche „richtig" ist, misst keine Metrik, die nicht auf
+einen der Räume voreingenommen wäre. Zwei Ansichten zeigen die Wahl, statt sie
+in Gewichten zu verstecken.
+
+Ein älterer Satz an dieser Stelle behauptete, die Textkarte zeige „eher Alben
+als Themen" (Album-Fotos bei Cosinus 0,95–0,997). Das galt, als der Textvektor
+fast nur Metadaten enthielt; mit 99,6 % Captions clustert er nach Themen.
+`--space text` legt weiterhin die *ganze* Karte auf den Textraum, wer das
+will; „Mehr davon" nimmt `using=text`.
 
 **Farbe trägt die Frage.** Umschaltbar auf Kontinent, Herkunft, Jahr — oder
 **Zustand**: wie weit ein Foto schon eingeordnet ist (Person, Beschreibung,
@@ -539,6 +568,26 @@ Prüfen, dass die Gesichtserkennung wirklich auf der GPU landet — ohne
 ```bash
 ~/.venvs/photovault/bin/python -c "import onnxruntime;print(onnxruntime.get_available_providers())"
 ```
+
+### Tests
+
+```bash
+~/.venvs/photovault/bin/python -m pytest -q
+```
+
+Ein Einstieg für alles: `pytest` nimmt auch die JavaScript-Tests des Atlas
+mit (`tests/js/*.test.mjs`, Nodes eingebauter Testläufer, keine
+Abhängigkeit) — über `node` im PATH oder, unter WSL, das Windows-Node per
+Interop. Fehlt beides, wird sichtbar übersprungen. Von Hand:
+`node --test tests/js/model.test.mjs`.
+
+Die Regel für neue Tests: **ein Warum, oder ein Pfad, der sonst still
+bricht.** Wer beides nicht nennen kann, schreibt ihn nicht. Gemessen am
+12.09.2026: 1.020 Tests, davon 164 mit einem einzigen `assert` gegen ein
+Literal — dünn ist nicht gleich sinnlos (ein 400 auf eine leere Liste ist ein
+Vertrag), aber „der Code sagt dasselbe" reicht nicht. Die Suite läuft in
+15–25 s; nicht die Zahl kostet, sondern Tests, die einen Umbau blockieren,
+ohne ein Verhalten zu schützen.
 
 ### Starten, ohne etwas zu beantworten
 
@@ -720,9 +769,10 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 | GET | `/api/ingest/state` | Lücken im Index (Fotos ohne Text-/CLIP-Vektor) |
 | GET | `/api/jobs` | Alle Jobs mit Fortschritt |
 | GET | `/api/jobs/{id}` | Ein Job |
+| POST | `/api/jobs/{id}/abort` | Lauf beenden — SIGTERM an die Prozessgruppe (nativ wie Docker) |
 | DELETE | `/api/jobs/{id}` | Einen Eintrag vergessen (nicht den Lauf) |
 | POST | `/api/jobs/prune` | Liste aufräumen — `what=aborted\|finished` |
-| POST | `/api/jobs/run` | Lauf starten — `caption\|reembed\|atlas` |
+| POST | `/api/jobs/run` | Lauf starten — `ingest\|faces\|caption\|reembed\|thumbs\|atlas` |
 | POST | `/api/ingest/start` | Ingest starten (Stub) |
 | GET | `/api/ingest/progress` | Stand des jüngsten Ingest-Laufs |
 | GET | `/api/ingest/stats` | Anzahl indizierter Fotos |
@@ -731,8 +781,11 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 
 `http://127.0.0.1:8000/jobs.html` zeigt alle Läufe mit Balken, Rate, ETA und
 aktuellem Ordner; die Seite pollt alle 2 s. Von dort lassen sich die langen
-Läufe auch **starten** — Bildbeschreibungen, Text-Vektoren, Karte — ohne eine
-Shell auf dem Rechner mit den Fotos.
+Läufe auch **starten** — Einlesen, Video-Gesichter, Bildbeschreibungen,
+Text-Vektoren, Karte — ohne eine Shell auf dem Rechner mit den Fotos.
+**Beenden** schickt SIGTERM an die Prozessgruppe des Laufs (ffmpeg-Kinder
+inklusive), denselben Weg nativ und im API-Container. `pkill` auf dem Host
+würde im Container niemanden finden; PID 1 dort ist uvicorn und bleibt unangetastet.
 
 Was gestartet werden darf, steht in `api.routes.jobs.RUNNABLE` und nirgends
 sonst. Die Oberfläche hat keine Anmeldung; diese Liste ist die einzige

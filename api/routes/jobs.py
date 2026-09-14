@@ -23,9 +23,17 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.capabilities import UNCHECKED, missing, ollama_models
+from api.capabilities import UNCHECKED, llm_models, missing
 from api.qdrant_util import client
-from ingest.jobs import COLLECTION, list_jobs
+from ingest.jobs import (
+    COLLECTION,
+    cmdline_is_job,
+    list_jobs,
+    mark_job_status,
+    pid_alive,
+    proc_cmdline,
+    terminate_group,
+)
 from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL
 
 logger = logging.getLogger(__name__)
@@ -63,23 +71,71 @@ class Runnable(BaseModel):
     needs_models: tuple[str, ...] = ()
     #: Was zu tun ist, wenn etwas fehlt.
     hint: str = ""
+    #: Der Lauf liest `sources.txt` (PHOTOVAULT_SOURCES). Ohne aktive Quelle
+    #: waere „gestartet" wieder eine Behauptung ohne Deckung.
+    needs_sources: bool = False
+
+
+def sources_path() -> Path:
+    """Dieselbe Datei, die die Haken unter den Knoepfen bearbeiten."""
+    raw = os.environ.get("PHOTOVAULT_SOURCES", "sources.txt")
+    p = Path(raw)
+    return p if p.is_absolute() else ROOT / p
+
+
+def sources_ready() -> str:
+    """Warum Einlesen jetzt nicht geht — oder leer, wenn es geht."""
+    path = sources_path()
+    if not path.is_file():
+        return (f"Keine sources.txt ({path}). Unten einen Ordner als Quelle "
+                "hinzufügen.")
+    try:
+        from ingest import sources as src
+
+        book = src.read(str(path))
+    except Exception as e:
+        return f"sources.txt nicht lesbar: {e}"
+    if not any(e.enabled and not e.exclude for e in book.entries):
+        return "Keine aktive Quelle. Unten mindestens einen Ordner anhaken."
+    return ""
 
 
 RUNNABLE: dict[str, Runnable] = {
+    "ingest": Runnable(
+        module="ingest.pipeline", kind="ingest", gpu=True,
+        argv=("--skip-caption",),
+        flags=("dry_run", "limit"),
+        needs_sources=True,
+        hint="Unten die Ordner als Quelle anhaken.",
+        label="Neue Dateien einlesen",
+        note="Ordner unten, nur was noch nicht im Index liegt. Fotos: Gesichter "
+             "und CLIP. Videos: nur Poster. Beschreibungen und Video-Gesichter "
+             "sind die Läufe daneben — dazwischen Namen unter Wer ist das?",
+    ),
+    "faces": Runnable(
+        module="ingest.face_pass", kind="faces", gpu=True,
+        argv=("--kind", "video"),
+        flags=("dry_run", "limit"),
+        hint="insightface auf der Grafikkarte. Nicht zusammen mit Captions oder Embeddings.",
+        label="Gesichter in Videos finden",
+        note="Nach dem Einlesen. ffmpeg holt Frames parallel in den Speicher, "
+             "insightface läuft auf einem Thread — Namen vergibt niemand still.",
+    ),
     "caption": Runnable(
         module="ingest.caption_pass", kind="caption", gpu=True,
         flags=("dry_run", "limit"),
         needs_models=(CAPTION_MODEL,),
-        hint=f"Ollama starten und `ollama pull {CAPTION_MODEL}`. "
-             "Ohne Ollama funktioniert alles außer den Beschreibungen.",
+        hint=f"LiteLLM starten; Pool `{CAPTION_MODEL}` muss in der Config stehen. "
+             "Ohne den Pool funktionieren alle anderen Funktionen weiter.",
         label="Bildbeschreibungen erzeugen",
-        note="Vision-Modell über alle Fotos ohne Beschreibung. Stunden, nicht Minuten.",
+        note="Erst wenn die Namen sitzen. Vision-Modell über Medien ohne "
+             "Beschreibung. Stunden, nicht Minuten.",
     ),
     "reembed": Runnable(
         module="tools.reembed_all", kind="reembed", gpu=True,
         flags=("dry_run", "limit"),
         needs_models=(EMBED_MODEL,),
-        hint=f"Ollama starten und `ollama pull {EMBED_MODEL}`.",
+        hint=f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
         label="Text-Vektoren neu bauen",
         note="Nach neuen Captions, Namen, Notizen — oder wenn sich die Regel geändert hat.",
     ),
@@ -118,10 +174,15 @@ def missing_requirements(spec: Runnable, models: Any = UNCHECKED) -> str:
     Oberfläche fragt. Zwei Wahrheiten darüber, was diese Installation kann,
     wären eine zu viel.
     """
-    return missing(
+    blocked = missing(
         modules=spec.needs_modules, models=spec.needs_models,
         hint=spec.hint, have_models=models,
     )
+    if blocked:
+        return blocked
+    if spec.needs_sources:
+        return sources_ready()
+    return ""
 
 
 @router.get("")
@@ -152,7 +213,7 @@ def all_jobs(limit: int = 20, offset: int = 0, kind: Optional[str] = None) -> di
 
 
 def _runnable_state(running: list[dict]) -> list[dict]:
-    models = ollama_models() if any(r.needs_models for r in RUNNABLE.values()) else None
+    models = llm_models() if any(r.needs_models for r in RUNNABLE.values()) else None
     out = []
     for key, r in RUNNABLE.items():
         blocked = missing_requirements(r, models)
@@ -219,6 +280,85 @@ def one_job(job_id: str) -> dict:
     raise HTTPException(404, "Job nicht gefunden")
 
 
+@router.post("/{job_id}/abort")
+def abort_job(job_id: str) -> dict:
+    """Lauf beenden. Dieselbe Prozessgruppe, nativ und im Container.
+
+    Der Start setzt `start_new_session=True`: der Python-Lauf ist Leiter
+    seiner Gruppe, ffmpeg-Kinder gehoeren dazu. SIGTERM an die Gruppe —
+    kein `pkill`, kein `docker kill`. PID 1 im Container ist uvicorn;
+    den prueft `cmdline_is_job` und lehnt ihn ab.
+
+    Laeuft der Eintrag auf einem anderen Host (Compose-Container vs.
+    `start-local.sh`), steht die PID in der anderen Namespace. Dann
+    abbrechen, wo der Lauf wirklich gestartet wurde.
+    """
+    import signal
+    import socket
+
+    q = client()
+    job = next((j for j in list_jobs(q, limit=10_000) if j.get("job_id") == job_id), None)
+    if job is None:
+        raise HTTPException(404, "Job nicht gefunden")
+    status = job.get("status")
+    if status not in ("running", "stale"):
+        raise HTTPException(409, f"Der Lauf läuft nicht mehr ({status}).")
+
+    host = str(job.get("host") or "")
+    here = socket.gethostname()
+    if host and host != here:
+        raise HTTPException(
+            409,
+            f"Dieser Lauf läuft auf {host}, nicht hier ({here}). "
+            "Beenden dort, wo er gestartet wurde — nativ und Docker "
+            "teilen sich keine Prozess-IDs.",
+        )
+
+    try:
+        pid = int(job.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+
+    signalled = False
+    if pid > 1 and pid_alive(pid):
+        cmd = proc_cmdline(pid)
+        kind = str(job.get("kind") or "")
+        if not cmd:
+            raise HTTPException(
+                409,
+                "Prozess lebt, aber die Kommandozeile ist hier nicht lesbar. "
+                "Abbruch verweigert.",
+            )
+        if not cmdline_is_job(cmd, kind):
+            raise HTTPException(
+                409,
+                "Die PID gehört nicht zu diesem Lauf — Abbruch verweigert, "
+                "damit nicht der API-Prozess stirbt.",
+            )
+        try:
+            terminate_group(pid)
+            signalled = True
+        except ProcessLookupError:
+            signalled = False
+        except PermissionError as e:
+            raise HTTPException(500, f"Kein Recht, den Lauf zu beenden: {e}") from e
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
+
+        deadline = time.time() + 2.0
+        while pid_alive(pid) and time.time() < deadline:
+            time.sleep(0.1)
+        if pid_alive(pid):
+            try:
+                terminate_group(pid, sig=getattr(signal, "SIGKILL", signal.SIGTERM))
+            except (ProcessLookupError, PermissionError, ValueError, OSError):
+                logger.warning("SIGKILL for job %s pid %s failed", job_id, pid)
+
+    mark_job_status(q, job_id, "aborted", phase="aborted")
+    logger.info("Job %s aborted (pid %s, signalled=%s)", job_id, pid, signalled)
+    return {"aborted": job_id, "pid": pid or None, "signalled": signalled}
+
+
 @router.delete("/{job_id}")
 def forget_job(job_id: str) -> dict:
     """Einen Eintrag aus der Liste nehmen.
@@ -259,7 +399,7 @@ class PruneRequest(BaseModel):
     verlaessliche Trennung: laeuft noch, oder laeuft nicht mehr.
     """
 
-    #: `aborted` = nur Abgebrochenes (kein Lebenszeichen mehr).
+    #: `aborted` = von Hand beendet oder ohne Lebenszeichen (`stale`).
     #: `finished` = alles, was nicht mehr laeuft.
     what: Literal["aborted", "finished"] = "aborted"
     #: Nur Einträge, die älter sind als so viele Stunden. 0 = alle.
@@ -284,7 +424,10 @@ def doomed_jobs(
         kind = job.get("kind") or "?"
         seen = kept_per_kind.get(kind, 0)
         status = job.get("status")
-        removable = status != "running" and (what == "finished" or status == "stale")
+        if what == "finished":
+            removable = status != "running"
+        else:
+            removable = status in ("stale", "aborted")
         too_young = cutoff is not None and (job.get("updated_at") or 0) > cutoff
         if seen < keep_per_kind or not removable or too_young:
             kept_per_kind[kind] = seen + 1
@@ -323,7 +466,7 @@ def prune_jobs(req: PruneRequest) -> dict:
 
 
 class RunRequest(BaseModel):
-    job: Literal["caption", "reembed", "atlas"]
+    job: Literal["ingest", "faces", "caption", "reembed", "thumbs", "atlas"]
     #: Trockenlauf, wo das Werkzeug einen anbietet -- zählt und schätzt, schreibt nichts.
     dry_run: bool = False
     #: Obergrenze, um in Häppchen zu arbeiten.
@@ -339,6 +482,8 @@ def build_argv(spec: Runnable, *, dry_run: bool, limit: Optional[int]) -> list[s
     Start unerklaerlich, mit dem Fehler im Protokoll statt in der Antwort.
     """
     argv = [sys.executable, "-m", spec.module, *spec.argv]
+    if spec.needs_sources:
+        argv += ["--sources-file", str(sources_path())]
     if dry_run and "dry_run" in spec.flags:
         argv.append("--dry-run")
     if limit and "limit" in spec.flags:
@@ -371,11 +516,13 @@ def run_job(req: RunRequest) -> dict:
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{req.job}-{int(time.time())}.log"
+    env = os.environ.copy()
+    env["PHOTOVAULT_JOB_CHILD"] = "1"
     try:
         with log_path.open("ab") as log:
             proc = subprocess.Popen(  # noqa: S603 -- feste Liste, keine Shell
                 argv, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, start_new_session=True,
+                stdin=subprocess.DEVNULL, start_new_session=True, env=env,
             )
     except Exception as e:
         logger.exception("Job start failed")

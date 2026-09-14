@@ -49,11 +49,38 @@ export function showLightbox(photos, index) {
   openLightbox(index);
 }
 
+function showMedia(ph, d) {
+  const id = ph.id;
+  const video = (d && d.kind ? d.kind : ph.kind) === "video";
+  const thumb = `/api/photos/${encodeURIComponent(id)}/thumb?size=1280`;
+  $("lb-img").classList.toggle("hidden", video);
+  const player = $("lb-video");
+  if (!player) {
+    $("lb-img").src = thumb;
+    return;
+  }
+  player.classList.toggle("hidden", !video);
+  if (video) {
+    player.poster = thumb;
+    const src = `/api/photos/${encodeURIComponent(id)}/media`;
+    if (player.dataset.for !== id) {
+      player.pause();
+      player.src = src;
+      player.dataset.for = id;
+    }
+  } else {
+    player.pause();
+    player.removeAttribute("src");
+    player.dataset.for = "";
+    $("lb-img").src = thumb;
+  }
+}
+
 function openLightbox(i) {
   lbIndex = Math.max(0, Math.min(i, lbPhotos.length - 1));
   const ph = lbPhotos[lbIndex];
   if (!ph) return;
-  $("lb-img").src = `/api/photos/${encodeURIComponent(ph.id)}/thumb?size=1280`;
+  showMedia(ph, ph);
   const parts = [ph.caption_display, ph.caption_de].filter(Boolean);
   $("lb-cap").innerHTML = `${parts.map(escapeHtml).join("<br>")}
     <span class="muted"> — ${lbIndex + 1} von ${lbPhotos.length}</span>`;
@@ -117,6 +144,7 @@ async function loadPhotoInfo(id, opts = {}) {
   try { d = await api(`/api/photos/${encodeURIComponent(id)}`); }
   catch (e) { dl.innerHTML = `<dt class='muted'>Fehler</dt><dd>${escapeHtml(e.message)}</dd>`; return; }
   $("lb-info").dataset.photoId = id;
+  showMedia(lbPhotos[lbIndex] || { id }, d);
 
   const fmtSize = (b) => b ? `${(b / 1048576).toFixed(1)} MB` : null;
   const dateLine = d.date
@@ -128,6 +156,9 @@ async function loadPhotoInfo(id, opts = {}) {
   // Die Kennung zuerst: sie ist das, was sich in einem Chat benennen lässt.
   const rows = [
     ["Kennung", id],
+    ["Medium", d.kind === "video" ? "Video" : "Foto"],
+    ["Dauer", d.kind === "video" && d.duration_s
+      ? `${Math.round(Number(d.duration_s))} s` : null],
     ["Aufnahmedatum", dateLine],
     ["Album", d.folder_name],
     ["Serie", d.event_name],
@@ -246,6 +277,12 @@ async function trashFromLightbox(id, back) {
 function closeLightbox() {
   $("lightbox").classList.add("hidden");
   rememberPhoto(null);
+  const player = $("lb-video");
+  if (player) {
+    player.pause();
+    player.removeAttribute("src");
+    player.dataset.for = "";
+  }
   fillMap(null);
   fillFileWarn(null);
 }

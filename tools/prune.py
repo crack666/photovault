@@ -45,10 +45,10 @@ def covered(path: str, sources: list[str], exclude: list[str]) -> bool:
         return False
     from pathlib import Path
 
-    from ingest.scanner import IMAGE_EXTENSIONS, SKIP_NAMES
+    from ingest.scanner import MEDIA_EXTENSIONS, SKIP_NAMES
 
     name = rest[-1] if rest else ""
-    if name.lower() in SKIP_NAMES or Path(name).suffix.lower() not in IMAGE_EXTENSIONS:
+    if name.lower() in SKIP_NAMES or Path(name).suffix.lower() not in MEDIA_EXTENSIONS:
         return False
     return True
 

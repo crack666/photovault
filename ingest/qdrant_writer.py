@@ -38,6 +38,7 @@ class QdrantWriter:
         ("taken_at", "DATETIME"),
         ("event_name", "KEYWORD"),
         ("space", "KEYWORD"),
+        ("kind", "KEYWORD"),
         ("trashed_at", "DATETIME"),
     )
 
@@ -158,6 +159,9 @@ class QdrantWriter:
             "photo_id": record.photo_id,
             "content_sha256": getattr(record, "content_sha256", None),
             "file_path": record.file_path,
+            "kind": getattr(record, "kind", None) or "photo",
+            "duration_s": getattr(record, "duration_s", None),
+            "poster_ss": getattr(record, "poster_ss", None),
             "person_ids": record.person_ids,
             "face_count": record.face_count,
             "face_boxes": record.face_boxes,
@@ -230,7 +234,14 @@ class QdrantWriter:
             vec = face.get("embedding")
             if not vec:
                 continue
-            face_key = f"{record.photo_id}:{i}:{face.get('box')}"
+            # Ohne Zeitpunkt bleibt der Schluessel wie bei Fotos -- sonst
+            # wuerde ein Re-Ingest neue IDs erzeugen und die vergebenen
+            # Namen nicht mehr finden.
+            ss = face.get("frame_ss")
+            if ss is None:
+                face_key = f"{record.photo_id}:{i}:{face.get('box')}"
+            else:
+                face_key = f"{record.photo_id}:{ss}:{i}:{face.get('box')}"
             fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, face_key))
             prepared.append((fid, vec, face))
         if not prepared:
@@ -272,6 +283,7 @@ class QdrantWriter:
                 "score": face.get("score"),
                 "landmarks": face.get("landmarks"),
                 "frontality": face.get("frontality"),
+                "frame_ss": face.get("frame_ss"),
                 **existing.get(fid, {}),
             }
             points.append(PointStruct(id=fid, vector=vec, payload=payload))

@@ -6,8 +6,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 RE_SEQUENCE = re.compile(r"(IMG|DSCF|DSC|DSCI|PICT|IMGP|PANO|DJI|VID|P)[-_]?(\d{3,6})(?!\d)", re.IGNORECASE)
 RE_DATE_IN_NAME = re.compile(r"(\d{4})[-_](\d{2})[-_](\d{2})")
-# WhatsApp: IMG-20181021-WA0120.jpg -> Datum 2018-10-21, Sequenz 120
-RE_WHATSAPP = re.compile(r"IMG-(\d{4})(\d{2})(\d{2})-WA(\d+)", re.IGNORECASE)
+# WhatsApp: IMG-20181021-WA0120.jpg / VID-20181021-WA0001.mp4
+RE_WHATSAPP = re.compile(r"(?:IMG|VID)-(\d{4})(\d{2})(\d{2})-WA(\d+)", re.IGNORECASE)
 # Kompakt: 20130515_223527.jpg / IMG_20160423_101500.jpg -> 2013-05-15
 RE_COMPACT_DATE = re.compile(
     r"(?<!\d)(19\d{2}|20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)"

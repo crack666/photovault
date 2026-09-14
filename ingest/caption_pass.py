@@ -46,7 +46,7 @@ BATCH = 24
 class Photo:
     """Ein Foto aus Qdrant, so wie der Caption-Schritt es braucht."""
 
-    __slots__ = ("point_id", "payload", "file_path", "image_b64",
+    __slots__ = ("point_id", "payload", "file_path", "image_b64", "image_b64s",
                  "caption_de", "scene_tags", "failed")
 
     def __init__(self, point_id: Any, payload: dict):
@@ -54,6 +54,7 @@ class Photo:
         self.payload = payload
         self.file_path: str = payload.get("file_path") or ""
         self.image_b64: Optional[str] = None
+        self.image_b64s: list[str] = []
         self.caption_de: Optional[str] = None
         self.scene_tags: list[str] = list(payload.get("scene_tags") or [])
         self.failed: bool = False
@@ -83,6 +84,7 @@ def payload_context(payload: dict) -> dict:
         "people_assigned": list(payload.get("person_names") or []),
         "people_album": list(payload.get("folder_people") or []),
         "clip_tags": list(payload.get("scene_tags") or []),
+        "kind": payload.get("kind") or "photo",
     }
 
 
@@ -92,11 +94,16 @@ def build_filter(
     album: Optional[str] = None,
     path_contains: Optional[str] = None,
     has_caption: bool = False,
+    kind: Optional[str] = None,
+    skip_locked: bool = True,
 ):
     """Qdrant-Filter fuer die Auswahl. `caption_locked` bleibt beim LLM-Lauf aussen vor.
 
     `has_caption` ist der EXIF-Abgleich: Satz steht schon im Index, soll in
     die Datei. Von-Hand-Sätze (`caption_locked`) gehören dort *hinein*.
+
+    `skip_locked=False` braucht der Gesichts-Lauf: ein festgehaltener Satz
+    aendert nichts daran, dass auf dem Clip noch niemand erkannt wurde.
     """
     from qdrant_client.models import (
         FieldCondition, Filter, IsEmptyCondition, MatchText, MatchValue, PayloadField,
@@ -104,7 +111,7 @@ def build_filter(
 
     must: list = []
     must_not: list = []
-    if not has_caption:
+    if skip_locked and not has_caption:
         must_not.append(FieldCondition(key="caption_locked", match=MatchValue(value=True)))
     if missing_only:
         must_not.append(FieldCondition(key="caption_source", match=MatchValue(value="llm")))
@@ -116,6 +123,14 @@ def build_filter(
         must.append(FieldCondition(key="folder_name", match=MatchText(text=album)))
     if path_contains:
         must.append(FieldCondition(key="file_path", match=MatchText(text=path_contains)))
+    want = (kind or "").strip().lower()
+    if want == "video":
+        must.append(FieldCondition(key="kind", match=MatchValue(value="video")))
+    elif want in ("photo", "photos", "image", "images"):
+        must.append(Filter(should=[
+            FieldCondition(key="kind", match=MatchValue(value="photo")),
+            IsEmptyCondition(is_empty=PayloadField(key="kind")),
+        ]))
     return Filter(must=must or None, must_not=must_not or None)
 
 
@@ -162,19 +177,46 @@ def select_photos(
 
 
 def _load_image(photo: Photo) -> bool:
-    """Foto vom NAS holen und verkleinern. Laeuft im Leser-Pool.
+    """Foto oder Video-Frames vom NAS holen und verkleinern. Laeuft im Leser-Pool.
 
     Mit Wiederholung, weil ein Neustart des SMB-Dienstes sonst dutzende Fotos
     als "unlesbar" abstempelt, mit denen nichts ist.
     """
     try:
-        photo.image_b64 = retry_io(lambda: jpeg_b64(photo.file_path),
-                                   what=photo.file_path)
-        return True
+        from ingest.media import is_video
+
+        if is_video(photo.file_path) or (photo.payload.get("kind") == "video"):
+            photo.image_b64s = retry_io(
+                lambda: _video_frames_b64(photo.file_path),
+                what=photo.file_path,
+            )
+            photo.image_b64 = photo.image_b64s[0] if photo.image_b64s else None
+        else:
+            photo.image_b64 = retry_io(
+                lambda: jpeg_b64(photo.file_path),
+                what=photo.file_path,
+            )
+            photo.image_b64s = [photo.image_b64] if photo.image_b64 else []
+        return bool(photo.image_b64)
     except Exception as e:
         logger.warning("Unreadable, skipping: %s (%s)", photo.file_path, e)
         photo.failed = True
         return False
+
+
+def _video_frames_b64(file_path: str) -> list[str]:
+    """Drei (oder ein) Frames als JPEG-base64 -- Originale bleiben unangetastet."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from ingest.video import sample_jpegs
+
+    out: list[str] = []
+    for data in sample_jpegs(file_path):
+        img = Image.open(BytesIO(data))
+        out.append(jpeg_b64(file_path, image=img))
+    return out
 
 
 def run(
@@ -234,9 +276,13 @@ def run(
 
     def caption_one(photo: Photo) -> None:
         structured = captioner.caption_structured(
-            photo.file_path, payload_context(photo.payload), image_b64=photo.image_b64
+            photo.file_path,
+            payload_context(photo.payload),
+            image_b64=photo.image_b64,
+            images_b64=photo.image_b64s or None,
         )
         photo.image_b64 = None
+        photo.image_b64s = []
         if not structured:
             photo.failed = True
             return
@@ -343,6 +389,13 @@ def _write_file_captions(photos: list[Photo], stats: dict) -> None:
         if not text:
             stats["exif_skipped"] = stats.get("exif_skipped", 0) + 1
             continue
+        from ingest.media import is_video
+
+        if is_video(photo.file_path) or (photo.payload or {}).get("kind") == "video":
+            # piexif schreibt JPEG. Ein Video bleibt unangetastet -- der Satz
+            # lebt im Index, spaeter im eigenen Feld `transcript`.
+            stats["exif_skipped"] = stats.get("exif_skipped", 0) + 1
+            continue
         source = (photo.payload or {}).get("caption_source") or "llm"
         try:
             out = retry_io(
@@ -398,6 +451,8 @@ def main() -> None:
     parser.add_argument("--person", help="Nur Fotos mit dieser bestaetigten Person")
     parser.add_argument("--album", help="Nur Fotos aus Alben, deren Name diesen Text enthaelt")
     parser.add_argument("--path", dest="path_contains", help="Nur Pfade, die diesen Text enthalten")
+    parser.add_argument("--kind", choices=("video", "photo"), default=None,
+                        help="Nur Videos oder nur Fotos")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--workers", type=int, default=4,
                         help="Gleichzeitige Caption-Anfragen (4 ist das Optimum)")
@@ -417,6 +472,9 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+    from ingest.ollama_client import apply_llm_env
+
+    apply_llm_env()
     from qdrant_client import QdrantClient
 
     client = QdrantClient(url=args.qdrant_url)
@@ -436,6 +494,7 @@ def main() -> None:
         person=args.person,
         album=args.album,
         path_contains=args.path_contains,
+        kind=args.kind,
     )
 
 

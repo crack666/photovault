@@ -35,6 +35,7 @@ import collections
 import json
 import logging
 import math
+import random
 import re
 import time
 from datetime import datetime, timezone
@@ -49,7 +50,9 @@ from ingest.spaces import assign
 logger = logging.getLogger(__name__)
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "web" / "static" / "atlas"
-FORMAT_VERSION = 1
+#: 2: `clusters[].title` (Sprachmodell) und die Themen-Anordnung unter
+#: `themes`. Beides additiv -- eine aeltere Oberflaeche ignoriert es.
+FORMAT_VERSION = 2
 
 #: Ab hier gelten zwei Fotos als dieselbe Aufnahme. 0.95 traf an diesem
 #: Bestand BURST-Serien und Salven, ohne benachbarte Motive einzusammeln;
@@ -73,6 +76,41 @@ STOPWORDS = set(
     kamera hand hände gemeinsam jeweils scheint wirkt handelt trägt getragen weiteres
     """.split()
 )
+
+#: Zeitwoerter beschreiben kein Motiv. Sie stehen in jeder Caption
+#: ("aufgenommen am 12. März 2023"), sind aber je Monat selten genug, um die
+#: Dokumentfrequenz-Schranke zu unterlaufen -- und wurden so Kontinentname:
+#: `august` in zwei von 40, `märz` in zwei, dazu `september`, `juni`,
+#: `montag`. Die Zeit hat die Karte laengst, als Jahresbaender.
+STOPWORDS |= set(
+    """
+    januar februar märz april mai juni juli august september oktober november dezember
+    montag dienstag mittwoch donnerstag freitag samstag sonntag woche wochenende
+    täglichen täglich morgens mittags abends nachts
+    """.split()
+)
+
+#: Unterlagen und Fuellwoerter. `holzoberfläche` wurde Name eines Haufens
+#: aus 480 Nahaufnahmen von Dingen: es stand in 37 Beschreibungen, immer als
+#: das, worauf etwas *liegt* ("auf einer hellen Holzoberfläche"), und
+#: gewann, weil es im ganzen Bestand so selten ist, dass die PMI explodiert.
+#: Ein Unterlage-Wort beschreibt nie das Motiv -- anders als `tisch`, der
+#: bei `flasche · bier · glas · tisch` die Szene *ist* und deshalb bleibt.
+#: `szene` und `einen` sind Floskeln dieses Caption-Modells, die beim
+#: Nachruecken sichtbar wurden.
+STOPWORDS |= set(
+    """
+    oberfläche holzoberfläche tischplatte untergrund unterlage laminatboden fußboden
+    szene einen
+    """.split()
+)
+
+#: Mindestanteil der Captions eines Kontinents, in denen ein Wort stehen
+#: muss. Gemessen an allen 40 Kontinenten: 10 % waere ein Netto-Verlust --
+#: es nimmt `abiball · silvester`, `funken`, `videospiel`, `straße · gebäude`
+#: mit, lauter unterscheidende Ereignis- und Motivwoerter, die eben auch bei
+#: 5-10 % liegen, und laesst Fuellwoerter nachruecken. 5 % bleibt.
+MIN_SHARE = 0.05
 
 _RE_WORD = re.compile(r"[a-zA-ZÄÖÜäöüß]{4,}")
 
@@ -100,6 +138,7 @@ FLAG_NO_CLOCK = 1 << 5  #: Datum ohne echte Uhrzeit
 FLAG_FACES_UNNAMED = 1 << 6  #: Gesichter erkannt, keines benannt
 FLAG_IN_STACK = 1 << 7  #: Teil eines Nahduplikat-Stapels
 FLAG_STACK_HEAD = 1 << 8  #: das gezeigte Bild dieses Stapels
+FLAG_VIDEO = 1 << 9  #: ein Video -- die Kachel zeigt sein Poster, nicht das Ganze
 
 
 # --------------------------------------------------------------------------
@@ -149,6 +188,7 @@ def load_points(qc: Any, space: str, limit: int | None = None) -> tuple[np.ndarr
                     "face_count": int(payload.get("face_count") or 0),
                     "folder": payload.get("folder_name") or "",
                     "file_path": payload.get("file_path") or "",
+                    "kind": payload.get("kind") or "photo",
                 }
             )
         if offset is None or (limit and len(meta) >= limit):
@@ -329,8 +369,8 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
         scored = []
         for term, seen_here in hits[c].items():
             # Ein Wort aus einer einzigen Caption beschreibt ein Foto, keinen
-            # Kontinent -- und unter 5 % der Captions ist es Beifang.
-            if seen_here < 3 or seen_here / local < 0.05:
+            # Kontinent -- und unter MIN_SHARE der Captions ist es Beifang.
+            if seen_here < 3 or seen_here / local < MIN_SHARE:
                 continue
             p_all = doc_freq[term] / n_docs
             if p_all > MAX_DOC_FREQ:
@@ -343,11 +383,216 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
         scored.sort(reverse=True)
         out.append(
             {
-                "terms": [t for _, t in scored[:top_n]],
+                "terms": distinct_stems([t for _, t in scored], top_n),
                 "cap_share": round(int(captioned[c]) / max(size, 1), 3),
             }
         )
     return out
+
+
+def distinct_stems(terms: list[str], top_n: int) -> list[str]:
+    """Die ersten `top_n` Begriffe, ohne dass einer den Stamm eines anderen
+    wiederholt.
+
+    Vier Plaetze hat ein Kontinentname, und in 9 von 40 war einer davon
+    verschenkt: `kinder · kindern`, `autos · auto`, `schlafen · schläft`,
+    `verschneite · verschneiten`, `holzoberfläche · oberfläche`. Zwei
+    Formen desselben Worts sagen nicht mehr als eine.
+
+    Kein Stemmer -- der muesste deutsche Flexion kennen und kaeme mit dem
+    naechsten Caption-Modell aus dem Tritt. Stattdessen der gemeinsame
+    Anfang: teilen sich zwei Begriffe die ersten vier Buchstaben und ist
+    einer im anderen enthalten oder unterscheiden sie sich nur in der
+    Endung, bleibt der besser bewertete. `kind`/`kinder` faellt zusammen,
+    `oberfläche`/`holzoberfläche` ebenso (Teilwort am Ende); `garten`/`gas`
+    nicht.
+    """
+    def verwandt(a: str, b: str) -> bool:
+        if a == b:
+            return True
+        kurz, lang = (a, b) if len(a) <= len(b) else (b, a)
+        if len(kurz) < 4:
+            return False
+        # Teilwort: `oberfläche` in `holzoberfläche`, `kind` in `kinder`.
+        if kurz in lang and (lang.startswith(kurz) or lang.endswith(kurz)):
+            return True
+        # Flexion: gleicher Anfang, Rest ist nur Endung (<= 3 Zeichen je Seite).
+        gemeinsam = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            gemeinsam += 1
+        return gemeinsam >= 5 and len(a) - gemeinsam <= 3 and len(b) - gemeinsam <= 3
+
+    out: list[str] = []
+    for t in terms:
+        if any(verwandt(t, d) for d in out):
+            continue
+        out.append(t)
+        if len(out) >= top_n:
+            break
+    return out
+
+
+def describe_clusters(labels: np.ndarray, coords: np.ndarray, meta: list[dict],
+                      heads: set[int], k: int) -> list[dict]:
+    """Je Kontinent: Rangwoerter, Schwerpunkt, Leitbild, Jahre.
+
+    Einmal fuer die visuelle Anordnung, einmal fuer die Themen -- derselbe
+    Eintrag, damit die Oberflaeche beide gleich behandeln kann.
+    """
+    label_info = label_clusters(labels, meta, k)
+    out = []
+    for c in range(k):
+        idx = np.nonzero(labels == c)[0]
+        if not len(idx):
+            out.append({"i": c, "terms": [], "cap_share": 0.0, "from_tags": True,
+                        "n": 0, "x": 0.5, "y": 0.5, "cover": None, "years": []})
+            continue
+        centroid = coords[idx].mean(axis=0)
+        # Leitbild = das Foto, das dem Schwerpunkt am naechsten liegt und
+        # nicht in einem Stapel versteckt ist.
+        order = np.argsort(((coords[idx] - centroid) ** 2).sum(axis=1))
+        cover = next((int(idx[o]) for o in order if int(idx[o]) in heads), int(idx[order[0]]))
+        info = label_info[c]
+        terms = info["terms"] or fallback_terms(labels, meta, c)
+        years = collections.Counter(
+            (meta[i]["taken_at"] or "")[:4] for i in idx if meta[i]["taken_at"]
+        )
+        out.append(
+            {
+                "i": c,
+                "terms": terms,
+                "cap_share": info["cap_share"],
+                "from_tags": not info["terms"],
+                "n": int(len(idx)),
+                "x": round(float(centroid[0]), 4),
+                "y": round(float(centroid[1]), 4),
+                "cover": meta[cover]["id"],
+                "years": [[y, n] for y, n in years.most_common(3)],
+            }
+        )
+    return out
+
+
+def load_second(qc: Any, ids: list[str], space: str, batch: int = 512) -> np.ndarray:
+    """Einen zweiten Vektor zu denselben Fotos -- NaN-Zeilen, wo er fehlt.
+
+    Getrennt von `load_points`, damit die Fotomenge der Karte die der
+    ersten Anordnung bleibt. Eine Anordnung mit anderen Fotos als die
+    andere waere keine zweite Sicht auf dieselbe Karte, sondern eine
+    zweite Karte.
+    """
+    dim = None
+    rows: list[list[float] | None] = [None] * len(ids)
+    pos = {pid: i for i, pid in enumerate(ids)}
+    for start in range(0, len(ids), batch):
+        for p in qc.retrieve(collection_name=PHOTOS, ids=ids[start:start + batch],
+                             with_payload=False, with_vectors=[space]):
+            vec = (p.vector or {}).get(space)
+            if vec:
+                rows[pos[str(p.id)]] = vec
+                dim = dim or len(vec)
+    if dim is None:
+        return np.full((len(ids), 1), np.nan, dtype=np.float32)
+    out = np.full((len(ids), dim), np.nan, dtype=np.float32)
+    for i, r in enumerate(rows):
+        if r is not None:
+            out[i] = r
+    logger.info("%d von %d Punkten mit %s-Vektor", sum(r is not None for r in rows), len(ids), space)
+    return out
+
+
+#: Wieviele visuelle Nachbarn ueber Platz und Kontinent eines Fotos ohne
+#: Beschreibung abstimmen.
+THEME_VOTERS = 10
+
+
+def theme_layout(Xn: np.ndarray, Xt: np.ndarray, meta: list[dict], k: int
+                 ) -> tuple[np.ndarray, np.ndarray]:
+    """Positionen und Kontinente der Themen-Anordnung.
+
+    Grundlage ist der Text-Vektor -- aber nur bei Fotos *mit* Beschreibung.
+    Ohne Beschreibung besteht er allein aus Metadaten (Ordner, Datum,
+    Namen), und im Text-Raum ballen sich solche Fotos zu Haufen, die
+    woertlich nach dem Ordner heissen: `oneplus · nord`. Gemessen an einem
+    Probebau: sieben Kontinente ohne eine einzige Beschreibung.
+
+    Fotos ohne Beschreibung bekommen deshalb Platz und Kontinent von ihren
+    *visuellen* Nachbarn -- den zehn naechsten im Bild-Raum, die eine
+    Beschreibung haben. Sie landen dort, wo Fotos liegen, die aussehen wie
+    sie. Das ist eine Schaetzung, und die Oberflaeche zeichnet sie
+    gedaempft; aber eine begruendete Schaetzung ist besser als ein Haufen,
+    der nach einem Ordner heisst.
+    """
+    hat_text = ~np.isnan(Xt).any(axis=1)
+    hat_caption = np.asarray([bool(m["caption"]) for m in meta])
+    fest = hat_text & hat_caption
+    if fest.sum() < k:
+        raise SystemExit(f"Nur {int(fest.sum())} Fotos mit Beschreibung und Text-Vektor -- "
+                         f"zu wenig fuer {k} Themen.")
+
+    Xtn = Xt[fest] / (np.linalg.norm(Xt[fest], axis=1, keepdims=True) + 1e-9)
+    coords_fest = to_unit(project(Xtn))
+    labels_fest = kmeans_clusters(Xtn, k)
+
+    coords = np.zeros((len(meta), 2), dtype=np.float32)
+    labels = np.zeros(len(meta), dtype=np.int64)
+    fest_idx = np.nonzero(fest)[0]
+    coords[fest_idx] = coords_fest
+    labels[fest_idx] = labels_fest
+
+    lose_idx = np.nonzero(~fest)[0]
+    if len(lose_idx):
+        from sklearn.neighbors import NearestNeighbors
+
+        nn = NearestNeighbors(n_neighbors=min(THEME_VOTERS, len(fest_idx)), metric="cosine")
+        nn.fit(Xn[fest_idx])
+        _, nachbarn = nn.kneighbors(Xn[lose_idx])
+        for j, row in zip(lose_idx, nachbarn):
+            coords[j] = coords_fest[row].mean(axis=0)
+            stimmen = collections.Counter(int(labels_fest[r]) for r in row)
+            labels[j] = stimmen.most_common(1)[0][0]
+        logger.info("%d Fotos ohne Beschreibung ueber visuelle Nachbarn platziert", len(lose_idx))
+    return coords, labels
+
+
+def apply_titles(clusters: list[dict], labels: np.ndarray, meta: list[dict],
+                 step: Any = lambda _n: None, ask: Any = None) -> int:
+    """Jedem Kontinent einen Titel geben; wo keiner kommt, bleibt `title` leer.
+
+    `ask` ist austauschbar (Tests). Ohne `ask` wird der Captioner gefragt --
+    ueber denselben Weg wie die Captions, damit es eine Stelle gibt, die
+    weiss, wie das Modell erreicht wird.
+    """
+    from ingest.cluster_titles import title_clusters
+
+    if ask is None:
+        import os
+
+        from ingest.captioner import CAPTION_MODEL, Captioner
+
+        # Standard: dasselbe Modell wie die Captions. An diesem Rechner ist
+        # das ein 27B mit 262k Kontext -- gemessen rund eine Minute je Titel
+        # bei voller GPU, 100 Titel je Kartenbau. Wer einen schnelleren
+        # Pool-Alias hat (`fast`), setzt ihn hier; die Aufgabe ist klein.
+        modell = os.environ.get("PHOTOVAULT_TITLE_MODEL") or CAPTION_MODEL
+        ask = Captioner(model=modell).ask_json
+
+    rng = random.Random(7)
+
+    def samples_of(c: int) -> list[str]:
+        idx = [i for i in np.nonzero(labels == c)[0] if meta[i]["caption"]]
+        rng.shuffle(idx)
+        return [meta[i]["caption"] for i in idx[:8]]
+
+    titles = title_clusters(clusters, samples_of, ask, step=step)
+    n = 0
+    for c, t in zip(clusters, titles):
+        c["title"] = t
+        n += t is not None
+    logger.info("%d von %d Kontinenten betitelt", n, len(clusters))
+    return n
 
 
 def fallback_terms(labels: np.ndarray, meta: list[dict], c: int) -> list[str]:
@@ -467,6 +712,8 @@ def photo_flags(m: dict, in_stack: bool, is_head: bool) -> int:
         flags |= FLAG_IN_STACK
         if is_head:
             flags |= FLAG_STACK_HEAD
+    if m.get("kind") == "video":
+        flags |= FLAG_VIDEO
     return flags
 
 
@@ -521,7 +768,7 @@ def progress_reporter(job) -> Any:
 
 
 def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
-          track: bool = True) -> dict:
+          track: bool = True, theme_k: int = 0, titles: bool = True) -> dict:
     """Rechnen und dabei Bescheid geben.
 
     Von der Jobs-Seite aus gestartet, versprach die Antwort „der Fortschritt
@@ -544,7 +791,8 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
 
     try:
         payload = compute(space, k, limit, dup_threshold, out_dir,
-                          step=progress_reporter(job), qc=qc)
+                          step=progress_reporter(job), qc=qc,
+                          theme_k=theme_k, titles=titles)
     except BaseException as e:
         # Auch SystemExit: „umap-learn fehlt" gehoert in die Liste, nicht nur
         # ins Protokoll.
@@ -559,7 +807,8 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
 
 
 def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
-            step: Any = lambda _name: None, qc: Any = None) -> dict:
+            step: Any = lambda _name: None, qc: Any = None,
+            theme_k: int = 0, titles: bool = True) -> dict:
     """Die eigentliche Rechnung. Weiss nichts von Jobs."""
     qc = qc or client()
 
@@ -583,37 +832,31 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
     events, event_of_photo = build_events(meta, coords)
     step("kontinente")
     labels = kmeans_clusters(Xn, k)
-    label_info = label_clusters(labels, meta, k)
+    clusters = describe_clusters(labels, coords, meta, heads, k)
 
     channels = sorted({m["channel"] for m in meta})
     chan_index = {c: i for i, c in enumerate(channels)}
 
-    clusters = []
-    for c in range(k):
-        idx = np.nonzero(labels == c)[0]
-        centroid = coords[idx].mean(axis=0)
-        # Leitbild = das Foto, das dem Schwerpunkt am naechsten liegt und
-        # nicht in einem Stapel versteckt ist.
-        order = np.argsort(((coords[idx] - centroid) ** 2).sum(axis=1))
-        cover = next((int(idx[o]) for o in order if int(idx[o]) in heads), int(idx[order[0]]))
-        info = label_info[c]
-        terms = info["terms"] or fallback_terms(labels, meta, c)
-        years = collections.Counter(
-            (meta[i]["taken_at"] or "")[:4] for i in idx if meta[i]["taken_at"]
-        )
-        clusters.append(
-            {
-                "i": c,
-                "terms": terms,
-                "cap_share": info["cap_share"],
-                "from_tags": not info["terms"],
-                "n": int(len(idx)),
-                "x": round(float(centroid[0]), 4),
-                "y": round(float(centroid[1]), 4),
-                "cover": meta[cover]["id"],
-                "years": [[y, n] for y, n in years.most_common(3)],
-            }
-        )
+    # Zweite Anordnung: Themen. Dieselben Fotos, aber Naehe heisst hier
+    # "wird aehnlich beschrieben" -- Text-Vektor statt Bild-Vektor.
+    themes = None
+    if theme_k:
+        step("themen")
+        Xt = load_second(qc, [m["id"] for m in meta], "text")
+        coords2, labels2 = theme_layout(Xn, Xt, meta, theme_k)
+        themes = {
+            "k": theme_k,
+            "clusters": describe_clusters(labels2, coords2, meta, heads, theme_k),
+            "x": [round(float(v), 4) for v in coords2[:, 0]],
+            "y": [round(float(v), 4) for v in coords2[:, 1]],
+            "cl": [int(v) for v in labels2],
+        }
+
+    if titles:
+        step("titel")
+        apply_titles(clusters, labels, meta, step)
+        if themes:
+            apply_titles(themes["clusters"], np.asarray(themes["cl"]), meta, step)
 
     # Personen als Index statt als Name je Foto: 114 Namen einmal, danach
     # kleine Zahlen. Ohne das waere ein Drittel der Datei Wiederholung.
@@ -657,6 +900,8 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
         "sp": space_of_photo,
         "tg": [[tag_index[t] for t in m["tags"] if t in tag_index] for m in meta],
     }
+    if themes:
+        payload["themes"] = themes
 
     step("schreiben")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -692,11 +937,20 @@ def report(payload: dict) -> None:
     print(f"  im Stapel         {share(FLAG_IN_STACK)}")
     visible = sum(1 for f in flags if not (f & FLAG_IN_STACK) or (f & FLAG_STACK_HEAD))
     print(f"  sichtbar nach Falten: {visible} von {n} ({100 * visible / n:.1f}%)\n")
-    print(f"{'n':>6} {'cap':>5}  Kontinent")
-    for c in sorted(payload["clusters"], key=lambda c: -c["n"]):
-        mark = "~" if c["from_tags"] else " "
-        print(f"{c['n']:>6} {c['cap_share'] * 100:>4.0f}%{mark} {', '.join(c['terms'])}")
+    def zeige(name: str, clusters: list[dict]) -> None:
+        print(f"\n{'n':>6} {'cap':>5}  {name}")
+        for c in sorted(clusters, key=lambda c: -c["n"]):
+            mark = "~" if c["from_tags"] else " "
+            titel = c.get("title")
+            kopf = f"{titel}   [{', '.join(c['terms'])}]" if titel else ", ".join(c["terms"])
+            print(f"{c['n']:>6} {c['cap_share'] * 100:>4.0f}%{mark} {kopf}")
+
+    zeige("Kontinent (visuell)", payload["clusters"])
+    if payload.get("themes"):
+        zeige("Schublade (Themen)", payload["themes"]["clusters"])
     print("\n  ~ = aus scene_tags, weil noch keine Captions in diesem Cluster")
+    if not any(c.get("title") for c in payload["clusters"]):
+        print("  Keine Titel vom Sprachmodell -- die Karte zeigt die Rangwoerter.")
 
 
 def main() -> None:
@@ -709,11 +963,26 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     ap.add_argument("--no-track", action="store_true",
                     help="nicht in die Job-Liste schreiben")
+    # Themen sind feiner als Bildstile -- ein Text-Cluster "Silvester" oder
+    # "Junggesellenabschied" ist kleiner als ein visueller "Nahaufnahmen".
+    # Deshalb mehr Schubladen als Kontinente.
+    ap.add_argument("--theme-clusters", type=int, default=60,
+                    help="Schubladen der Themen-Anordnung; 0 schaltet sie ab")
+    ap.add_argument("--no-titles", action="store_true",
+                    help="keine Titel vom Sprachmodell, nur Rangwoerter")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if not args.no_titles:
+        # Wie die anderen CLI-Einstiege: LiteLLM ist der Chokepoint. Ohne
+        # das fiel der Titler auf Ollama zurueck, das den Pool-Alias `local`
+        # nicht kennt -- 404, und 0 von 100 Kontinenten betitelt.
+        from ingest.ollama_client import apply_llm_env
+
+        apply_llm_env()
     payload = build(args.space, args.clusters, args.limit, args.dup_threshold, args.out,
-                    track=not args.no_track)
+                    track=not args.no_track, theme_k=args.theme_clusters,
+                    titles=not args.no_titles)
     report(payload)
 
 

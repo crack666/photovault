@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ingest.media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS
+
 logger = logging.getLogger(__name__)
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tiff", ".tif", ".webp", ".bmp"}
 SKIP_NAMES = {"thumbs.db", "desktop.ini", ".ds_store", "albumart.jpg"}
 
 
@@ -16,7 +17,7 @@ def _is_image(path: Path) -> bool:
         return False
     if name.lower() in SKIP_NAMES:
         return False
-    if path.suffix.lower() not in IMAGE_EXTENSIONS:
+    if path.suffix.lower() not in MEDIA_EXTENSIONS:
         return False
     try:
         if path.stat().st_size < 32:
@@ -87,7 +88,7 @@ class NASScanner:
                 n += 1
             logger.info("  %s: %d files", src, n)
         files.sort()
-        logger.info("Found %d image files across %d source(s)", len(files), len(self.sources))
+        logger.info("Found %d media files across %d source(s)", len(files), len(self.sources))
         return files
 
 

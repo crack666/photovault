@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 
+from ingest.media import VIDEO_EXTENSIONS
 from ingest.netfs import is_transient
 
 logger = logging.getLogger(__name__)
@@ -163,19 +164,22 @@ def get_thumb(
     pad: float = 0.35,
     image=None,
     content_hash: str | None = None,
+    extra: str | None = None,
+    poster_ss: float | None = None,
 ) -> bytes:
     """JPEG liefern; beim ersten Mal erzeugen. `box` schneidet ein Gesicht aus.
 
     `image` ist ein bereits geladenes PIL-Image -- der Ingest reicht es durch,
-    statt die Datei ein weiteres Mal zu dekodieren.
+    statt die Datei ein weiteres Mal zu dekodieren. `poster_ss` ist bei Videos
+    der Zeitpunkt des Frames, der das Video vertritt.
     """
     data, _warn = make_thumb(file_path, size=size, box=box, pad=pad, image=image,
-                             content_hash=content_hash)
+                             content_hash=content_hash, extra=extra, poster_ss=poster_ss)
     return data
 
 
 def cache_keys(file_path: str, box=None, pad: float = 0.35,
-               content_hash: str | None = None) -> tuple[str, list[str]]:
+               content_hash: str | None = None, extra: str | None = None) -> tuple[str, list[str]]:
     """(Schluessel zum Schreiben, Schluessel zum Suchen).
 
     Geschrieben wird unter dem Inhalts-Hash, sobald er bekannt ist -- gleiche
@@ -184,9 +188,13 @@ def cache_keys(file_path: str, box=None, pad: float = 0.35,
     aus der Zeit davor liegen.
 
     Der Zuschnitt eines Gesichts haengt am Kasten, nicht nur am Bild --
-    deshalb geht er in beide Schluessel ein.
+    deshalb geht er in beide Schluessel ein. Bei Videos kommt der Zeitpunkt
+    des Frames dazu, sonst träfe der Zuschnitt das Poster statt das Bild,
+    auf dem das Gesicht wirklich saß.
     """
     zusatz = f"|{box}|{pad}" if box else ""
+    if extra:
+        zusatz += f"|{extra}"
     pfad_key = f"{file_path}{zusatz}"
     if not content_hash:
         return pfad_key, [pfad_key]
@@ -201,10 +209,12 @@ def make_thumb(
     pad: float = 0.35,
     image=None,
     content_hash: str | None = None,
+    extra: str | None = None,
+    poster_ss: float | None = None,
 ) -> tuple[bytes, str | None]:
     """Wie get_thumb, plus Warnung wenn die Datei unvollständig oder unlesbar ist."""
     size = normalize_size(size)
-    key, suchen = cache_keys(file_path, box, pad, content_hash)
+    key, suchen = cache_keys(file_path, box, pad, content_hash, extra=extra)
     vorhanden = _find_cached(suchen, size)
     if vorhanden is not None:
         try:
@@ -213,7 +223,7 @@ def make_thumb(
             pass
 
     cached = _cache_path(key, size)
-    data, warn = _render(file_path, size, box, pad, image)
+    data, warn = _render(file_path, size, box, pad, image, poster_ss=poster_ss)
     if warn is None:
         warn = jpeg_truncation_hint(file_path)
     try:
@@ -246,7 +256,8 @@ def jpeg_truncation_hint(file_path: str) -> str | None:
     return None
 
 
-def _render(file_path: str, size: int, box: list | None, pad: float, image=None) -> tuple[bytes, str | None]:
+def _render(file_path: str, size: int, box: list | None, pad: float, image=None,
+            poster_ss: float | None = None) -> tuple[bytes, str | None]:
     from PIL import Image, ImageFile, ImageOps
 
     # Abgebrochene Kamera-JPEGs (Transfer, volle Karte) sollen eine Vorschau
@@ -257,22 +268,32 @@ def _render(file_path: str, size: int, box: list | None, pad: float, image=None)
     if image is None:
         src = Path(file_path)
         try:
-            if src.suffix.lower() not in IMAGE_EXT or not src.is_file():
-                raise FileNotFoundError(file_path)
+            suffix = src.suffix.lower()
+            if suffix in VIDEO_EXTENSIONS:
+                # Der Frame, der das Video vertritt -- vom Ingest als Medoid
+                # der Caption-Frames gewaehlt. Ohne Angabe der alte feste
+                # Zeitpunkt bei zehn Prozent.
+                from ingest.video import frame_image, poster_image
+
+                image = (frame_image(file_path, poster_ss) if poster_ss is not None
+                         else poster_image(file_path))
+            else:
+                if suffix not in IMAGE_EXT or not src.is_file():
+                    raise FileNotFoundError(file_path)
+                try:
+                    image = Image.open(src)
+                except OSError as e:
+                    _reraise_io(e, file_path)
+                try:
+                    image.load()
+                except OSError as e:
+                    _reraise_io(e, file_path, truncated_ok=True)
+                    logger.warning("truncated image, using what decoded: %s (%s)", file_path, e)
+                    warn = WARN_TRUNCATED
+                    if getattr(image, "im", None) is None:
+                        raise
         except OSError as e:
             _reraise_io(e, file_path)
-        try:
-            image = Image.open(src)
-        except OSError as e:
-            _reraise_io(e, file_path)
-        try:
-            image.load()
-        except OSError as e:
-            _reraise_io(e, file_path, truncated_ok=True)
-            logger.warning("truncated image, using what decoded: %s (%s)", file_path, e)
-            warn = WARN_TRUNCATED
-            if getattr(image, "im", None) is None:
-                raise
     try:
         # Handyfotos tragen die Ausrichtung im EXIF; ohne das steht die Haelfte quer.
         image = ImageOps.exif_transpose(image)
@@ -295,28 +316,36 @@ def _render(file_path: str, size: int, box: list | None, pad: float, image=None)
     return buf.getvalue(), warn
 
 
-def drop_cached(file_path: str) -> int:
+def drop_cached(file_path: str, content_hash: str | None = None) -> int:
     """Alle Vorschaubilder zu einer Datei wegwerfen.
 
     Beim endgueltigen Loeschen bleibt sonst der Cache als Geisterbild zurueck:
     das Foto ist weg, aber die Oberflaeche zeigt es weiter, bis der Eintrag
     zufaellig verdraengt wird.
 
-    Geraeumt werden beide Orte. Bliebe am alten eines liegen, waere es nach
-    dem Loeschen weiter zu sehen -- genau das Geisterbild, das diese Funktion
-    verhindern soll.
+    Geraeumt werden beide Orte und **beide Schluessel**. Seit Stufe 3 liegen
+    die Kacheln unter dem Inhalts-Hash; diese Funktion kannte nur den
+    Pfad-Schluessel und war damit fuer fast jede Kachel ein Leerlauf -- das
+    endgueltige Loeschen meldete still `thumbs: 0`, und das Geisterbild, das
+    sie verhindern soll, blieb liegen. Aufgefallen beim Video-Nachziehen:
+    das alte Poster kam nach dem "Verwerfen" in vier Millisekunden aus dem
+    Cache. Wer den Hash hat, gibt ihn mit; ohne ihn bleibt es beim Pfad.
     """
+    keys = [file_path]
+    if content_hash:
+        keys.append(f"sha256:{content_hash}")
     gone = 0
-    for size in ALLOWED_SIZES:
-        for basis in {CACHE_DIR, LEGACY_CACHE}:
-            target = basis / _rel(file_path, size)
-            try:
-                target.unlink()
-                gone += 1
-            except FileNotFoundError:
-                pass
-            except OSError as e:
-                logger.debug("Thumb %s nicht loeschbar: %s", target, e)
+    for key in keys:
+        for size in ALLOWED_SIZES:
+            for basis in {CACHE_DIR, LEGACY_CACHE}:
+                target = basis / _rel(key, size)
+                try:
+                    target.unlink()
+                    gone += 1
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    logger.debug("Thumb %s nicht loeschbar: %s", target, e)
     return gone
 
 

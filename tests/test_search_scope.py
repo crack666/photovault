@@ -10,7 +10,7 @@ Und: ein Geltungsbereich, der stillschweigend einschränkt, ist eine Falle.
 """
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from api.routes.search import scope_text, space_scope
+from api.routes.search import media_scope, scope_text, space_scope
 
 
 class TestSpaceScope:
@@ -42,6 +42,12 @@ class TestScopeText:
     def test_mehrere(self):
         assert scope_text(["Fotos", "Handys"]) == "nur in den Bereichen Fotos, Handys"
 
+    def test_nur_videos(self):
+        assert scope_text([], "video") == "nur Videos"
+
+    def test_bereich_und_fotos(self):
+        assert scope_text(["Handys"], "photo") == "nur im Bereich Handys, nur Fotos"
+
 
 class TestNichtAlsAlternative:
     """Die Falle: `match="any"` plus Bereich.
@@ -67,3 +73,18 @@ class TestNichtAlsAlternative:
         scope = space_scope(["Fotos"])
         gebaut = Filter(must=[scope])
         assert gebaut.must == [scope]
+
+
+class TestMediaScope:
+    def test_beides_keine_bedingung(self):
+        assert media_scope("all") is None
+        assert media_scope("") is None
+
+    def test_nur_videos(self):
+        cond = media_scope("video")
+        assert cond.key == "kind"
+        assert cond.match.value == "video"
+
+    def test_nur_fotos_schlaegt_fehlendes_kind_mit(self):
+        cond = media_scope("photo")
+        assert len(cond.should) == 2

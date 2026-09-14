@@ -241,7 +241,10 @@ def empty_trash(req: EmptyTrashRequest) -> dict:
         logger.exception("Trash delete failed")
         raise HTTPException(500, f"Index aufräumen fehlgeschlagen: {e}") from e
 
-    thumbs = sum(drop_cached((p.payload or {}).get("file_path") or "") for p in found)
+    # Mit Inhalts-Hash: unter dem liegen die Kacheln seit Stufe 3. Nur mit
+    # dem Pfad war das ein Leerlauf, und das Geisterbild blieb.
+    thumbs = sum(drop_cached((p.payload or {}).get("file_path") or "",
+                             (p.payload or {}).get("content_sha256")) for p in found)
     return {
         "deleted": len(found),
         "files": deleted_files,

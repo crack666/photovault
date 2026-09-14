@@ -45,6 +45,24 @@ LOG="logs/uvicorn.log"
 # Wer es anders will, setzt PHOTOVAULT_THUMB_CACHE selbst.
 export PHOTOVAULT_THUMB_CACHE="${PHOTOVAULT_THUMB_CACHE:-$HOME/.cache/photovault-thumbs}"
 
+# LiteLLM ist der Chokepoint: Captions = Pool `local`, Embeddings = `embedder`.
+# Welches Gewicht dahinter liegt, steht nur in der LiteLLM-Config.
+export LITELLM_URL="${LITELLM_URL:-http://127.0.0.1:4000}"
+export PHOTOVAULT_CAPTION_MODEL="${PHOTOVAULT_CAPTION_MODEL:-local}"
+export PHOTOVAULT_EMBED_MODEL="${PHOTOVAULT_EMBED_MODEL:-embedder}"
+export PHOTOVAULT_CAPTION_NUM_CTX="${PHOTOVAULT_CAPTION_NUM_CTX:-0}"
+if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
+    _ai_env="${AI_STACK_ENV:-/mnt/d/ai/ai-stack/.env}"
+    if [ -f "${_ai_env}" ]; then
+        _line=$(grep -E '^LITELLM_MASTER_KEY=' "${_ai_env}" | tail -n1 || true)
+        _val="${_line#LITELLM_MASTER_KEY=}"
+        _val="${_val#\"}"; _val="${_val%\"}"
+        _val="${_val#\'}"; _val="${_val%\'}"
+        export LITELLM_MASTER_KEY="${_val}"
+    fi
+    unset _ai_env _line _val
+fi
+
 # Und derselbe Ort als Merkzettel neben den Daten.
 #
 # Ein `export` gilt nur fuer die Prozesse, die dieses Skript startet. Ein

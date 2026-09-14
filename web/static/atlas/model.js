@@ -14,6 +14,7 @@ export const FLAG = {
   FACES_UNNAMED: 1 << 6,
   IN_STACK: 1 << 7,
   STACK_HEAD: 1 << 8,
+  VIDEO: 1 << 9,
 };
 
 const DAY_MS = 86400000;
@@ -57,27 +58,88 @@ export async function loadAtlas() {
   // Qdrant antwortet mit Punkt-IDs, die Karte rechnet mit Indizes.
   model.indexOfId = new Map(raw.ids.map((id, i) => [id, i]));
   model.year = Int16Array.from(model.t, (d) => (d < 0 ? -1 : new Date(d * DAY_MS).getUTCFullYear()));
-  model.layouts = { bedeutung: byMeaning(model), zeit: byTime(model) };
-  // Schwerpunkt je Kontinent, je Anordnung -- Grundlage der Spreizung.
-  for (const name of Object.keys(model.layouts)) {
-    model.layouts[name].centroids = centroidsOf(model, model.layouts[name]);
+
+  /* Zwei Saetze von Kontinenten, nicht einer.
+
+     Die visuelle Anordnung teilt die Karte nach "sieht aehnlich aus" --
+     das ergibt Bildstile: Nahaufnahmen, dunkle Innenraeume, Himmel. Die
+     Themen-Anordnung teilt nach "wird aehnlich beschrieben" -- das ergibt
+     Schubladen: Silvester, Junggesellenabschied, Essen im Restaurant.
+     Gemessen ueberlappen sich die Nachbarschaften der beiden Raeume nur zu
+     einem Siebtel; eine Mischung waere keine Schaerfung, sondern eine
+     andere Karte. Also beide, umschaltbar, jede in sich stimmig.
+
+     `cl`, `clusters`, `clusterLabel` bleiben die Namen, die alle Ansichten
+     lesen -- sie werden beim Wechsel *ausgetauscht* (`useClusterSet`),
+     statt dass jede Stelle wuesste, welcher Satz gerade gilt. */
+  model.clusterSets = {
+    bedeutung: clusterSet(raw.clusters, raw.cl),
+  };
+  if (raw.themes && raw.themes.clusters && raw.themes.cl) {
+    model.clusterSets.themen = clusterSet(raw.themes.clusters, raw.themes.cl);
   }
-  model.clusterLabel = raw.clusters.map(labelOf);
+  model.clusterSetName = null;
+  model.useClusterSet = (name) => useClusterSet(model, name);
+  model.useClusterSet("bedeutung");
+
+  model.layouts = { bedeutung: byMeaning(model), zeit: byTime(model) };
+  if (model.clusterSets.themen) model.layouts.themen = byTheme(model, raw.themes);
+  // Schwerpunkt je Kontinent, je Anordnung -- Grundlage der Spreizung.
+  // Gerechnet mit dem Kontinent-Satz, der zu der Anordnung gehoert.
+  for (const name of Object.keys(model.layouts)) {
+    const L = model.layouts[name];
+    L.centroids = centroidsOf(model, L, model.clusterSets[L.clusterSet]);
+  }
   return model;
 }
 
+function clusterSet(clusters, cl) {
+  return { clusters, cl: Int16Array.from(cl), labels: clusters.map(labelOf) };
+}
+
+function useClusterSet(model, name) {
+  const set = model.clusterSets[name] || model.clusterSets.bedeutung;
+  model.clusterSetName = model.clusterSets[name] ? name : "bedeutung";
+  model.clusters = set.clusters;
+  model.cl = set.cl;
+  model.clusterLabel = set.labels;
+}
+
 function labelOf(c) {
+  // Der Titel kommt vom Sprachmodell, das die Beschreibungen des
+  // Kontinents gelesen hat: "Freizeit im Freien" statt "wiese · freien".
+  // Wo keiner da ist (kein Modell erreichbar), die Rangwoerter.
+  if (c.title) return c.title;
   if (!c.terms.length) return "ohne Namen";
   // Erstes Wort gross -- „abistreich, juni, schuelern" liest sich sonst wie Fliesstext.
   const head = c.terms[0];
   return head.charAt(0).toUpperCase() + head.slice(1) + (c.terms.length > 1 ? ` · ${c.terms[1]}` : "");
 }
 
+/** Die Rangwoerter als Untertitel -- was dem Titel zugrunde liegt. */
+export function termsOf(c) {
+  return (c.terms || []).join(" · ");
+}
+
 /* ---- Anordnung 1: Bedeutung ------------------------------------------
    Direkt die UMAP-Koordinaten. Naehe heisst hier „sieht aehnlich aus". */
 
 function byMeaning(m) {
-  return { x: m.x, y: m.y };
+  return { x: m.x, y: m.y, clusterSet: "bedeutung" };
+}
+
+/* ---- Anordnung 3: Themen ---------------------------------------------
+   Positionen aus dem Text-Vektor der Beschreibung. Naehe heisst hier
+   „wird aehnlich beschrieben" -- nicht „sieht aehnlich aus". Fotos ohne
+   Beschreibung stehen dort, wo ihre visuellen Nachbarn liegen; der Bau
+   hat sie ueber diese Nachbarn abstimmen lassen. */
+
+function byTheme(m, themes) {
+  return {
+    x: Float32Array.from(themes.x),
+    y: Float32Array.from(themes.y),
+    clusterSet: "themen",
+  };
 }
 
 /* ---- Anordnung 2: Zeit x Bedeutung -----------------------------------
@@ -128,7 +190,7 @@ function byTime(m) {
     const frac = Math.min(0.999, Math.max(0, (m.t[i] - jan1) / 366));
     x[i] = start.get(y) + frac * width.get(y);
   }
-  return { x, y: m.y, years, start, width };
+  return { x, y: m.y, years, start, width, clusterSet: "bedeutung" };
 }
 
 /* ---- Spreizung -------------------------------------------------------
@@ -142,12 +204,12 @@ function byTime(m) {
    Die Kontinente ruecken damit auseinander, ohne dass die Karte den Rand
    verlaesst -- innerhalb eines Kontinents bleibt die Anordnung, wie sie war. */
 
-function centroidsOf(model, layout) {
-  const n = model.clusters.length;
+function centroidsOf(model, layout, set) {
+  const n = set.clusters.length;
   const sum = new Float64Array(n * 2);
   const count = new Int32Array(n);
   for (let i = 0; i < model.n; i++) {
-    const c = model.cl[i];
+    const c = set.cl[i];
     sum[c * 2] += layout.x[i];
     sum[c * 2 + 1] += layout.y[i];
     count[c]++;

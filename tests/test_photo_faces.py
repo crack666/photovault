@@ -134,3 +134,34 @@ class TestResolvePhotoId:
         with pytest.raises(HTTPException) as e:
             resolve_photo_id(q, pid)
         assert e.value.status_code == 500
+
+
+def test_video_crop_uses_the_frame_not_the_poster(monkeypatch):
+    """Ein Gesicht bei 1,7 s darf nicht aus dem Poster (10 %) geschnitten werden."""
+    from api.routes import faces as faces_mod
+
+    class Q:
+        def retrieve(self, **kw):
+            return [_P("f1", {
+                "file_path": "/clip.mp4",
+                "box": [10, 20, 40, 60],
+                "content_sha256": "abc",
+                "frame_ss": 1.7,
+            })]
+
+    seen = {}
+    monkeypatch.setattr(faces_mod, "client", lambda: Q())
+    monkeypatch.setattr("ingest.video.frame_image", lambda path, ss: seen.update(ss=ss) or "PIL")
+
+    def fake_thumb(path, size=320, box=None, pad=0.35, image=None,
+                   content_hash=None, extra=None):
+        seen.update(image=image, extra=extra, box=box, hash=content_hash)
+        return b"\xff\xd8"
+
+    monkeypatch.setattr(faces_mod, "get_thumb", fake_thumb)
+    resp = faces_mod.face_crop("f1")
+    assert resp.body == b"\xff\xd8"
+    assert seen["ss"] == 1.7
+    assert seen["extra"] == "ss=1.7"
+    assert seen["image"] == "PIL"
+    assert seen["box"] == [10, 20, 40, 60]

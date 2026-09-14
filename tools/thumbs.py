@@ -92,6 +92,7 @@ def cache_soll(q, faces: str = FACES) -> tuple[list[tuple[str, list[str]]], set[
     Bereich, und wurden bei jedem `--prune` mitgeloescht.
     """
     from api.thumbs import cache_keys
+    from ingest.media import is_video
 
     je_foto = []
     gueltig: set[str] = set()
@@ -119,7 +120,7 @@ def cache_soll(q, faces: str = FACES) -> tuple[list[tuple[str, list[str]]], set[
         try:
             batch, offset = q.scroll(
                 collection_name=faces, limit=1024, offset=offset,
-                with_payload=["file_path", "box", "content_sha256"],
+                with_payload=["file_path", "box", "content_sha256", "frame_ss"],
                 with_vectors=False,
             )
         except Exception as e:
@@ -132,7 +133,13 @@ def cache_soll(q, faces: str = FACES) -> tuple[list[tuple[str, list[str]]], set[
             fp, box = pl.get("file_path"), pl.get("box")
             if not fp or not box or len(box) != 4:
                 continue
-            _, suchen = cache_keys(fp, box, FACE_PAD, pl.get("content_sha256"))
+            # Ein Gesicht auf einem Video-Frame traegt den Zeitpunkt im
+            # Schluessel (`ss=`), sonst schnitte die Route das Poster an.
+            # Ohne das hier zaehlte jeder solche Zuschnitt als Waise.
+            extra = None
+            if pl.get("frame_ss") is not None or is_video(fp):
+                extra = f"ss={float(pl.get('frame_ss') or 0.0)}"
+            _, suchen = cache_keys(fp, box, FACE_PAD, pl.get("content_sha256"), extra=extra)
             gueltig.update(digest(k) for k in suchen)
         if offset is None:
             break

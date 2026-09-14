@@ -179,6 +179,12 @@ class PhotoRecord:
     event_excluded: bool = False
     file_warning: Optional[str] = None
     ingested_at: Optional[str] = None
+    #: photo (Voreinstellung, auch wenn das Feld im Index fehlt) oder video.
+    kind: str = "photo"
+    duration_s: Optional[float] = None
+    #: Zeitpunkt des Frames, der das Video vertritt -- Vektor und Poster.
+    #: Gewaehlt als Medoid der Caption-Frames, siehe `ingest/video_clip.py`.
+    poster_ss: Optional[float] = None
 
 
 class IngestPipeline:
@@ -314,10 +320,20 @@ class IngestPipeline:
                     with t.stage("file_times"):
                         _fill_file_times(record, Path(fp))
 
+                    from ingest.identity import content_hash
+                    from ingest.media import kind_of
+
+                    record.kind = kind_of(fp)
+                    record.content_sha256 = content_hash(fp)
+
                     # Einmal oeffnen, alles daraus bedienen: EXIF, Gesichter,
                     # CLIP und Vorschaubild lasen bisher jeweils neu vom NAS.
+                    raw_img = rgb = None
                     with t.stage("decode"):
-                        raw_img, rgb, warn = _load_image(fp)
+                        if record.kind == "video":
+                            raw_img, rgb, warn = _load_video(fp, record)
+                        else:
+                            raw_img, rgb, warn = _load_image(fp)
                     if warn:
                         record.file_warning = warn
 
@@ -342,21 +358,35 @@ class IngestPipeline:
                     record.date_hint = fd.get("date_hint")
                     record.date_hint_source = fd.get("date_hint_source")
 
-                    with t.stage("face"):
-                        fr = face_emb.process(fp, image=rgb)
-                    record.face_count = fr["count"]
-                    record.face_embedding = fr["primary_embedding"]
-                    record.face_boxes = fr["boxes"]
-                    record.faces = fr.get("faces") or []
-                    with t.stage("face_match"):
-                        record.person_suggestions = [
-                            s["id"] for s in matcher.suggest(record.face_embedding)
-                        ]
+                    if record.kind != "video":
+                        with t.stage("face"):
+                            fr = face_emb.process(fp, image=rgb)
+                        record.face_count = fr["count"]
+                        record.face_embedding = fr["primary_embedding"]
+                        record.face_boxes = fr["boxes"]
+                        record.faces = fr.get("faces") or []
+                        with t.stage("face_match"):
+                            record.person_suggestions = [
+                                s["id"] for s in matcher.suggest(record.face_embedding)
+                            ]
 
-                    with t.stage("clip"):
-                        sr = scene.process(fp, image=rgb)
-                    record.scene_tags = sr["tags"]
-                    record.clip_embedding = sr["embedding"]
+                        with t.stage("clip"):
+                            sr = scene.process(fp, image=rgb)
+                        record.scene_tags = sr["tags"]
+                        record.clip_embedding = sr["embedding"]
+                    elif getattr(record, "_frames", None):
+                        # Video: die Caption-Frames einbetten, der Medoid
+                        # vertritt das Video -- als Vektor und als Poster.
+                        from ingest.video_clip import clip_video
+
+                        with t.stage("clip"):
+                            vc = clip_video(scene, record._frames)
+                        record._frames = None
+                        if vc["embedding"]:
+                            record.clip_embedding = vc["embedding"]
+                            record.scene_tags = vc["tags"]
+                            record.poster_ss = vc["poster_ss"]
+                            rgb = vc["frame"]
 
                     if self.config.thumbs:
                         # Jetzt gleich, solange die Datei ohnehin gelesen wird --
@@ -374,7 +404,7 @@ class IngestPipeline:
                         record.caption_de = prior.get("caption_de")
                         record.caption_source = prior.get("caption_source") or "manual"
                         record.caption_locked = True
-                    elif captioner is not None:
+                    elif captioner is not None and record.kind != "video":
                         from ingest.captioner import jpeg_b64
 
                         with t.stage("caption"):
@@ -475,17 +505,23 @@ class IngestPipeline:
             _apply_prior(record, prior)
             _fill_file_times(record, Path(fp))
 
+            from ingest.identity import content_hash
+            from ingest.media import kind_of
+
+            record.kind = kind_of(fp)
             with _Timed(clock, "  io:decode"):
                 from ingest.netfs import retry_io
 
                 # Ein SMB-Aussetzer soll den Datensatz nicht kosten.
-                raw_img, rgb, warn = retry_io(lambda: _load_image(fp), what=fp)
+                if record.kind == "video":
+                    raw_img, rgb, warn = retry_io(
+                        lambda: _load_video(fp, record), what=fp)
+                else:
+                    raw_img, rgb, warn = retry_io(lambda: _load_image(fp), what=fp)
             if warn:
                 record.file_warning = warn
             # Jetzt, nicht vorher: die Datei liegt nach dem Dekodieren im
             # Seiten-Cache, und der Hash kostet dann fast nichts.
-            from ingest.identity import content_hash
-
             record.content_sha256 = content_hash(fp)
             if rgb is None:
                 # Kein lesbares Bild -- aber Datum, Album und Pfad sind trotzdem
@@ -516,26 +552,35 @@ class IngestPipeline:
             record._clip = None
             record._caption_b64 = None
             if rgb is not None:
-                if captioner is not None:
+                if record.kind != "video" and captioner is not None:
                     # Sonst liest der Caption-Schritt die Datei ein zweites Mal
                     # ueber SMB und dekodiert sie erneut.
                     from ingest.captioner import jpeg_b64
 
                     with _Timed(clock, "  io:caption_jpeg"):
                         record._caption_b64 = jpeg_b64(fp, image=rgb)
-                if cfg.thumbs:
+                # Bei Videos nicht jetzt: das Poster steht erst fest, wenn
+                # die GPU den Medoid gewaehlt hat. Sonst laege das Bild bei
+                # zehn Prozent im Cache, und der Medoid kaeme nie zum Zug.
+                if cfg.thumbs and record.kind != "video":
                     with _Timed(clock, "  io:thumb"):
                         _make_thumb(fp, rgb, record.content_sha256)
 
-                # Beides ist reine CPU-Arbeit und gehoert deshalb hierher, nicht
-                # in den GPU-Thread: die BGR-Kopie kostet bei 12 MP rund 36 MB,
-                # das CLIP-Preprocessing skaliert auf 224x224.
-                from ingest.face_embedder import to_bgr
+                if record.kind != "video":
+                    # Beides ist reine CPU-Arbeit und gehoert deshalb hierher, nicht
+                    # in den GPU-Thread: die BGR-Kopie kostet bei 12 MP rund 36 MB,
+                    # das CLIP-Preprocessing skaliert auf 224x224.
+                    from ingest.face_embedder import to_bgr
 
-                with _Timed(clock, "  io:bgr"):
-                    record._bgr = to_bgr(rgb)
-                with _Timed(clock, "  io:clip_pre"):
-                    record._clip = scene.preprocess(rgb)
+                    with _Timed(clock, "  io:bgr"):
+                        record._bgr = to_bgr(rgb)
+                    with _Timed(clock, "  io:clip_pre"):
+                        record._clip = scene.preprocess(rgb)
+                elif getattr(record, "_frames", None):
+                    # Video: jeden Caption-Frame vorverarbeiten. Die GPU
+                    # bettet sie im Stapel ein und waehlt den Medoid.
+                    with _Timed(clock, "  io:clip_pre"):
+                        record._clip = [scene.preprocess(img) for _, img in record._frames]
             # Das grosse PIL-Bild wird ab hier nicht mehr gebraucht.
             record._prior = prior
             return record
@@ -557,20 +602,47 @@ class IngestPipeline:
                     record.person_suggestions = [
                         s["id"] for s in matcher.suggest(record.face_embedding)
                     ]
-            with_image = [r for r in batch if r._clip is not None]
+            # Fotos tragen einen Tensor, Videos eine Liste (je Frame einer).
+            # Alle in einen Stapel; hinterher gehoert jedes Ergebnis wieder
+            # seinem Record -- und ein Video bekommt den Medoid seiner Frames.
+            from ingest.video_clip import choose
+
+            tensors, owner = [], []
+            for r in batch:
+                if r._clip is None:
+                    continue
+                if isinstance(r._clip, list):
+                    for t_ in r._clip:
+                        tensors.append(t_)
+                        owner.append(r)
+                else:
+                    tensors.append(r._clip)
+                    owner.append(r)
             with _Timed(clock, "  gpu:clip"):
-                results = scene.encode_tensors([r._clip for r in with_image])
-            for record, sr in zip(with_image, results):
-                record.scene_tags = sr["tags"]
-                record.clip_embedding = sr["embedding"]
-                normalizer.normalize(record)
+                results = scene.encode_tensors(tensors)
+            je_record: dict[int, list[dict]] = {}
+            for r, sr in zip(owner, results):
+                je_record.setdefault(id(r), []).append(sr)
             for record in batch:
-                if record._clip is None:
-                    normalizer.normalize(record)
+                got = je_record.get(id(record))
+                if got and isinstance(record._clip, list):
+                    vc = choose(got, record._frames or [])
+                    if vc["embedding"]:
+                        record.clip_embedding = vc["embedding"]
+                        record.scene_tags = vc["tags"]
+                        record.poster_ss = vc["poster_ss"]
+                        # Jetzt steht das Poster fest.
+                        if cfg.thumbs and vc["frame"] is not None:
+                            _make_thumb(record.file_path, vc["frame"], record.content_sha256)
+                elif got:
+                    record.scene_tags = got[0]["tags"]
+                    record.clip_embedding = got[0]["embedding"]
+                normalizer.normalize(record)
                 # Speicher sofort freigeben -- sonst haelt die Warteschlange
                 # dutzende dekodierte Bilder gleichzeitig.
                 record._bgr = None
                 record._clip = None
+                record._frames = None
 
         def caption_one(record):
             """Eine Caption holen und ins Record schreiben. Laeuft im Pool."""
@@ -601,7 +673,7 @@ class IngestPipeline:
                     record.caption_source = prior.get("caption_source") or "manual"
                     record.caption_locked = True
                     record._caption_b64 = None
-                elif captioner is not None:
+                elif captioner is not None and record.kind != "video":
                     todo.append(record)
                 elif prior:
                     record.caption_de = prior.get("caption_de")
@@ -744,24 +816,38 @@ class IngestPipeline:
         selben Prozess auf derselben Karte liegen.
         """
         from ingest.ollama_client import (
-            CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, ollama_url, post_json,
+            CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, litellm_headers,
+            litellm_url, ollama_url, post_json,
         )
 
         from ingest.captioner import caption_options
 
-        url = ollama_url(self.config.ollama_url)
         started = time.time()
-        options = dict(caption_options())
-        options["num_predict"] = 1
+        pool = litellm_url()
         try:
-            post_json(
-                f"{url}/api/generate",
-                {"model": CAPTION_MODEL, "prompt": "ok", "stream": False,
-                 "options": options, "keep_alive": -1},
-                timeout=900,
-            )
+            if pool:
+                post_json(
+                    f"{pool}/v1/chat/completions",
+                    {
+                        "model": CAPTION_MODEL,
+                        "messages": [{"role": "user", "content": "ok"}],
+                        "max_tokens": 1,
+                        "stream": False,
+                    },
+                    timeout=900,
+                    headers=litellm_headers(),
+                )
+            else:
+                url = ollama_url(self.config.ollama_url)
+                options = dict(caption_options())
+                options["num_predict"] = 1
+                post_json(
+                    f"{url}/api/generate",
+                    {"model": CAPTION_MODEL, "prompt": "ok", "stream": False,
+                     "options": options, "keep_alive": -1},
+                    timeout=900,
+                )
         except Exception as e:
-            # Kein Grund abzubrechen -- der erste Caption-Aufruf laedt sonst eben.
             logger.warning("Could not warm %s: %s", CAPTION_MODEL, e)
             return
         logger.info(
@@ -770,9 +856,18 @@ class IngestPipeline:
             time.time() - started,
         )
         try:
-            post_json(f"{url}/api/embed",
-                      {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1},
-                      timeout=300)
+            if pool:
+                post_json(
+                    f"{pool}/v1/embeddings",
+                    {"model": EMBED_MODEL, "input": "ok"},
+                    timeout=300,
+                    headers=litellm_headers(),
+                )
+            else:
+                url = ollama_url(self.config.ollama_url)
+                post_json(f"{url}/api/embed",
+                          {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1},
+                          timeout=300)
         except Exception as e:
             logger.warning("Could not re-pin %s: %s", EMBED_MODEL, e)
 
@@ -915,6 +1010,9 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    from ingest.ollama_client import apply_llm_env
+
+    apply_llm_env()
     if not args.verbose:
         for noisy in ("httpx", "httpcore", "urllib3", "PIL"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
@@ -988,6 +1086,36 @@ def _load_image(file_path: str):
     except Exception as e:
         logger.debug("Could not decode %s: %s", file_path, e)
         return None, None, "unreadable"
+
+
+def _load_video(file_path: str, record: PhotoRecord):
+    """Die Caption-Frames als RGB -- das Original bleibt Video.
+
+    Der erste Frame liegt bei zehn Prozent, also genau dort, wo bisher das
+    Poster geholt wurde: fuer kurze Clips kostet das nichts extra, fuer
+    laengere zwei ffmpeg-Aufrufe mehr. Alle Frames bleiben am Record
+    (`_frames`), damit der CLIP-Schritt den Medoid waehlen kann -- der wird
+    dann Vektor *und* Poster. Bis dahin vertritt der erste Frame das Video.
+    """
+    from ingest.video import VideoToolMissing, probe
+    from ingest.video_clip import sample_frames
+
+    try:
+        info = probe(file_path)
+    except VideoToolMissing as e:
+        logger.warning("Video without ffmpeg: %s (%s)", file_path, e)
+        return None, None, None
+    record.duration_s = info.get("duration")
+    try:
+        frames = sample_frames(file_path, info.get("duration"))
+    except Exception as e:
+        logger.warning("Video frames failed for %s: %s", file_path, e)
+        return None, None, "unreadable"
+    if not frames:
+        return None, None, "unreadable"
+    record._frames = frames
+    rgb = frames[0][1]
+    return rgb, rgb, None
 
 
 def _make_thumb(file_path: str, image=None, content_hash: str | None = None) -> None:

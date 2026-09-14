@@ -470,3 +470,21 @@ class TestCaptionJson:
         assert r.json()["total"] == 1
         assert r.json()["results"][0]["caption_de"].startswith("Ein Screenshot")
 
+
+class TestMedium:
+    def test_detail_nennt_foto_als_voreinstellung(self, client, fake):
+        fake.punkte = [_Point("a", {"file_path": "/p/a.jpg"})]
+        r = client.get("/api/photos/a")
+        assert r.status_code == 200
+        assert r.json()["kind"] == "photo"
+
+    def test_detail_nennt_video(self, client, fake):
+        fake.punkte = [_Point("v", {
+            "file_path": "/p/a.mp4", "kind": "video", "duration_s": 12.4,
+        })]
+        r = client.get("/api/photos/v")
+        assert r.status_code == 200
+        assert r.json()["kind"] == "video"
+        assert r.json()["duration_s"] == 12.4
+
+

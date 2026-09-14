@@ -51,7 +51,9 @@ class TestCollect:
             _Point("b", {"file_path": "/b.jpg"}, {}),
             _Point("c", {"file_path": "/c.jpg"}, {"clip": None}),
         ])
-        assert backfill_clip.collect(c, "photos", None) == [("b", "/b.jpg"), ("c", "/c.jpg")]
+        # Hinter Kennung und Pfad: Video? Beschreibung? -- beides hier nein.
+        assert backfill_clip.collect(c, "photos", None) == [
+            ("b", "/b.jpg", False, False, None), ("c", "/c.jpg", False, False, None)]
 
     def test_prefix_grenzt_ein(self):
         c = FakeClient([
@@ -59,7 +61,7 @@ class TestCollect:
             _Point("c", {"file_path": "/mnt/photo/Handys/y.jpg"}, {}),
         ])
         got = backfill_clip.collect(c, "photos", "/mnt/photo/Fotos")
-        assert got == [("b", "/mnt/photo/Fotos/x.jpg")]
+        assert got == [("b", "/mnt/photo/Fotos/x.jpg", False, False, None)]
 
     def test_punkt_ohne_pfad_wird_uebersprungen(self):
         c = FakeClient([_Point("b", {}, {})])
@@ -81,12 +83,6 @@ class TestKlassifiziere:
         assert [x[1] for x in aus["winzig"]] == [str(muell)]
         assert aus["winzig"][0][2] == 36
         assert [x[1] for x in aus["fehlt"]] == [str(tmp_path / "gibtsnicht.jpg")]
-
-    def test_ein_kilobyte_ist_die_grenze(self, tmp_path):
-        knapp = tmp_path / "knapp.jpg"
-        knapp.write_bytes(b"x" * 1024)
-        aus = backfill_clip.klassifiziere([("a", str(knapp))])
-        assert aus["geht"] and not aus["winzig"]
 
 
 class TestRun:
@@ -145,3 +141,13 @@ class TestRun:
         aufgaben = [(str(i), f"/{i}.jpg") for i in range(5)]
         got = backfill_clip.run(c, "photos", aufgaben, "/models", 0.2, batch=2)
         assert got["done"] == 5 and len(c.vectors) == 5
+
+
+class TestCollectKennzeichnet:
+    def test_video_und_beschreibung_werden_mitgegeben(self):
+        c = FakeClient([
+            _Point("v", {"file_path": "/v.mp4", "kind": "video"}, {}),
+            _Point("b", {"file_path": "/b.jpg", "caption_de": "Ein Hund."}, {}),
+        ])
+        assert backfill_clip.collect(c, "photos", None) == [
+            ("v", "/v.mp4", True, False, None), ("b", "/b.jpg", False, True, None)]

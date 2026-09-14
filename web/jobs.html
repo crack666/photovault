@@ -16,6 +16,11 @@
 
   <main class="view wide">
     <h1>Jobs</h1>
+    <p class="muted" style="max-width:60rem">
+      Neue Dateien: unten die Ordner, dann <b>Einlesen</b>.
+      Video-Gesichter und Bildbeschreibungen erst danach —
+      dazwischen Namen unter „Wer ist das?“.
+    </p>
 
     <div class="starters" id="starters"></div>
     <div id="gaps" class="gaps hidden"></div>
@@ -73,7 +78,7 @@ const fmtTime = (t) => t ? new Date(t * 1000).toLocaleString("de-DE") : "—";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const badgeClass = (s) => ({
-  running: "b-running", done: "b-done", stale: "b-stale",
+  running: "b-running", done: "b-done", stale: "b-stale", aborted: "b-aborted",
 }[s] || (String(s).includes("error") ? "b-error" : "b-done"));
 
 
@@ -156,7 +161,7 @@ document.getElementById("starters").addEventListener("click", async (e) => {
     const dlg = openModal({
       title: label,
       lead: "Der Lauf startet losgelöst und läuft weiter, auch wenn du die Seite "
-          + "schließt. Beenden geht dann nur im Terminal.",
+          + "schließt. Beenden geht in der Liste darunter.",
       buttons: [{ id: "cancel", label: "Abbrechen" },
                 { id: "go", label: "Starten", kind: "primary" }],
     });
@@ -209,6 +214,28 @@ document.getElementById("prune").onclick = async () => {
 };
 
 document.getElementById("jobs").addEventListener("click", async (e) => {
+  const stop = e.target.closest("[data-abort]");
+  if (stop) {
+    const dlg = openModal({
+      title: "Lauf beenden?",
+      lead: "SIGTERM an die Prozessgruppe — ffmpeg-Kinder inklusive. "
+          + "Schon Geschriebenes bleibt. Pausieren gibt es nicht.",
+      buttons: [{ id: "cancel", label: "Weiterlaufen lassen" },
+                { id: "go", label: "Beenden", kind: "danger" }],
+    });
+    if (await dlg.wait() !== "go") return;
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(stop.dataset.abort)}/abort`,
+                              { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      msg("Lauf beendet.");
+    } catch (err) {
+      msg(`Beenden fehlgeschlagen: ${err.message}`);
+    }
+    tick();
+    return;
+  }
   const b = e.target.closest("[data-forget]");
   if (!b) return;
   try {
@@ -254,7 +281,8 @@ function render(data) {
     return `
       <div class="job">
         ${done ? `<button class="job-forget" data-forget="${esc(j.job_id)}"
-                   title="Diesen Eintrag vergessen">✕</button>` : ""}
+                   title="Diesen Eintrag vergessen">✕</button>`
+               : `<button class="job-stop" data-abort="${esc(j.job_id)}">Beenden</button>`}
         <div class="job-head">
           <span class="job-kind">${esc(j.kind || "job")}</span>
           <span class="badge ${badgeClass(j.status)}">${esc(j.status)}</span>

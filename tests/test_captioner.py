@@ -1,4 +1,12 @@
-from ingest.captioner import _parse_json, unwrap_caption
+import pytest
+
+from ingest.captioner import _parse_json, build_caption_prompt, unwrap_caption
+
+
+@pytest.fixture(autouse=True)
+def _ohne_litellm(monkeypatch):
+    monkeypatch.delenv("LITELLM_URL", raising=False)
+    monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
 
 
 def test_parse_json_object():
@@ -67,6 +75,13 @@ def test_caption_structured_recovers_truncated_json(monkeypatch):
     assert result["caption_de"].startswith("Ein Screenshot")
     assert "Sounio" in result["caption_de"]
     assert not result["caption_de"].startswith("{")
+
+
+def test_video_prompt_asks_for_a_clip_not_a_still():
+    text = build_caption_prompt({"kind": "video", "folder_name": "HandyPics"})
+    assert "Video" in text
+    assert "Einzelbilder" in text
+    assert "Analysiere das Foto." not in text
 
 
 def _json_string(value: str) -> str:

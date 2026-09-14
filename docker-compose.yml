@@ -34,8 +34,10 @@ services:
       # Ollama läuft auf dem Host, nicht im Verbund. Ohne bleibt es bei
       # Metadaten, Gesichtern und CLIP -- die Captions entfallen.
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-qwen3.8:27b-ctx128k}
-      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-qwen3-embedding:4b-ctx2k}
+      LITELLM_URL: ${LITELLM_URL:-http://host.docker.internal:4000}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-local}
+      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-embedder}
       MODEL_DIR: /models
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -43,6 +45,10 @@ services:
       # Die Fotos werden nur gelesen. Schreibend nötig ist der Mount erst,
       # wenn `tools/exif_repair.py` Aufnahmezeiten zurückschreiben soll --
       # dann das :ro entfernen.
+      #
+      # Lange Läufe startet die Jobs-Seite als Kind *in diesem Container*.
+      # Beenden ist SIGTERM an deren Prozessgruppe, nicht `pkill` auf dem Host
+      # und nicht `docker kill`.
       - ${PHOTO_DIR:?PHOTO_DIR fehlt -- .env.example nach .env kopieren}:/photos:ro
       # Modellgewichte (insightface, CLIP) überleben so einen Neubau des Images.
       - model_cache:/models

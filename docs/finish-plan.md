@@ -1,6 +1,6 @@
 ---
 titel: Fertigstellungs-Plan
-stand: 2026-09-04
+stand: 2026-09-12
 zweck: Auftragsbeschreibung fuer eine Ultracode-Session
 ---
 
@@ -102,6 +102,54 @@ Richtung. `tools/backfill_clip.py` zog sie in 13,7 s nach.
 
 Die Lehre für Zustandszeilen: eine Vermutung über die Ursache gehört nur dorthin,
 wenn sie geprüft ist. Sonst nennt man die Fälle und lässt den Benutzer sehen.
+
+## Nachtrag 2026-09-12: Kontinente, die ein Mensch meint
+
+Anlass war ein Wundfoto auf dem Kontinent `nahaufnahme · holzoberfläche ·
+oberfläche · gerät`. Der Einwand des Nutzers — „das ist keine Schublade, für
+die sich ein Mensch interessiert" — hat sich als der eigentliche Befund
+erwiesen, nicht als Benennungsfrage. Vier Messungen, jede hat eine Annahme
+gekippt:
+
+**Die CLIP-Etiketten sind nicht zu retten, der CLIP-Vektor ist gut.** Zwei
+Produkte, die beide „CLIP" heißen. Die 44 festen Begriffe: selbst im obersten
+Ähnlichkeitsband (4 % des Bestands) stimmte ein Spitzenbegriff von vier; die
+Kosinus-Verteilungen richtiger und falscher Treffer liegen deckungsgleich —
+**keine Schwelle trennt**. Im Bestand: `urlaub` 3.358-mal vergeben, 34-mal von
+der Beschreibung gedeckt. Der Vektor dagegen bildet zusammenhängende Haufen
+(480 Nahaufnahmen von Dingen). Etiketten kommen jetzt aus der Beschreibung,
+CLIP ist Rückfall ohne GPU; 39.171 alte Etiketten aus dem Bestand entfernt.
+
+**Benennung repariert keinen themenlosen Haufen.** Ein Sprachmodell, dem man
+acht Beschreibungen des Wund-Kontinents zeigt, sagt „Diverse Nahaufnahmen"
+und „Alltagsmomente" — es findet kein Thema, weil keines da ist. Die guten
+Kontinente bekommen dagegen Schubladen („Klettern in der Halle").
+
+**Der Text-Raum ergibt Themen, der Bild-Raum Stile.** Dieselben Fotos nach
+dem Text-Vektor geclustert: `silvester · nacht · funken`, `tisch · teller ·
+essen · restaurant`, `pferd · frisst · wiese`, `sporthalle · judo`. Aber nur
+für beschriebene Fotos — ohne Beschreibung besteht der Text-Vektor aus
+Metadaten, und ein Probebau ergab sieben Haufen, die wörtlich nach dem Ordner
+hießen.
+
+**Mischen wäre Ersetzen.** Nachbarschafts-Überlappung der beiden Räume:
+Median-Jaccard 0,14 über 400 Fotos. Drei von vier Nachbarn sind andere.
+
+Daraus: zwei Anordnungen statt einer gemischten Distanz — „Bedeutung" bleibt,
+„Themen" kommt dazu (60 Schubladen, Fotos ohne Beschreibung über ihre zehn
+visuellen Nachbarn platziert), beide mit Titeln vom Sprachmodell und den
+Rangwörtern als Untertitel. Namen von Personen ausdrücklich erlaubt.
+
+Zwei Heuristiken, die vor dem Liefern gestorben sind, weil `tools/label_diff.py`
+alle 40 Kontinente nebeneinanderlegte: Wörter nach „im Hintergrund" abwerten
+(0 von 37 `holzoberfläche` standen hinter einem Marker — alle im Hauptsatz, als
+Unterlage) und die Mindestquote auf 10 % heben (nahm `abiball · silvester`,
+`funken`, `videospiel` mit). Geblieben sind Stamm-Dedupe (9 von 40 Namen
+hatten einen Platz doppelt belegt), Monatsnamen und Unterlage-Wörter als
+Stoppwörter: 28 gleich, 11 besser, 0 schlechter.
+
+Offen: bei k=60 hat eine Schublade ~250 Fotos; „Verletzungen" mit 25 bekommt
+keinen eigenen Platz. Feinere Schubladen brauchen Hierarchie, nicht mehr k.
 
 ### Zum Schnitt: die Reihenfolge ist enger als hier notiert
 

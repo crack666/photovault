@@ -12,7 +12,14 @@ import logging
 import re
 from typing import Any
 
-from ingest.ollama_client import CAPTION_MODEL, CAPTION_NUM_CTX, ollama_url, post_json
+from ingest.ollama_client import (
+    CAPTION_MODEL,
+    CAPTION_NUM_CTX,
+    litellm_headers,
+    litellm_url,
+    ollama_url,
+    post_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,37 +29,55 @@ JSON_SCHEMA = (
 )
 
 
-#: Obergrenze fuer `scene_tags`. CLIP liefert ~4, das LLM bis 8 -- 16 laesst
-#: Luft und deckelt zugleich das Wachstum bei wiederholten Caption-Laeufen.
+#: Obergrenze fuer `scene_tags`. Das LLM liefert bis 8; 16 laesst Luft fuer
+#: den Fall, dass einmal mehr kommt, ohne dass die Liste ins Unermessliche
+#: waechst.
 MAX_TAGS = 16
 
 #: Tokens fuer die JSON-Antwort. Darunter bricht der Rahmen mitten im Satz ab.
 CAPTION_NUM_PREDICT = 512
 
 
-def merge_tags(existing: list[str], extra: list[str], limit: int = MAX_TAGS) -> list[str]:
-    """CLIP-Tags und LLM-Tags zusammenfuehren, ohne Dubletten.
+def fold_tag(tag: str) -> str:
+    """Umlautgefaltet und kleingeschrieben -- der Vergleichsschluessel.
 
-    Naiv verglichen stehen hinterher `getraenke` (CLIP-Label, ASCII) und
-    `getränke` (LLM, echtes Deutsch) nebeneinander im Payload und blaehen
-    Filterlisten auf. Verglichen wird deshalb umlautgefaltet; behalten wird die
-    Schreibweise, die zuerst da war.
-
-    Das Limit deckelt das Wachstum: der Caption-Lauf ist auf Wiederholung
-    ausgelegt, und ohne Grenze legt jeder Durchlauf ein paar neue Formulierungen
-    obendrauf.
+    `getraenke` (CLIP-Label, ASCII) und `getränke` (LLM, echtes Deutsch) sind
+    ein Etikett, nicht zwei. Sonst stehen beide im Payload und blaehen jede
+    Filterliste auf.
     """
-    def fold(tag: str) -> str:
-        t = tag.strip().lower()
-        for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
-            t = t.replace(a, b)
-        return t.replace("-", " ").replace("_", " ")
+    t = (tag or "").strip().lower()
+    for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        t = t.replace(a, b)
+    return t.replace("-", " ").replace("_", " ")
 
-    out = list(existing)
-    seen = {fold(t) for t in out}
-    for tag in extra:
+
+def merge_tags(existing: list[str], extra: list[str], limit: int = MAX_TAGS) -> list[str]:
+    """Die Etiketten aus der Beschreibung gewinnen; CLIP ist der Rueckfall.
+
+    `existing` sind die CLIP-Etiketten (oder der letzte Stand), `extra` die
+    aus der Bildbeschreibung. Bis hierher wurden beide zusammengelegt, CLIP
+    vorn. Nachgemessen an 400 Fotos war das falsch herum: CLIP raet ueber 44
+    feste Begriffe, und selbst im obersten Aehnlichkeitsband -- vier Prozent
+    des Bestands -- stimmte nur jeder vierte Spitzenbegriff. Ein Wundfoto
+    trug `radfahren, skifahren, screenshot, hund, kinder` *vor* den sechs
+    richtigen Etiketten aus der Beschreibung, und war unter "skifahren"
+    filterbar. Eine Schwelle rettet das nicht: die Kosinus-Verteilung der
+    richtigen und der falschen Treffer liegt fast deckungsgleich.
+
+    Deshalb: kommen Etiketten aus der Beschreibung, sind sie das Ergebnis.
+    Kommen keine -- kein Vision-Modell, keine Grafikkarte, Antwort ohne
+    Etiketten --, bleiben die groben CLIP-Etiketten stehen. Grob ist besser
+    als nichts, aber nicht besser als richtig.
+
+    Dubletten innerhalb der Liste fallen umlautgefaltet zusammen; behalten
+    wird die zuerst genannte Schreibweise.
+    """
+    quelle = extra if any((t or "").strip() for t in extra) else existing
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in quelle:
         tag = (tag or "").strip()
-        key = fold(tag)
+        key = fold_tag(tag)
         if not key or key in seen:
             continue
         seen.add(key)
@@ -114,10 +139,23 @@ def caption_options(num_ctx: int | None = None) -> dict[str, Any]:
 
 
 def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
+    kind = (context or {}).get("kind") or "photo"
+    if kind == "video":
+        head = (
+            "Analysiere das Video anhand der Einzelbilder (Anfang, Mitte, Ende). "
+            "Der KONTEXT stammt aus Datei/Ordner/EXIF/Face-ID — nicht aus den Bildern. "
+            "Nutze ihn in caption_de (Ort, Jahr, Anlass), "
+            "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen. "
+            "Beschreibe den Clip in 1-2 Saetzen, nicht jedes Einzelbild extra."
+        )
+    else:
+        head = (
+            "Analysiere das Foto. Der KONTEXT stammt aus Datei/Ordner/EXIF/Face-ID — "
+            "nicht aus dem Bild. Nutze ihn in caption_de (Ort, Jahr, Anlass), "
+            "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen."
+        )
     lines = [
-        "Analysiere das Foto. Der KONTEXT stammt aus Datei/Ordner/EXIF/Face-ID — "
-        "nicht aus dem Bild. Nutze ihn in caption_de (Ort, Jahr, Anlass), "
-        "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen.",
+        head,
         "",
         "Regeln zu Namen — streng:",
         "- Einen Namen NUR dann nennen, wenn er unter 'Zugeordnet (Face-Match)' steht.",
@@ -217,6 +255,11 @@ class Captioner:
         self._url = ollama_url(ollama)
         self._model = model
         self._num_ctx = num_ctx
+        pool = litellm_url()
+        if pool:
+            logger.info("Captions via LiteLLM %s model=%s", pool, self._model)
+        else:
+            logger.info("Captions via Ollama %s model=%s", self._url, self._model)
 
     def caption(self, file_path: str, context: dict[str, Any] | None = None) -> str | None:
         result = self.caption_structured(file_path, context)
@@ -229,31 +272,26 @@ class Captioner:
         file_path: str,
         context: dict[str, Any] | None = None,
         image_b64: str | None = None,
+        images_b64: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """`image_b64` ist ein bereits kodiertes JPEG.
 
         Ohne das liest diese Methode die Datei ein zweites Mal ueber SMB und
         dekodiert sie erneut -- rund 200 ms, die das Fliessband schon bezahlt
         hat. Der Leser-Pool reicht das Ergebnis deshalb durch.
+
+        `images_b64` sind mehrere Frames desselben Videos in einer Anfrage.
         """
         try:
-            b64 = image_b64 if image_b64 is not None else jpeg_b64(file_path)
-            payload = {
-                "model": self._model,
-                "stream": False,
-                "think": False,
-                "format": "json",
-                "options": caption_options(self._num_ctx),
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": build_caption_prompt(context),
-                        "images": [b64],
-                    }
-                ],
-            }
-            resp = post_json(f"{self._url}/api/chat", payload, timeout=180)
-            raw = ((resp.get("message") or {}).get("content") or "").strip()
+            if images_b64:
+                images = [b for b in images_b64 if b]
+            elif image_b64 is not None:
+                images = [image_b64]
+            else:
+                images = [jpeg_b64(file_path)]
+            if not images:
+                return None
+            raw = self._complete(build_caption_prompt(context), images)
             if not raw:
                 return None
             parsed = _parse_json(raw)
@@ -274,6 +312,78 @@ class Captioner:
         except Exception as e:
             logger.warning("Captioning failed for %s: %s", file_path, e)
             return None
+
+    def ask_json(self, prompt: str) -> dict[str, Any] | None:
+        """Eine Textfrage, eine JSON-Antwort -- ohne Bild.
+
+        Fuer Aufgaben, die das Sprachmodell hinter den Captions auch ohne
+        Bild loesen kann, etwa Kontinente benennen. Nutzt denselben Weg wie
+        die Captions (Pool oder Ollama, `think` aus, JSON-Format), damit es
+        eine einzige Stelle gibt, die weiss, wie das Modell erreicht wird.
+
+        `None` bei jedem Fehler: der Aufrufer hat immer einen Rueckfall, und
+        eine Karte ohne Titel ist besser als keine Karte.
+        """
+        try:
+            raw = self._complete(prompt, [])
+        except Exception as e:
+            logger.warning("Textanfrage fehlgeschlagen: %s", e)
+            return None
+        if not raw:
+            return None
+        return _parse_json(raw)
+
+    def _complete(self, prompt: str, images: list[str]) -> str:
+        """LiteLLM `/v1/chat/completions`, sonst Ollama `/api/chat`.
+
+        Das Modell ist ein Pool-Alias (`local`). Welches Gewicht haengt, steht
+        nur in der LiteLLM-Config -- PhotoVault schickt keinen Ollama-Tag.
+        """
+        pool = litellm_url()
+        if pool:
+            return _content_from_openai(self._via_litellm(pool, prompt, images))
+        return _content_from_ollama(self._via_ollama(prompt, images))
+
+    def _via_litellm(self, pool: str, prompt: str, images: list[str]) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for blob in images:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{blob}"},
+            })
+        options = caption_options(self._num_ctx)
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": options.get("temperature", 0.2),
+            "max_tokens": options.get("num_predict", CAPTION_NUM_PREDICT),
+            "stream": False,
+            "response_format": {"type": "json_object"},
+        }
+        return post_json(
+            f"{pool}/v1/chat/completions",
+            payload,
+            timeout=180,
+            headers=litellm_headers(),
+        )
+
+    def _via_ollama(self, prompt: str, images: list[str]) -> dict[str, Any]:
+        return post_json(
+            f"{self._url}/api/chat",
+            {
+                "model": self._model,
+                "stream": False,
+                "think": False,
+                "format": "json",
+                "options": caption_options(self._num_ctx),
+                "messages": [{
+                    "role": "user",
+                    "content": prompt,
+                    "images": images,
+                }],
+            },
+            timeout=180,
+        )
 
 
 def jpeg_b64(file_path: str, image=None, max_side: int = 1024) -> str:
@@ -297,6 +407,17 @@ def jpeg_b64(file_path: str, image=None, max_side: int = 1024) -> str:
 
 #: Alter Name, bis nichts mehr darauf zeigt.
 _jpeg_b64 = jpeg_b64
+
+
+def _content_from_openai(resp: dict[str, Any]) -> str:
+    choices = resp.get("choices") or []
+    if not choices:
+        return ""
+    return str(((choices[0].get("message") or {}).get("content") or "")).strip()
+
+
+def _content_from_ollama(resp: dict[str, Any]) -> str:
+    return str(((resp.get("message") or {}).get("content") or "")).strip()
 
 
 def _parse_json(raw: str) -> dict[str, Any] | None:

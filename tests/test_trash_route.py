@@ -133,9 +133,11 @@ class _Thumbs:
     def __init__(self, je_datei=0):
         self.je_datei = je_datei
         self.calls: list[str] = []
+        self.hashes: list = []
 
-    def __call__(self, file_path):
+    def __call__(self, file_path, content_hash=None):
         self.calls.append(file_path)
+        self.hashes.append(content_hash)
         return self.je_datei if file_path else 0
 
 
@@ -448,13 +450,16 @@ class TestOhneConfirm:
 
 class TestMitConfirm:
     def test_datei_punkt_gesichter_vorschau(self, wire, tmp_path):
-        f, payload = _foto(tmp_path, "a.jpg")
+        f, payload = _foto(tmp_path, "a.jpg", content_sha256="deadbeef")
         w = wire(_Q({"a": payload}), thumbs_je_datei=2)
         out = empty_trash(EmptyTrashRequest(photo_ids=["a"], confirm=True))
 
         assert not f.exists()
         assert w.q.deleted == [["a"]]
         assert w.thumbs.calls == [str(f)]
+        # Mit Inhalts-Hash: unter dem liegen die Kacheln seit Stufe 3. Nur
+        # mit dem Pfad war das ein Leerlauf, und das Geisterbild blieb.
+        assert w.thumbs.hashes == ["deadbeef"]
         assert out["deleted"] == 1
         assert out["files"] == 1
         assert out["thumbs"] == 2
