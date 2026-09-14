@@ -26,6 +26,7 @@
 .b-running { background: #123b46; color: #5cc8dc; }
 .b-done    { background: #123020; color: #5cbe8a; }
 .b-stale   { background: #3a2a0e; color: #d8ae4c; }
+.b-aborted { background: #3a2a0e; color: #d8ae4c; }
 .b-error   { background: #3a1c1b; color: #e88c89; }
 .bar { height: .5rem; border-radius: var(--r-pill); background: #2a2f36; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: #5cc8dc; transition: width .4s ease; }
@@ -48,6 +49,14 @@
 }
 .job:hover .job-forget, .job-forget:focus { opacity: 1; }
 .job-forget:hover { background: #3a2422; border-color: #6b3a38; color: #e8b0ad; }
+
+.job-stop {
+  position: absolute; top: .5rem; right: .5rem;
+  min-height: 28px; padding: 0 .7rem;
+  border-radius: var(--r-s); font-size: var(--fs-s);
+  background: #3a2422; border: 1px solid #6b3a38; color: #e8b0ad;
+}
+.job-stop:hover { background: #4a2c2a; color: #fff; }
 
 /* ---- Läufe anstoßen ------------------------------------------------ */
 

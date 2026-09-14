@@ -1,6 +1,8 @@
 """Job-Liste für die Fortschrittsseite."""
 import time
 
+import pytest
+
 from ingest.jobs import DEFAULT_VECTOR_SIZE, JobTracker, as_epoch, list_jobs
 
 
@@ -179,6 +181,16 @@ class TestDoomedJobs:
 
         assert doomed_jobs(self._jobs(), "aborted", 0, 0, now=2000) == ["c3"]
 
+    def test_hand_aborted_is_cleaned_with_stale(self):
+        from api.routes.jobs import doomed_jobs
+
+        jobs = self._jobs() + [
+            {"job_id": "a1", "kind": "faces", "status": "aborted", "updated_at": 400},
+        ]
+        doomed = doomed_jobs(jobs, "aborted", 0, 0, now=2000)
+        assert set(doomed) == {"c3", "a1"}
+        assert "c2" not in doomed
+
     def test_the_newest_per_kind_stay(self):
         """Man will sehen, was zuletzt lief — auch wenn es fertig ist."""
         from api.routes.jobs import doomed_jobs
@@ -344,3 +356,127 @@ class TestMissingRequirements:
                         needs_modules=("gibtesnicht_xyz",),
                         needs_models=("egal:1b",))
         assert "gibtesnicht_xyz" in missing_requirements(spec, models=None)
+
+
+class TestAbortHelpers:
+    """Beenden zielt auf die Prozessgruppe, nie auf uvicorn."""
+
+    def test_uvicorn_is_not_a_job(self):
+        from ingest.jobs import cmdline_is_job
+
+        assert not cmdline_is_job("/usr/bin/python -m uvicorn api.main:app", "ingest")
+
+    def test_pipeline_matches_ingest(self):
+        from ingest.jobs import cmdline_is_job
+
+        assert cmdline_is_job("/venv/bin/python -m ingest.pipeline --skip-caption", "ingest")
+
+    def test_wrong_kind_is_rejected(self):
+        from ingest.jobs import cmdline_is_job
+
+        assert not cmdline_is_job("python -m ingest.face_pass --kind video", "ingest")
+
+    def test_empty_command_is_rejected(self):
+        from ingest.jobs import cmdline_is_job
+
+        assert not cmdline_is_job("", "faces")
+
+    def test_terminate_refuses_pid_one(self):
+        from ingest.jobs import terminate_group
+
+        with pytest.raises(ValueError):
+            terminate_group(1)
+
+
+class TestAbortJob:
+    def test_other_host_is_refused(self, monkeypatch):
+        from fastapi import HTTPException
+
+        from api.routes import jobs as jobs_mod
+
+        monkeypatch.setattr(jobs_mod, "list_jobs", lambda *a, **k: [{
+            "job_id": "j1", "status": "running", "host": "otherbox",
+            "pid": 99, "kind": "faces",
+        }])
+        monkeypatch.setattr(jobs_mod, "client", lambda: None)
+        monkeypatch.setattr("socket.gethostname", lambda: "here")
+        with pytest.raises(HTTPException) as err:
+            jobs_mod.abort_job("j1")
+        assert err.value.status_code == 409
+        assert "otherbox" in err.value.detail
+
+    def test_dead_pid_still_marks_aborted(self, monkeypatch):
+        from api.routes import jobs as jobs_mod
+
+        marked = []
+        monkeypatch.setattr(jobs_mod, "list_jobs", lambda *a, **k: [{
+            "job_id": "j1", "status": "running", "host": "here",
+            "pid": 4242, "kind": "faces",
+        }])
+        monkeypatch.setattr(jobs_mod, "client", lambda: object())
+        monkeypatch.setattr("socket.gethostname", lambda: "here")
+        monkeypatch.setattr(jobs_mod, "pid_alive", lambda pid: False)
+        monkeypatch.setattr(
+            jobs_mod, "mark_job_status",
+            lambda *a, **k: marked.append((a, k)),
+        )
+        out = jobs_mod.abort_job("j1")
+        assert out["aborted"] == "j1" and out["signalled"] is False
+        assert marked and marked[0][0][1] == "j1" and marked[0][0][2] == "aborted"
+
+    def test_uvicorn_pid_is_not_killed(self, monkeypatch):
+        from fastapi import HTTPException
+
+        from api.routes import jobs as jobs_mod
+
+        killed = []
+        monkeypatch.setattr(jobs_mod, "list_jobs", lambda *a, **k: [{
+            "job_id": "j1", "status": "running", "host": "here",
+            "pid": 1, "kind": "ingest",
+        }])
+        monkeypatch.setattr(jobs_mod, "client", lambda: object())
+        monkeypatch.setattr("socket.gethostname", lambda: "here")
+        monkeypatch.setattr(jobs_mod, "pid_alive", lambda pid: True)
+        monkeypatch.setattr(jobs_mod, "terminate_group", lambda pid, sig=None: killed.append(pid))
+        monkeypatch.setattr(
+            jobs_mod, "mark_job_status",
+            lambda *a, **k: None,
+        )
+        # pid 1: the alive-and-kill branch is skipped (pid > 1).
+        out = jobs_mod.abort_job("j1")
+        assert killed == []
+        assert out["signalled"] is False
+
+    def test_foreign_cmdline_is_refused(self, monkeypatch):
+        from fastapi import HTTPException
+
+        from api.routes import jobs as jobs_mod
+
+        monkeypatch.setattr(jobs_mod, "list_jobs", lambda *a, **k: [{
+            "job_id": "j1", "status": "running", "host": "here",
+            "pid": 88, "kind": "ingest",
+        }])
+        monkeypatch.setattr(jobs_mod, "client", lambda: object())
+        monkeypatch.setattr("socket.gethostname", lambda: "here")
+        monkeypatch.setattr(jobs_mod, "pid_alive", lambda pid: True)
+        monkeypatch.setattr(
+            jobs_mod, "proc_cmdline",
+            lambda pid: "python -m uvicorn api.main:app --host 0.0.0.0",
+        )
+        with pytest.raises(HTTPException) as err:
+            jobs_mod.abort_job("j1")
+        assert err.value.status_code == 409
+        assert "API-Prozess" in err.value.detail
+
+    def test_already_done_is_conflict(self, monkeypatch):
+        from fastapi import HTTPException
+
+        from api.routes import jobs as jobs_mod
+
+        monkeypatch.setattr(jobs_mod, "list_jobs", lambda *a, **k: [{
+            "job_id": "j1", "status": "done", "host": "here", "pid": 9, "kind": "faces",
+        }])
+        monkeypatch.setattr(jobs_mod, "client", lambda: None)
+        with pytest.raises(HTTPException) as err:
+            jobs_mod.abort_job("j1")
+        assert err.value.status_code == 409

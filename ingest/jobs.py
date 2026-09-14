@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 import socket
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,18 @@ COLLECTION = os.environ.get("PHOTOVAULT_JOBS_COLLECTION", "ingest_jobs")
 #: Qdrant jeden Upsert ab.
 DEFAULT_VECTOR_SIZE = 4
 FLUSH_SECONDS = 2.0
+
+#: Welches `-m`-Modul ein Lauf in der Kommandozeile tragen muss. Ohne den
+#: Abgleich koennte ein wiederverwendetes PID einen fremden Prozess treffen —
+#: im Docker-Container waere PID 1 der API-Server.
+KIND_MARKERS = {
+    "ingest": ("ingest.pipeline",),
+    "faces": ("ingest.face_pass",),
+    "caption": ("ingest.caption_pass",),
+    "reembed": ("tools.reembed_all",),
+    "thumbs": ("tools.thumbs",),
+    "atlas": ("tools.atlas_build",),
+}
 
 
 class JobTracker:
@@ -55,7 +69,30 @@ class JobTracker:
             "skipped": 0,
         }
         self._ready = self._ensure_collection()
+        self._install_stop_handler()
         self.update(phase="starting", force=True)
+
+    def _install_stop_handler(self) -> None:
+        """SIGTERM als Abbruch schreiben, bevor der Prozess stirbt.
+
+        Nur im Kind, das die Jobs-Seite gestartet hat (`PHOTOVAULT_JOB_CHILD`).
+        Tests und der API-Prozess selbst duerfen den Handler nicht erben —
+        sonst faengt pytest das naechste SIGTERM.
+        """
+        if os.environ.get("PHOTOVAULT_JOB_CHILD") != "1":
+            return
+
+        def _stop(signum, _frame):
+            try:
+                self.finish("aborted", phase="aborted")
+            except Exception:
+                pass
+            raise SystemExit(128 + int(signum))
+
+        try:
+            signal.signal(signal.SIGTERM, _stop)
+        except (ValueError, OSError):
+            return
 
     def _ensure_collection(self) -> bool:
         try:
@@ -182,3 +219,83 @@ def list_jobs(client, collection: str = COLLECTION, limit: int = 50) -> list[dic
             job["status"] = "stale"
     jobs.sort(key=lambda j: j["started_at"], reverse=True)
     return jobs
+
+
+def job_point_id(job_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, job_id))
+
+
+def proc_cmdline(pid: int) -> str:
+    """Kommandozeile aus /proc — leer, wenn es den Prozess hier nicht gibt.
+
+    Nativ und Docker teilen sich denselben Weg: der Lauf ist ein Kind *dieses*
+    API-Prozesses, also dieselbe PID-Namespace. Ein `pkill` ueber den Host
+    wuerde im Container niemanden finden, und umgekehrt.
+    """
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+
+
+def cmdline_is_job(cmd: str, kind: str) -> bool:
+    """Ob diese Kommandozeile der erwartete Lauf ist — und nicht uvicorn."""
+    if not cmd or "uvicorn" in cmd:
+        return False
+    markers = KIND_MARKERS.get(kind) or ()
+    return any(m in cmd for m in markers)
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def terminate_group(pid: int, sig: int = signal.SIGTERM) -> None:
+    """Die Prozessgruppe des Laufs, nicht die ganze Maschine.
+
+    `Popen(..., start_new_session=True)` macht den Kindprozess zum Leiter
+    seiner Gruppe. ffmpeg-Kinder erben die Gruppe. SIGTERM daran reicht —
+    `pkill` waere blind fuer Namen und traefe im Zweifel den API-Server.
+    PID 1 ist im Container uvicorn; den fassen wir nie an.
+    """
+    if pid <= 1:
+        raise ValueError("PID 1 ist der Dienst, kein Lauf")
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(pid, sig)
+            return
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            raise
+    os.kill(pid, sig)
+
+
+def mark_job_status(client, job_id: str, status: str, **fields: Any) -> None:
+    """Status setzen, ohne den Tracker des Kindes zu brauchen.
+
+    Nach SIGKILL kommt kein `finish` mehr. Die Seite darf dann nicht auf
+    den 120-Sekunden-Stale-Fall warten.
+    """
+    payload = {
+        "status": status,
+        "updated_at": time.time(),
+        "finished_at": time.time() if status != "running" else None,
+        **fields,
+    }
+    try:
+        client.set_payload(
+            collection_name=COLLECTION,
+            payload=payload,
+            points=[job_point_id(job_id)],
+            wait=True,
+        )
+    except Exception as e:
+        logger.warning("Could not mark job %s as %s: %s", job_id, status, e)

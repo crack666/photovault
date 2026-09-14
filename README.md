@@ -769,9 +769,10 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 | GET | `/api/ingest/state` | Lücken im Index (Fotos ohne Text-/CLIP-Vektor) |
 | GET | `/api/jobs` | Alle Jobs mit Fortschritt |
 | GET | `/api/jobs/{id}` | Ein Job |
+| POST | `/api/jobs/{id}/abort` | Lauf beenden — SIGTERM an die Prozessgruppe (nativ wie Docker) |
 | DELETE | `/api/jobs/{id}` | Einen Eintrag vergessen (nicht den Lauf) |
 | POST | `/api/jobs/prune` | Liste aufräumen — `what=aborted\|finished` |
-| POST | `/api/jobs/run` | Lauf starten — `caption\|reembed\|atlas` |
+| POST | `/api/jobs/run` | Lauf starten — `ingest\|faces\|caption\|reembed\|thumbs\|atlas` |
 | POST | `/api/ingest/start` | Ingest starten (Stub) |
 | GET | `/api/ingest/progress` | Stand des jüngsten Ingest-Laufs |
 | GET | `/api/ingest/stats` | Anzahl indizierter Fotos |
@@ -780,8 +781,11 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 
 `http://127.0.0.1:8000/jobs.html` zeigt alle Läufe mit Balken, Rate, ETA und
 aktuellem Ordner; die Seite pollt alle 2 s. Von dort lassen sich die langen
-Läufe auch **starten** — Bildbeschreibungen, Text-Vektoren, Karte — ohne eine
-Shell auf dem Rechner mit den Fotos.
+Läufe auch **starten** — Einlesen, Video-Gesichter, Bildbeschreibungen,
+Text-Vektoren, Karte — ohne eine Shell auf dem Rechner mit den Fotos.
+**Beenden** schickt SIGTERM an die Prozessgruppe des Laufs (ffmpeg-Kinder
+inklusive), denselben Weg nativ und im API-Container. `pkill` auf dem Host
+würde im Container niemanden finden; PID 1 dort ist uvicorn und bleibt unangetastet.
 
 Was gestartet werden darf, steht in `api.routes.jobs.RUNNABLE` und nirgends
 sonst. Die Oberfläche hat keine Anmeldung; diese Liste ist die einzige

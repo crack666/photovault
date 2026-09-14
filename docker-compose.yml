@@ -45,6 +45,10 @@ services:
       # Die Fotos werden nur gelesen. Schreibend nötig ist der Mount erst,
       # wenn `tools/exif_repair.py` Aufnahmezeiten zurückschreiben soll --
       # dann das :ro entfernen.
+      #
+      # Lange Läufe startet die Jobs-Seite als Kind *in diesem Container*.
+      # Beenden ist SIGTERM an deren Prozessgruppe, nicht `pkill` auf dem Host
+      # und nicht `docker kill`.
       - ${PHOTO_DIR:?PHOTO_DIR fehlt -- .env.example nach .env kopieren}:/photos:ro
       # Modellgewichte (insightface, CLIP) überleben so einen Neubau des Images.
       - model_cache:/models

@@ -25,7 +25,15 @@ from pydantic import BaseModel, Field
 
 from api.capabilities import UNCHECKED, llm_models, missing
 from api.qdrant_util import client
-from ingest.jobs import COLLECTION, list_jobs
+from ingest.jobs import (
+    COLLECTION,
+    cmdline_is_job,
+    list_jobs,
+    mark_job_status,
+    pid_alive,
+    proc_cmdline,
+    terminate_group,
+)
 from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL
 
 logger = logging.getLogger(__name__)
@@ -272,6 +280,85 @@ def one_job(job_id: str) -> dict:
     raise HTTPException(404, "Job nicht gefunden")
 
 
+@router.post("/{job_id}/abort")
+def abort_job(job_id: str) -> dict:
+    """Lauf beenden. Dieselbe Prozessgruppe, nativ und im Container.
+
+    Der Start setzt `start_new_session=True`: der Python-Lauf ist Leiter
+    seiner Gruppe, ffmpeg-Kinder gehoeren dazu. SIGTERM an die Gruppe —
+    kein `pkill`, kein `docker kill`. PID 1 im Container ist uvicorn;
+    den prueft `cmdline_is_job` und lehnt ihn ab.
+
+    Laeuft der Eintrag auf einem anderen Host (Compose-Container vs.
+    `start-local.sh`), steht die PID in der anderen Namespace. Dann
+    abbrechen, wo der Lauf wirklich gestartet wurde.
+    """
+    import signal
+    import socket
+
+    q = client()
+    job = next((j for j in list_jobs(q, limit=10_000) if j.get("job_id") == job_id), None)
+    if job is None:
+        raise HTTPException(404, "Job nicht gefunden")
+    status = job.get("status")
+    if status not in ("running", "stale"):
+        raise HTTPException(409, f"Der Lauf läuft nicht mehr ({status}).")
+
+    host = str(job.get("host") or "")
+    here = socket.gethostname()
+    if host and host != here:
+        raise HTTPException(
+            409,
+            f"Dieser Lauf läuft auf {host}, nicht hier ({here}). "
+            "Beenden dort, wo er gestartet wurde — nativ und Docker "
+            "teilen sich keine Prozess-IDs.",
+        )
+
+    try:
+        pid = int(job.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+
+    signalled = False
+    if pid > 1 and pid_alive(pid):
+        cmd = proc_cmdline(pid)
+        kind = str(job.get("kind") or "")
+        if not cmd:
+            raise HTTPException(
+                409,
+                "Prozess lebt, aber die Kommandozeile ist hier nicht lesbar. "
+                "Abbruch verweigert.",
+            )
+        if not cmdline_is_job(cmd, kind):
+            raise HTTPException(
+                409,
+                "Die PID gehört nicht zu diesem Lauf — Abbruch verweigert, "
+                "damit nicht der API-Prozess stirbt.",
+            )
+        try:
+            terminate_group(pid)
+            signalled = True
+        except ProcessLookupError:
+            signalled = False
+        except PermissionError as e:
+            raise HTTPException(500, f"Kein Recht, den Lauf zu beenden: {e}") from e
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
+
+        deadline = time.time() + 2.0
+        while pid_alive(pid) and time.time() < deadline:
+            time.sleep(0.1)
+        if pid_alive(pid):
+            try:
+                terminate_group(pid, sig=getattr(signal, "SIGKILL", signal.SIGTERM))
+            except (ProcessLookupError, PermissionError, ValueError, OSError):
+                logger.warning("SIGKILL for job %s pid %s failed", job_id, pid)
+
+    mark_job_status(q, job_id, "aborted", phase="aborted")
+    logger.info("Job %s aborted (pid %s, signalled=%s)", job_id, pid, signalled)
+    return {"aborted": job_id, "pid": pid or None, "signalled": signalled}
+
+
 @router.delete("/{job_id}")
 def forget_job(job_id: str) -> dict:
     """Einen Eintrag aus der Liste nehmen.
@@ -312,7 +399,7 @@ class PruneRequest(BaseModel):
     verlaessliche Trennung: laeuft noch, oder laeuft nicht mehr.
     """
 
-    #: `aborted` = nur Abgebrochenes (kein Lebenszeichen mehr).
+    #: `aborted` = von Hand beendet oder ohne Lebenszeichen (`stale`).
     #: `finished` = alles, was nicht mehr laeuft.
     what: Literal["aborted", "finished"] = "aborted"
     #: Nur Einträge, die älter sind als so viele Stunden. 0 = alle.
@@ -337,7 +424,10 @@ def doomed_jobs(
         kind = job.get("kind") or "?"
         seen = kept_per_kind.get(kind, 0)
         status = job.get("status")
-        removable = status != "running" and (what == "finished" or status == "stale")
+        if what == "finished":
+            removable = status != "running"
+        else:
+            removable = status in ("stale", "aborted")
         too_young = cutoff is not None and (job.get("updated_at") or 0) > cutoff
         if seen < keep_per_kind or not removable or too_young:
             kept_per_kind[kind] = seen + 1
@@ -426,11 +516,13 @@ def run_job(req: RunRequest) -> dict:
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{req.job}-{int(time.time())}.log"
+    env = os.environ.copy()
+    env["PHOTOVAULT_JOB_CHILD"] = "1"
     try:
         with log_path.open("ab") as log:
             proc = subprocess.Popen(  # noqa: S603 -- feste Liste, keine Shell
                 argv, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, start_new_session=True,
+                stdin=subprocess.DEVNULL, start_new_session=True, env=env,
             )
     except Exception as e:
         logger.exception("Job start failed")
