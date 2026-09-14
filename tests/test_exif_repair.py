@@ -42,3 +42,25 @@ def test_png_is_not_writable():
 def test_parse_rejects_short_stamps():
     assert _parse_taken_at("2018-10-21") is None
     assert _parse_taken_at(None) is None
+
+
+def test_folder_filter_limits_to_named_folders():
+    """Ohne Angabe gilt alles; mit Angabe nur der genannte Ordner."""
+    from tools.exif_repair import in_folders
+
+    wa = {"folder_name": "WhatsApp Images"}
+    other = {"folder_name": "Fotos"}
+
+    assert in_folders(wa, None) is True
+    assert in_folders(other, None) is True
+
+    only_wa = {"WhatsApp Images"}
+    assert in_folders(wa, only_wa) is True
+    assert in_folders(other, only_wa) is False
+
+
+def test_missing_folder_name_is_excluded_when_filtering():
+    """Kein Ordnername heisst: nicht belegt, also nicht anfassen."""
+    from tools.exif_repair import in_folders
+
+    assert in_folders({}, {"WhatsApp Images"}) is False

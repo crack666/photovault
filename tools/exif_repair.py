@@ -16,6 +16,7 @@ ueber `ingest.exif_writer.revert` umkehrbar.
 
     python -m tools.exif_repair                 # Trockenlauf (schreibt nichts)
     python -m tools.exif_repair --preview       # nur zaehlen, nach Herkunft
+    python -m tools.exif_repair --folder "WhatsApp Images" --folder Sent
     python -m tools.exif_repair --apply --limit 200
 """
 from __future__ import annotations
@@ -49,6 +50,25 @@ def _parse_taken_at(value: str | None) -> datetime | None:
         return None
 
 
+def in_folders(payload: dict, folders: set[str] | None) -> bool:
+    """Ordnerschranke.
+
+    Ohne Angabe gilt das ganze Archiv. Mit Angabe zaehlt nur, was in einem der
+    genannten Ordner liegt -- gedacht fuer Gruppen, deren Herkunft *einheitlich*
+    belastbar ist. `WhatsApp Images` ist so ein Fall: der Dateiname
+    (`IMG-20181021-WA0081`) nennt den Tag verlaesslich. In einem gemischten
+    Ordner steht neben so einem Namen auch mal ein `DSC_0001`, dessen Datum
+    geraten waere. Der Filter ist deshalb kein Komfort, sondern die Grenze
+    zwischen belegt und vermutet.
+
+    Verglichen wird gegen `folder_name`, denselben Wert, den `--preview`
+    auflistet -- was dort steht, laesst sich hier eintippen.
+    """
+    if not folders:
+        return True
+    return (payload.get("folder_name") or "") in folders
+
+
 def candidate(payload: dict) -> tuple[str, datetime] | None:
     """Kommt dieses Foto in Frage? Gibt `(pfad, zeitstempel)` zurueck."""
     path = payload.get("file_path")
@@ -63,7 +83,8 @@ def candidate(payload: dict) -> tuple[str, datetime] | None:
     return path, when
 
 
-def preview(client, collection: str = "photos", limit: int | None = None) -> Counter:
+def preview(client, collection: str = "photos", limit: int | None = None,
+            folders: set[str] | None = None) -> Counter:
     """Index-Sicht: wer kaeme in Frage, ohne die Dateien anzufassen."""
     by_src: Counter = Counter()
     by_folder: Counter = Counter()
@@ -78,14 +99,17 @@ def preview(client, collection: str = "photos", limit: int | None = None) -> Cou
         for point in batch:
             seen += 1
             payload = point.payload or {}
+            if not in_folders(payload, folders):
+                continue
             if candidate(payload) is None:
                 continue
             by_src[payload.get("date_source") or "abgeleitet"] += 1
             by_folder[payload.get("folder_name") or "?"] += 1
         if offset is None or (limit and seen >= limit):
             break
+    schranke = f", eingeschraenkt auf {len(folders)} Ordner" if folders else ""
     print(f"{seen} Fotos im Index, {sum(by_src.values())} ohne Kameradatum "
-          f"(date_source != exif, Uhrzeit bekannt, JPEG/TIFF).")
+          f"(date_source != exif, Uhrzeit bekannt, JPEG/TIFF{schranke}).")
     print("Herkunft der Ableitung:")
     for k, n in by_src.most_common():
         print(f"  {n:6d}  {k}")
@@ -125,14 +149,16 @@ def _process(item, apply: bool) -> str:
 
 
 def run(client, collection: str = "photos", apply: bool = False,
-        workers: int = 8, limit: int | None = None) -> Counter:
+        workers: int = 8, limit: int | None = None,
+        folders: set[str] | None = None) -> Counter:
     tally: Counter = Counter()
     offset = None
     seen = 0
     while True:
         batch, offset = client.scroll(
             collection_name=collection, limit=BATCH, offset=offset,
-            with_payload=["file_path", "taken_at", "date_source"], with_vectors=False,
+            with_payload=["file_path", "taken_at", "date_source", "folder_name"],
+            with_vectors=False,
         )
         if not batch:
             break
@@ -140,6 +166,9 @@ def run(client, collection: str = "photos", apply: bool = False,
         for point in batch:
             seen += 1
             payload = point.payload or {}
+            if not in_folders(payload, folders):
+                tally["anderer Ordner"] += 1
+                continue
             hit = candidate(payload)
             if hit is None:
                 tally["uebersprungen"] += 1
@@ -173,19 +202,23 @@ def main() -> None:
                         help="Tatsaechlich schreiben. Ohne das nur berichten.")
     parser.add_argument("--preview", action="store_true",
                         help="Nur zaehlen (Index), Dateien nicht oeffnen")
+    parser.add_argument("--folder", action="append", dest="folders", metavar="NAME",
+                        help="Nur diesen Ordner (mehrfach angebbar). "
+                             "Namen wie in --preview.")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
+    folders = set(args.folders) if args.folders else None
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     from qdrant_client import QdrantClient
 
     q = QdrantClient(url=args.qdrant_url)
     if args.preview:
-        preview(q, collection=args.collection, limit=args.limit)
+        preview(q, collection=args.collection, limit=args.limit, folders=folders)
         return
     run(q, collection=args.collection,
-        apply=args.apply, workers=args.workers, limit=args.limit)
+        apply=args.apply, workers=args.workers, limit=args.limit, folders=folders)
 
 
 if __name__ == "__main__":
