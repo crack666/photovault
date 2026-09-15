@@ -43,10 +43,16 @@ def load(atlas: Path, themen: bool):
     cap: dict[str, tuple[str, list[str]]] = {}
     for i in range(0, len(ids), 512):
         for p in q.retrieve(collection_name=PHOTOS, ids=ids[i:i + 512],
-                            with_payload=["caption_de", "scene_tags"], with_vectors=False):
+                            with_payload=["caption_de", "scene_tags", "person_names"],
+                            with_vectors=False):
             pl = p.payload or {}
-            cap[str(p.id)] = (pl.get("caption_de") or "", pl.get("scene_tags") or [])
-    meta = [{"caption": cap.get(i, ("", []))[0], "tags": cap.get(i, ("", []))[1]} for i in ids]
+            cap[str(p.id)] = (pl.get("caption_de") or "", pl.get("scene_tags") or [],
+                              pl.get("person_names") or [])
+    leer = ("", [], [])
+    # Mit `person_names`: die Namensregel zaehlt bestaetigte Gesichter, und
+    # ein Vergleich ohne sie zeigte Namen, die der Bau laengst streicht.
+    meta = [{"caption": cap.get(i, leer)[0], "tags": cap.get(i, leer)[1],
+             "person_names": cap.get(i, leer)[2]} for i in ids]
     return np.asarray(cl), meta, clusters
 
 
