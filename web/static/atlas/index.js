@@ -13,8 +13,8 @@ import { createPathPick } from "../core/pathpick.js";
 import { feature, gate } from "../core/capabilities.js";
 import { showLightbox } from "../lightbox/index.js";
 import {
-  COLOR_MODES, FILTERS, FLAG, countVisible, foldedAway, legendFor, loadAtlas,
-  personNames, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
+  COLOR_MODES, FILTERS, FLAG, anchorLine, countVisible, foldedAway, legendFor, loadAtlas,
+  personNames, photosOfAnchor, photosOfCluster, photosOfEvent, photosOfPerson, photosOfTag,
   spaceCounts, tagCounts, termsOf, tidiness, visibleMask,
 } from "./model.js";
 import { createScene } from "./scene.js";
@@ -307,6 +307,7 @@ ${escapeHtml(build.why)}`}</pre>`;
     onHoverEvent: showEventHover,
     onPickEvent: openEvent,
     onPickCluster: pickCluster,
+    onPickAnchor: pickAnchor,
     onLasso: (hit, subtract) => applyLasso(hit, subtract),
   });
   scene.setThumbMode(thumbMode);
@@ -574,15 +575,16 @@ function buildJump() {
   const jump = $("atlas-jump");
   const was = model.clusterSetName === "themen" ? "Schublade" : "Kontinent";
   jump.innerHTML = `<option value=''>${was} anfliegen …</option>` +
-    [...model.clusters].filter((c) => c.n > 0).sort((a, b) => b.n - a.n).map((c) =>
+    [...model.clusters].filter((c) => c.n > 0 && !c.loose).sort((a, b) => b.n - a.n).map((c) =>
       `<option value="${c.i}">${escapeHtml(model.clusterLabel[c.i])} — ${num(c.n)}</option>`
     ).join("");
 }
 
 function renderFooter() {
   const was = model.clusterSetName === "themen" ? "Schubladen" : "Kontinente";
+  const echte = model.clusters.filter((c) => !c.loose && c.n > 0).length;
   $("atlas-built").textContent =
-    `${num(model.n)} Fotos · ${model.clusters.length} ${was} · ${model.space.toUpperCase()} · ${model.builtAt.slice(0, 10)}`;
+    `${num(model.n)} Fotos · ${echte} ${was} · ${model.space.toUpperCase()} · ${model.builtAt.slice(0, 10)}`;
 }
 
 /* ---- Regler -----------------------------------------------------------
@@ -808,7 +810,7 @@ function paintBriefing({ onlyIfWork = false } = {}) {
   if (top) for (const i of top.ids) perCluster.set(model.cl[i], (perCluster.get(model.cl[i]) || 0) + 1);
   const orte = top
     ? model.clusters
-        .filter((c) => (perCluster.get(c.i) || 0) >= WORTH_A_TRIP)
+        .filter((c) => !c.loose && (perCluster.get(c.i) || 0) >= WORTH_A_TRIP)
         .sort((a, b) => (perCluster.get(b.i) || 0) - (perCluster.get(a.i) || 0))
         .slice(0, 4)
     : [];
@@ -876,8 +878,9 @@ function showHover(i, sx, sy) {
     box.innerHTML = `
       <img src="${thumbUrl(model.ids[i], 160)}" alt="">
       <div>
-        <b>${escapeHtml(model.clusterLabel[c.i])}</b>
+        <b>${c.loose ? "zwischen den Inseln" : escapeHtml(model.clusterLabel[c.i])}</b>
         ${c.title ? `<span class="muted">${escapeHtml(termsOf(c))}</span>` : ""}
+        ${anchorLine(c) ? `<span class="muted">${escapeHtml(anchorLine(c))}</span>` : ""}
         ${wer.length ? `<span class="who">${escapeHtml(wer.join(", "))}</span>` : ""}
         <span>${model.year[i] > 0 ? model.year[i] : "ohne Datum"} · ${escapeHtml(model.channels[model.ch[i]])}</span>
         <span class="muted">${stateWords(model.fl[i])}${stack ? " · im Stapel" : ""}</span>
@@ -1017,6 +1020,22 @@ function pickCluster(c, add) {
   paintSelection();
 }
 
+/** Der Name eines Kontinents -- auch fuer die Streuung, die keinen hat. */
+function nameOf(c) {
+  return model.clusters[c]?.loose ? "zwischen den Inseln" : model.clusterLabel[c];
+}
+
+/** Ein Anker waehlt die Fotos, die ihn tragen -- und nur die. */
+function pickAnchor(c, k, add) {
+  const anchor = model.clusters[c]?.anchors?.[k];
+  if (!anchor) return;
+  const idx = photosOfAnchor(model, c, anchor, mask());
+  if (!add) selection = new Set(idx);
+  else for (const i of idx) selection.add(i);
+  scene.setSelection(selection);
+  paintSelection();
+}
+
 /** Auswahl auf eine Teilmenge eindampfen. */
 function refine(keep) {
   selection = new Set([...selection].filter(keep));
@@ -1081,8 +1100,8 @@ function paintSelection() {
     </dl>
     <div class="atlas-refine">
       ${ranked.length > 1
-        ? `<button data-only="cluster">nur „${escapeHtml(model.clusterLabel[topCluster])}" (${num(topCount)})</button>` : ""}
-      <button data-all="cluster">ganzer Kontinent „${escapeHtml(model.clusterLabel[topCluster])}" (${num(model.clusters[topCluster].n)})</button>
+        ? `<button data-only="cluster">nur „${escapeHtml(nameOf(topCluster))}" (${num(topCount)})</button>` : ""}
+      <button data-all="cluster">ganzer Kontinent „${escapeHtml(nameOf(topCluster))}" (${num(model.clusters[topCluster].n)})</button>
       ${untouched && untouched < selection.size
         ? `<button data-only="open">nur unberührte (${num(untouched)})</button>` : ""}
     </div>

@@ -13,6 +13,10 @@ import { thumbUrl } from "../core/api.js";
 
 //: Ab dieser Vergroesserung lohnen echte Fotos statt Punkte.
 const THUMB_SCALE = 2600;
+/* Ab hier erscheinen die Anker eines Kontinents -- die zweite Ebene. Etwas
+   vor den Vorschaubildern, damit man erst die Wegweiser sieht, dann die
+   Bilder. */
+const ANCHOR_SCALE = 1500;
 
 //: Die Zoomgrenzen. Auch die Kachelgroesse braucht sie -- sie spannen den
 //: Bereich auf, ueber den sie mitwaechst.
@@ -309,6 +313,8 @@ export function createScene(canvas, model, hooks = {}) {
   let layout = "bedeutung";
   /** Kontinente, deren Schild der letzte Frame gezeichnet hat. */
   const labelsShown = new Set();
+  /** Anker, die der letzte Frame gezeichnet hat -- fuer Zeiger und Klick. */
+  const anchorsShown = [];
   let colorMode = "kontinent";
   let mode = "fotos";       // "fotos" | "serien"
   let minEventSize = 3;
@@ -1833,7 +1839,10 @@ export function createScene(canvas, model, hooks = {}) {
        von selbst wieder. */
     const placed = [];
     labelsShown.clear();
-    const clusters = [...model.clusters].filter((c) => c.n > 0).sort((a, b) => b.n - a.n);
+    anchorsShown.length = 0;
+    // Die Streuung traegt kein Schild: was zu keiner Insel gehoert, bekommt
+    // keinen Namen.
+    const clusters = [...model.clusters].filter((c) => c.n > 0 && !c.loose).sort((a, b) => b.n - a.n);
     for (const c of clusters) {
       const [wx, wy] = clusterAnchor(c.i);
       const sx = toScreenX(wx), sy = toScreenY(wy);
@@ -1853,8 +1862,46 @@ export function createScene(canvas, model, hooks = {}) {
       ctx.fillStyle = weak ? "#9aa4b0" : "#e8edf3";
       ctx.fillText(label, sx, sy);
     }
+
+    /* Die zweite Ebene: Anker -- Jahre, bestaetigte Personen, benannte
+       Serien -- erscheinen beim Hineinzoomen und liegen am Schwerpunkt genau
+       der Fotos, die sie tragen. Von weitem nur der Kontinent, naeher
+       "2016 · 2018 · Mira", nah die Bilder. In der Zeit-Anordnung nicht:
+       dort sitzt die Zeit schon auf der Achse, und die Anker-Positionen
+       gehoeren zur Bedeutungs-Karte. */
+    if (cam.scale >= ANCHOR_SCALE && layout !== "zeit") {
+      const t = Math.min(1, (cam.scale - ANCHOR_SCALE) / ANCHOR_SCALE);   // einblenden
+      for (const c of clusters) {
+        for (let k = 0; k < (c.anchors || []).length; k++) {
+          const a = c.anchors[k];
+          const [wx, wy] = spreadAt(a.x, a.y, c.i);
+          const sx = toScreenX(wx), sy = toScreenY(wy);
+          if (sx < -40 || sy < -20 || sx > w + 40 || sy > h + 20) continue;
+          const px = a.kind === "person" ? 12 : 11;
+          const halfW = a.label.length * px * 0.3 + 5, halfH = px * 0.7;
+          if (placed.some((p) => Math.abs(p.x - sx) < p.hw + halfW && Math.abs(p.y - sy) < p.hh + halfH)) continue;
+          placed.push({ x: sx, y: sy, hw: halfW, hh: halfH });
+          anchorsShown.push({ c: c.i, k, x: sx, y: sy, hw: halfW, hh: halfH });
+          ctx.font = `${a.kind === "person" ? 600 : 400} ${px}px system-ui, sans-serif`;
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = "rgba(10,12,16,0.85)";
+          ctx.globalAlpha = 0.9 * t;
+          ctx.strokeText(a.label, sx, sy);
+          ctx.fillStyle = a.kind === "person" ? "#f2d27a" : a.kind === "event" ? "#9ad0f5" : "#c3ccd6";
+          ctx.fillText(a.label, sx, sy);
+        }
+      }
+    }
     ctx.globalAlpha = 1;
     ctx.restore();
+  }
+
+  /** Anker unter dem Zeiger -- {c, k} oder null. */
+  function anchorAt(sx, sy) {
+    for (const a of anchorsShown) {
+      if (Math.abs(sx - a.x) <= a.hw && Math.abs(sy - a.y) <= a.hh) return a;
+    }
+    return null;
   }
 
   function drawLasso() {
@@ -1975,7 +2022,7 @@ export function createScene(canvas, model, hooks = {}) {
     if (!drag) {
       if (sx < 0 || sy < 0 || sx > r.width || sy > r.height) return;
       if (mode === "serien") { hooks.onHoverEvent?.(nearestEvent(sx, sy), sx, sy); return; }
-      const overLabel = labelAt(sx, sy) >= 0;
+      const overLabel = labelAt(sx, sy) >= 0 || anchorAt(sx, sy) !== null;
       canvas.classList.toggle("on-label", overLabel);
       hooks.onHover?.(overLabel ? -1 : nearest(sx, sy), sx, sy);
       return;
@@ -2024,6 +2071,8 @@ export function createScene(canvas, model, hooks = {}) {
       // Ein Klick auf den Kontinentnamen waehlt den ganzen Kontinent. Das ist
       // die praezise Alternative zum Lasso: wo die Raender ineinander
       // sprenkeln, erwischt ein gezogener Kreis immer zu viel.
+      const ank = anchorAt(sx, sy);
+      if (ank) { hooks.onPickAnchor?.(ank.c, ank.k, e.shiftKey); return; }
       const lab = labelAt(sx, sy);
       if (lab >= 0) { hooks.onPickCluster?.(lab, e.shiftKey); return; }
       const i = nearest(sx, sy);

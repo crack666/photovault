@@ -106,6 +106,9 @@ function useClusterSet(model, name) {
 }
 
 function labelOf(c) {
+  // Die Streuung -- was zu keiner Insel gehoert -- traegt kein Schild.
+  // Ein Name dafuer waere eine Behauptung ueber Fotos, die nichts verbindet.
+  if (c.loose) return "";
   // Der Titel kommt vom Sprachmodell, das die Beschreibungen des
   // Kontinents gelesen hat: "Freizeit im Freien" statt "wiese · freien".
   // Wo keiner da ist (kein Modell erreichbar), die Rangwoerter.
@@ -284,10 +287,45 @@ export function colorFor(model, i, mode) {
       return `hsl(${h.toFixed(0)} 58% 58%)`;
     }
     default: {
+      // Streuung in Grau: sie liegt zwischen den Inseln und gehoert zu
+      // keiner. Eine Farbe wuerde einen Kontinent behaupten.
+      if (model.clusters[model.cl[i]]?.loose) return "#6b7280";
       const h = (model.cl[i] * 137.508) % 360;
       return `hsl(${h.toFixed(0)} 55% 60%)`;
     }
   }
+}
+
+/* ---- Anker: die zweite Ebene eines Kontinents --------------------------
+   Jahre, bestaetigte Personen, benannte Serien -- Tatsachen, keine Naehe.
+   Der Bau hat jeden Anker an den Schwerpunkt genau der Fotos gelegt, die
+   ihn tragen; hier werden dieselben Fotos wieder eingesammelt, wenn man
+   den Anker anklickt. */
+
+/** Alle sichtbaren Fotos eines Kontinents, die diesen Anker tragen. */
+export function photosOfAnchor(model, cluster, anchor, mask) {
+  const out = [];
+  let test;
+  if (anchor.kind === "person") {
+    const p = model.persons.indexOf(anchor.ref);
+    if (p < 0) return out;
+    test = (i) => model.pe[i].includes(p);
+  } else if (anchor.kind === "year") {
+    test = (i) => model.year[i] === anchor.ref;
+  } else {
+    test = (i) => model.ev[i] === anchor.ref;
+  }
+  for (let i = 0; i < model.n; i++) {
+    if (model.cl[i] === cluster && (!mask || mask[i]) && test(i)) out.push(i);
+  }
+  return out;
+}
+
+/** Die Anker eines Kontinents, kurz -- fuer das Schwebefeld. */
+export function anchorLine(c, max = 5) {
+  const a = c?.anchors || [];
+  if (!a.length) return "";
+  return a.slice(0, max).map((x) => x.label).join(" · ") + (a.length > max ? " · …" : "");
 }
 
 export function legendFor(model, mode) {
