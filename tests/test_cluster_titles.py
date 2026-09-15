@@ -34,12 +34,13 @@ class TestPrompt:
         assert "- Eine Platine." in p
         assert "2 zufaellige" in p
 
-    def test_erlaubt_namen_ausdruecklich(self):
-        """Fuer ein Privatarchiv sind "Fotos von Mira" genau die Schubladen,
-        die ein Mensch anlegt. Der Prompt verbietet sie nicht."""
-        p = title_prompt(10, ["mira"], ["Mira im Garten."])
-        assert "Namen von Personen sind in Ordnung" in p
-        assert "keine Namen" not in p.lower()
+    def test_nie_nach_einer_person(self):
+        """Eine Schublade hiess nach einer Person, die auf zwei von drei
+        Fotos fehlte. Der Titel beschreibt die Situation; Personen sind auf
+        der Karte eine eigene Schicht, mit ihrem Anteil."""
+        p = title_prompt(10, ["garten"], ["Mira im Garten."], people=[("Mira Faller", 0.9)])
+        assert "nie nach einer Person" in " ".join(p.split())
+        assert "Mira Faller 90 %" in p
 
 
 class TestTitleClusters:
@@ -158,3 +159,29 @@ class TestDisambiguate:
                     {"i": 1, "n": 4, "terms": ["kind", "strand"]}]
         out = title_clusters(clusters, lambda c: ["x"], lambda p: {"titel": "Kinder"})
         assert out == ["Kinder", "Kinder · strand"]
+
+
+class TestPersonenImPrompt:
+    def test_anteile_und_regel_stehen_im_prompt(self):
+        """Das Modell sieht acht Beschreibungen; nennen fuenf eine Person,
+        wirkt sie wie das Thema. Der bestaetigte Anteil steht deshalb
+        ausdruecklich dabei -- und die Schwelle, ab der ein Name traegt."""
+        p = title_prompt(259, ["tracht", "dirndl", "fest"], ["Ein Fest."],
+                         people=[("Nele Sturm", 0.34), ("Mira Faller", 0.32)])
+        assert "Nele Sturm 34 %" in p and "Mira Faller 32 %" in p
+
+    def test_ohne_personen_steht_das_auch_da(self):
+        p = title_prompt(10, ["garten"], ["x"], people=[])
+        assert "Bestaetigte Personen: keine" in p
+
+    def test_title_clusters_reicht_die_personen_durch(self):
+        gesehen = []
+
+        def ask(prompt):
+            gesehen.append(prompt)
+            return {"titel": "Gartenfeste"}
+
+        clusters = [{"i": 0, "n": 9, "terms": ["garten"]}]
+        title_clusters(clusters, lambda c: ["x"], ask,
+                       people_of=lambda c: [("Mira Faller", 0.32)])
+        assert "Mira Faller 32 %" in gesehen[0]

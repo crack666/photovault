@@ -51,8 +51,10 @@ logger = logging.getLogger(__name__)
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "web" / "static" / "atlas"
 #: 2: `clusters[].title` (Sprachmodell) und die Themen-Anordnung unter
-#: `themes`. Beides additiv -- eine aeltere Oberflaeche ignoriert es.
-FORMAT_VERSION = 2
+#: `themes`. 3: Kontinente sind die Inseln des Layouts (variabel viele, plus
+#: ein Eintrag `loose` fuer die Streuung), und jeder traegt `anchors` --
+#: Jahre, Personen, benannte Serien als zweite Ebene. Additiv.
+FORMAT_VERSION = 3
 
 #: Ab hier gelten zwei Fotos als dieselbe Aufnahme. 0.95 traf an diesem
 #: Bestand BURST-Serien und Salven, ohne benachbarte Motive einzusammeln;
@@ -111,6 +113,14 @@ STOPWORDS |= set(
 #: mit, lauter unterscheidende Ereignis- und Motivwoerter, die eben auch bei
 #: 5-10 % liegen, und laesst Fuellwoerter nachruecken. 5 % bleibt.
 MIN_SHARE = 0.05
+
+#: Personennamen stehen nie im Kontinent-Namen -- weder als Rangwort noch
+#: im Titel. Cluster-Zugehoerigkeit ist Naehe; ob eine Person auf einem Foto
+#: ist, ist eine Tatsache. Eine Schublade hiess "Mira Faller", waehrend
+#: sie auf zwei von drei Fotos fehlte, und keine Schwelle heilt das: bei
+#: 60 % fehlt sie auf 40 %. Personen sind deshalb eine eigene Schicht --
+#: Anker am Schwerpunkt *ihrer* Fotos im Kontinent (`anchors`), per
+#: Konstruktion nur dort, wo sie bestaetigt sind.
 
 _RE_WORD = re.compile(r"[a-zA-ZÄÖÜäöüß]{4,}")
 
@@ -325,6 +335,49 @@ def kmeans_clusters(coords_hi: np.ndarray, k: int, seed: int = 0) -> np.ndarray:
     return KMeans(n_clusters=k, n_init=4, random_state=seed).fit_predict(reduced)
 
 
+#: Kleinste Insel, die ein Kontinent wird. Gemessen an dieser Karte: 40
+#: ergibt rund 95 Inseln (zu viele Schilder), 100 rund 20 mit zwei Inseln
+#: ueber 3.500. 60 liegt dazwischen; was darunter liegt, wird Streuung und
+#: bekommt kein Schild -- ehrlicher als ein erzwungener Kontinent.
+ISLAND_MIN = 60
+#: Wie dicht Punkte liegen muessen, um als Insel zu gelten. Gemessen auf
+#: den echten UMAP-Koordinaten (nicht den gerundeten aus der JSON -- die
+#: kippen dieselbe Karte in eine andere Loesung): 76 Inseln, 32 %
+#: Streuung, groesste 1.125 Fotos. Die Streuung liegt wirklich zwischen
+#: den Inseln, auf duennen Bruecken, und bekommt kein Schild; die Inseln
+#: sind dafuer die, die man sieht. In float64, damit die Rechnung nicht an
+#: der Genauigkeit haengt.
+ISLAND_MIN_SAMPLES = 5
+
+
+def island_clusters(coords: np.ndarray, min_size: int = ISLAND_MIN,
+                    min_samples: int = ISLAND_MIN_SAMPLES) -> tuple[np.ndarray, int]:
+    """Die Inseln, die man auf der Karte *sieht* -- als Kontinente.
+
+    k-means teilte im 768-dimensionalen Raum in genau k Stuecke. Der
+    Betrachter sieht aber die 2D-Karte, und dort Inseln, die k-means nicht
+    kennt: gemessen deckten sich Insel und Kontinent im Median nur zu 56 %
+    (Themen) bzw. 70 % (visuell), ein Drittel der Inseln lag mehrheitlich
+    in einem anderen Kontinent als ihr Schild sagte. Deshalb stand die
+    Beschriftung nicht dort, wo der Haufen war, den man sah.
+
+    HDBSCAN auf den Koordinaten findet die sichtbaren Inseln, variabel
+    gross, und laesst Streuung als Streuung stehen. Zurueck kommt
+    (labels, loose): Streuung traegt den Index `loose`, der letzte -- ein
+    eigener Eintrag ohne Schild, damit jeder Index gueltig bleibt und die
+    Oberflaeche keine Sonderfaelle braucht.
+    """
+    from sklearn.cluster import HDBSCAN
+
+    lab = HDBSCAN(min_cluster_size=min_size, min_samples=min_samples, copy=True).fit(
+        np.asarray(coords, dtype=np.float64)).labels_
+    n = int(lab.max()) + 1
+    out = np.where(lab < 0, n, lab).astype(np.int64)
+    logger.info("%d Inseln, %d Punkte Streuung (%.0f%%)", n, int((lab < 0).sum()),
+                100 * float((lab < 0).mean()))
+    return out, n
+
+
 def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4) -> list[dict]:
     """Jedem Kontinent Woerter geben -- aus den Captions, per tf-idf.
 
@@ -362,6 +415,11 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
         n_caps[cluster] += 1
         hits[cluster].update(cnt.keys())
 
+    # Namensteile aller bestaetigten Personen: die stehen nie im Namen
+    # eines Kontinents. Personen sind eine eigene Schicht (siehe
+    # `anchors_for`), weil Naehe nicht traegt, wer auf einem Foto ist.
+    name_tokens = person_tokens(meta)
+
     out: list[dict] = []
     for c in range(k):
         size = int((labels == c).sum())
@@ -371,6 +429,8 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
             # Ein Wort aus einer einzigen Caption beschreibt ein Foto, keinen
             # Kontinent -- und unter MIN_SHARE der Captions ist es Beifang.
             if seen_here < 3 or seen_here / local < MIN_SHARE:
+                continue
+            if term in name_tokens:
                 continue
             p_all = doc_freq[term] / n_docs
             if p_all > MAX_DOC_FREQ:
@@ -388,6 +448,104 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
             }
         )
     return out
+
+
+def person_tokens(meta: list[dict]) -> set[str]:
+    """Alle Namensteile bestaetigter Personen, klein: `marie`, `kempter`, ..."""
+    out: set[str] = set()
+    for m in meta:
+        for name in m.get("person_names") or []:
+            out.update(_RE_WORD.findall(name.lower()))
+    return out
+
+
+#: Ab so vielen Fotos bekommt ein Jahr oder eine Person im Kontinent einen
+#: Anker. Das ist eine Frage der Dichte auf der Karte, keine
+#: Wahrheitsbehauptung: der Anker sitzt ohnehin nur dort, wo die Fotos
+#: sind, auf denen die Person bestaetigt ist. Weniger ergibt Schilderwald,
+#: mehr laesst kleine, echte Gruppen unbeschriftet.
+ANCHOR_MIN = 15
+#: Benannte Serien sind seltener und tragen den Namen, den ein Mensch
+#: gegeben hat -- die duerfen kleiner sein.
+EVENT_ANCHOR_MIN = 8
+#: Hoechstens so viele Personen-Anker je Insel, die haeufigsten zuerst. Im
+#: 4.300er-Klumpen haetten sonst dreissig Namen gestanden.
+PERSON_ANCHORS_MAX = 8
+
+
+def anchors_for(labels: np.ndarray, coords: np.ndarray, meta: list[dict], c: int,
+                event_of_photo: list[int] | None = None, events: list[dict] | None = None,
+                ) -> list[dict]:
+    """Die zweite Ebene eines Kontinents: Wegweiser aus Tatsachen.
+
+    Ein Kontinent aus Vektornaehe kann "Wintersport" heissen, aber nicht
+    "Jonas" -- Naehe traegt nicht, wer auf einem Foto ist. Drinnen liegt
+    aber Struktur, die *Tatsachen* sind: welches Jahr, welche Person, welche
+    benannte Serie. Jeder Anker sitzt am Schwerpunkt genau der Fotos, die
+    ihn tragen. "Wintersport 2022 · Jonas · Nele" -- und die Fotos mit
+    beiden liegen dazwischen, nahe beiden.
+
+    Gezeichnet werden sie beim Hineinzoomen; von weitem nur der Kontinent.
+    """
+    idx = np.nonzero(labels == c)[0]
+    if not len(idx):
+        return []
+    out: list[dict] = []
+
+    def anker(kind: str, label: str, member: np.ndarray, ref) -> None:
+        centroid = coords[member].mean(axis=0)
+        out.append({"kind": kind, "label": label, "n": int(len(member)),
+                    "x": round(float(centroid[0]), 4), "y": round(float(centroid[1]), 4),
+                    "ref": ref})
+
+    # Jahre
+    jahre: dict[str, list[int]] = collections.defaultdict(list)
+    for i in idx:
+        y = (meta[i]["taken_at"] or "")[:4]
+        if y:
+            jahre[y].append(int(i))
+    for y, member in sorted(jahre.items()):
+        if len(member) >= ANCHOR_MIN:
+            anker("year", y, np.asarray(member), int(y))
+
+    # Personen -- bestaetigte, nicht erwaehnte
+    personen: dict[str, list[int]] = collections.defaultdict(list)
+    for i in idx:
+        for name in meta[i].get("person_names") or []:
+            personen[name].append(int(i))
+    gesetzt = 0
+    for name, member in sorted(personen.items(), key=lambda kv: -len(kv[1])):
+        if len(member) >= ANCHOR_MIN and gesetzt < PERSON_ANCHORS_MAX:
+            anker("person", name, np.asarray(member), name)
+            gesetzt += 1
+
+    # Benannte Serien
+    if event_of_photo is not None and events:
+        je_serie: dict[int, list[int]] = collections.defaultdict(list)
+        for i in idx:
+            e = event_of_photo[i]
+            if e >= 0 and events[e].get("name"):
+                je_serie[e].append(int(i))
+        for e, member in sorted(je_serie.items(), key=lambda kv: -len(kv[1])):
+            if len(member) >= EVENT_ANCHOR_MIN:
+                anker("event", str(events[e]["name"]), np.asarray(member), int(e))
+    return out
+
+
+def confirmed_people(labels: np.ndarray, meta: list[dict], c: int, top: int = 3) -> list[tuple[str, float]]:
+    """Die haeufigsten bestaetigten Personen eines Kontinents mit Anteil.
+
+    Fuer den Titel-Prompt: das Modell soll wissen, dass "Mira Faller"
+    auf 32 % der Fotos ist, bevor es die Schublade nach ihr benennt.
+    """
+    idx = np.nonzero(labels == c)[0]
+    if not len(idx):
+        return []
+    zaehler: collections.Counter = collections.Counter()
+    for i in idx:
+        for name in meta[i].get("person_names") or []:
+            zaehler[name] += 1
+    return [(name, n / len(idx)) for name, n in zaehler.most_common(top)]
 
 
 def distinct_stems(terms: list[str], top_n: int) -> list[str]:
@@ -435,19 +593,26 @@ def distinct_stems(terms: list[str], top_n: int) -> list[str]:
 
 
 def describe_clusters(labels: np.ndarray, coords: np.ndarray, meta: list[dict],
-                      heads: set[int], k: int) -> list[dict]:
-    """Je Kontinent: Rangwoerter, Schwerpunkt, Leitbild, Jahre.
+                      heads: set[int], k: int, loose: int | None = None,
+                      event_of_photo: list[int] | None = None,
+                      events: list[dict] | None = None) -> list[dict]:
+    """Je Kontinent: Rangwoerter, Schwerpunkt, Leitbild, Jahre, Anker.
 
     Einmal fuer die visuelle Anordnung, einmal fuer die Themen -- derselbe
-    Eintrag, damit die Oberflaeche beide gleich behandeln kann.
+    Eintrag, damit die Oberflaeche beide gleich behandeln kann. `loose` ist
+    der Index der Streuung: ein Eintrag ohne Schild und ohne Anker, damit
+    jeder Index gueltig bleibt.
     """
     label_info = label_clusters(labels, meta, k)
     out = []
     for c in range(k):
         idx = np.nonzero(labels == c)[0]
-        if not len(idx):
-            out.append({"i": c, "terms": [], "cap_share": 0.0, "from_tags": True,
-                        "n": 0, "x": 0.5, "y": 0.5, "cover": None, "years": []})
+        if not len(idx) or c == loose:
+            centroid = coords[idx].mean(axis=0) if len(idx) else np.asarray([0.5, 0.5])
+            out.append({"i": c, "terms": [], "cap_share": 0.0, "from_tags": False,
+                        "n": int(len(idx)), "x": round(float(centroid[0]), 4),
+                        "y": round(float(centroid[1]), 4), "cover": None, "years": [],
+                        "loose": c == loose, "anchors": []})
             continue
         centroid = coords[idx].mean(axis=0)
         # Leitbild = das Foto, das dem Schwerpunkt am naechsten liegt und
@@ -470,6 +635,8 @@ def describe_clusters(labels: np.ndarray, coords: np.ndarray, meta: list[dict],
                 "y": round(float(centroid[1]), 4),
                 "cover": meta[cover]["id"],
                 "years": [[y, n] for y, n in years.most_common(3)],
+                "loose": False,
+                "anchors": anchors_for(labels, coords, meta, c, event_of_photo, events),
             }
         )
     return out
@@ -503,14 +670,17 @@ def load_second(qc: Any, ids: list[str], space: str, batch: int = 512) -> np.nda
     return out
 
 
-#: Wieviele visuelle Nachbarn ueber Platz und Kontinent eines Fotos ohne
-#: Beschreibung abstimmen.
+#: Wieviele visuelle Nachbarn den Platz eines Fotos ohne Beschreibung
+#: bestimmen.
 THEME_VOTERS = 10
+#: Unter so vielen beschriebenen Fotos gibt es keine Themen-Anordnung --
+#: UMAP ueber eine Handvoll Punkte ist keine Karte.
+THEME_MIN = 50
 
 
-def theme_layout(Xn: np.ndarray, Xt: np.ndarray, meta: list[dict], k: int
-                 ) -> tuple[np.ndarray, np.ndarray]:
-    """Positionen und Kontinente der Themen-Anordnung.
+def theme_layout(Xn: np.ndarray, Xt: np.ndarray, meta: list[dict]) -> np.ndarray:
+    """Positionen der Themen-Anordnung. Die Kontinente kommen danach aus
+    den Inseln dieses Layouts, wie bei der visuellen Anordnung.
 
     Grundlage ist der Text-Vektor -- aber nur bei Fotos *mit* Beschreibung.
     Ohne Beschreibung besteht er allein aus Metadaten (Ordner, Datum,
@@ -528,19 +698,16 @@ def theme_layout(Xn: np.ndarray, Xt: np.ndarray, meta: list[dict], k: int
     hat_text = ~np.isnan(Xt).any(axis=1)
     hat_caption = np.asarray([bool(m["caption"]) for m in meta])
     fest = hat_text & hat_caption
-    if fest.sum() < k:
+    if fest.sum() < THEME_MIN:
         raise SystemExit(f"Nur {int(fest.sum())} Fotos mit Beschreibung und Text-Vektor -- "
-                         f"zu wenig fuer {k} Themen.")
+                         f"zu wenig fuer eine Themen-Anordnung.")
 
     Xtn = Xt[fest] / (np.linalg.norm(Xt[fest], axis=1, keepdims=True) + 1e-9)
     coords_fest = to_unit(project(Xtn))
-    labels_fest = kmeans_clusters(Xtn, k)
 
     coords = np.zeros((len(meta), 2), dtype=np.float32)
-    labels = np.zeros(len(meta), dtype=np.int64)
     fest_idx = np.nonzero(fest)[0]
     coords[fest_idx] = coords_fest
-    labels[fest_idx] = labels_fest
 
     lose_idx = np.nonzero(~fest)[0]
     if len(lose_idx):
@@ -551,10 +718,8 @@ def theme_layout(Xn: np.ndarray, Xt: np.ndarray, meta: list[dict], k: int
         _, nachbarn = nn.kneighbors(Xn[lose_idx])
         for j, row in zip(lose_idx, nachbarn):
             coords[j] = coords_fest[row].mean(axis=0)
-            stimmen = collections.Counter(int(labels_fest[r]) for r in row)
-            labels[j] = stimmen.most_common(1)[0][0]
         logger.info("%d Fotos ohne Beschreibung ueber visuelle Nachbarn platziert", len(lose_idx))
-    return coords, labels
+    return coords
 
 
 def apply_titles(clusters: list[dict], labels: np.ndarray, meta: list[dict],
@@ -586,12 +751,18 @@ def apply_titles(clusters: list[dict], labels: np.ndarray, meta: list[dict],
         rng.shuffle(idx)
         return [meta[i]["caption"] for i in idx[:8]]
 
-    titles = title_clusters(clusters, samples_of, ask, step=step)
+    # Die Streuung hat kein Thema -- sie zu befragen kostete einen Aufruf
+    # fuer ein "Diverse Aufnahmen", das nirgends gezeichnet wird.
+    echte = [c for c in clusters if not c.get("loose") and c.get("n", 0) > 0]
+    titles = title_clusters(echte, samples_of, ask, step=step,
+                            people_of=lambda c: confirmed_people(labels, meta, c))
     n = 0
-    for c, t in zip(clusters, titles):
+    for c in clusters:
+        c["title"] = None
+    for c, t in zip(echte, titles):
         c["title"] = t
         n += t is not None
-    logger.info("%d von %d Kontinenten betitelt", n, len(clusters))
+    logger.info("%d von %d Kontinenten betitelt", n, len(echte))
     return n
 
 
@@ -768,7 +939,7 @@ def progress_reporter(job) -> Any:
 
 
 def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
-          track: bool = True, theme_k: int = 0, titles: bool = True) -> dict:
+          track: bool = True, themes_on: bool = True, titles: bool = True) -> dict:
     """Rechnen und dabei Bescheid geben.
 
     Von der Jobs-Seite aus gestartet, versprach die Antwort „der Fortschritt
@@ -792,7 +963,7 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
     try:
         payload = compute(space, k, limit, dup_threshold, out_dir,
                           step=progress_reporter(job), qc=qc,
-                          theme_k=theme_k, titles=titles)
+                          themes_on=themes_on, titles=titles)
     except BaseException as e:
         # Auch SystemExit: „umap-learn fehlt" gehoert in die Liste, nicht nur
         # ins Protokoll.
@@ -808,13 +979,13 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
 
 def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
             step: Any = lambda _name: None, qc: Any = None,
-            theme_k: int = 0, titles: bool = True) -> dict:
+            themes_on: bool = True, titles: bool = True) -> dict:
     """Die eigentliche Rechnung. Weiss nichts von Jobs."""
     qc = qc or client()
 
     step("laden")
     X, meta = load_points(qc, space, limit)
-    if len(X) < k:
+    if len(X) < max(k, 50):
         raise SystemExit(f"Nur {len(X)} Punkte mit {space}-Vektor -- zu wenig fuer eine Karte.")
 
     step("umap")
@@ -831,22 +1002,34 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
     step("serien")
     events, event_of_photo = build_events(meta, coords)
     step("kontinente")
-    labels = kmeans_clusters(Xn, k)
-    clusters = describe_clusters(labels, coords, meta, heads, k)
+    # Kontinente sind die Inseln der Karte, die man sieht -- nicht k
+    # Stuecke aus dem 768-dimensionalen Raum. `--clusters` waehlt noch das
+    # alte Verfahren, fuer den Vergleich.
+    if k:
+        labels = kmeans_clusters(Xn, k)
+        loose = None
+    else:
+        labels, loose = island_clusters(coords)
+        k = loose + 1
+    clusters = describe_clusters(labels, coords, meta, heads, k, loose=loose,
+                                 event_of_photo=event_of_photo, events=events)
 
     channels = sorted({m["channel"] for m in meta})
     chan_index = {c: i for i, c in enumerate(channels)}
 
     # Zweite Anordnung: Themen. Dieselben Fotos, aber Naehe heisst hier
-    # "wird aehnlich beschrieben" -- Text-Vektor statt Bild-Vektor.
+    # "wird aehnlich beschrieben" -- Text-Vektor statt Bild-Vektor. Die
+    # Kontinente sind auch hier die Inseln des Layouts.
     themes = None
-    if theme_k:
+    if themes_on:
         step("themen")
         Xt = load_second(qc, [m["id"] for m in meta], "text")
-        coords2, labels2 = theme_layout(Xn, Xt, meta, theme_k)
+        coords2 = theme_layout(Xn, Xt, meta)
+        labels2, loose2 = island_clusters(coords2)
         themes = {
-            "k": theme_k,
-            "clusters": describe_clusters(labels2, coords2, meta, heads, theme_k),
+            "k": loose2 + 1,
+            "clusters": describe_clusters(labels2, coords2, meta, heads, loose2 + 1, loose=loose2,
+                                          event_of_photo=event_of_photo, events=events),
             "x": [round(float(v), 4) for v in coords2[:, 0]],
             "y": [round(float(v), 4) for v in coords2[:, 1]],
             "cl": [int(v) for v in labels2],
@@ -938,12 +1121,17 @@ def report(payload: dict) -> None:
     visible = sum(1 for f in flags if not (f & FLAG_IN_STACK) or (f & FLAG_STACK_HEAD))
     print(f"  sichtbar nach Falten: {visible} von {n} ({100 * visible / n:.1f}%)\n")
     def zeige(name: str, clusters: list[dict]) -> None:
-        print(f"\n{'n':>6} {'cap':>5}  {name}")
-        for c in sorted(clusters, key=lambda c: -c["n"]):
+        lose = next((c for c in clusters if c.get("loose")), None)
+        echte = [c for c in clusters if not c.get("loose")]
+        print(f"\n{'n':>6} {'cap':>5}  {name}: {len(echte)} Inseln"
+              + (f", Streuung {lose['n']} Fotos ohne Kontinent" if lose else ""))
+        for c in sorted(echte, key=lambda c: -c["n"]):
             mark = "~" if c["from_tags"] else " "
             titel = c.get("title")
             kopf = f"{titel}   [{', '.join(c['terms'])}]" if titel else ", ".join(c["terms"])
-            print(f"{c['n']:>6} {c['cap_share'] * 100:>4.0f}%{mark} {kopf}")
+            anker = c.get("anchors") or []
+            zusatz = f"   +{len(anker)} Anker" if anker else ""
+            print(f"{c['n']:>6} {c['cap_share'] * 100:>4.0f}%{mark} {kopf}{zusatz}")
 
     zeige("Kontinent (visuell)", payload["clusters"])
     if payload.get("themes"):
@@ -957,17 +1145,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--space", choices=("clip", "text"), default="clip",
                     help="Vektorraum fuer das Layout (Standard: clip)")
-    ap.add_argument("--clusters", type=int, default=40, help="Anzahl Kontinente")
+    ap.add_argument("--clusters", type=int, default=0,
+                    help="k-means mit so vielen Kontinenten statt der Inseln (Vergleich)")
     ap.add_argument("--limit", type=int, help="nur die ersten N Fotos (zum Ausprobieren)")
     ap.add_argument("--dup-threshold", type=float, default=DUP_THRESHOLD)
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     ap.add_argument("--no-track", action="store_true",
                     help="nicht in die Job-Liste schreiben")
-    # Themen sind feiner als Bildstile -- ein Text-Cluster "Silvester" oder
-    # "Junggesellenabschied" ist kleiner als ein visueller "Nahaufnahmen".
-    # Deshalb mehr Schubladen als Kontinente.
-    ap.add_argument("--theme-clusters", type=int, default=60,
-                    help="Schubladen der Themen-Anordnung; 0 schaltet sie ab")
+    ap.add_argument("--no-themes", action="store_true",
+                    help="ohne die Themen-Anordnung")
     ap.add_argument("--no-titles", action="store_true",
                     help="keine Titel vom Sprachmodell, nur Rangwoerter")
     args = ap.parse_args()
@@ -981,7 +1167,7 @@ def main() -> None:
 
         apply_llm_env()
     payload = build(args.space, args.clusters, args.limit, args.dup_threshold, args.out,
-                    track=not args.no_track, theme_k=args.theme_clusters,
+                    track=not args.no_track, themes_on=not args.no_themes,
                     titles=not args.no_titles)
     report(payload)
 

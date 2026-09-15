@@ -400,18 +400,18 @@ def test_unterlage_wird_kein_kontinentname():
 def test_themen_ohne_beschreibung_ueber_visuelle_nachbarn(monkeypatch):
     """Ein Foto ohne Beschreibung hat einen Text-Vektor nur aus Metadaten.
     Im Text-Raum ballen sich solche Fotos zu Haufen, die woertlich nach dem
-    Ordner heissen. Deshalb bekommen sie Platz und Schublade von ihren
-    *visuellen* Nachbarn, die eine Beschreibung haben."""
+    Ordner heissen. Deshalb bekommen sie ihren Platz von ihren *visuellen*
+    Nachbarn, die eine Beschreibung haben -- und damit auch die Insel, in
+    der diese liegen."""
     from tools import atlas_build as ab
 
     # UMAP durch etwas Deterministisches ersetzen: die ersten beiden
     # Vektorkomponenten. Es geht um die Zuordnung, nicht um die Projektion.
     monkeypatch.setattr(ab, "project", lambda X, **kw: X[:, :2].astype(np.float32))
-    monkeypatch.setattr(ab, "kmeans_clusters",
-                        lambda X, k, seed=0: (X[:, 0] > 0.5).astype(np.int64))
     # Zehn Stimmen bei vier Kandidaten hiesse: alle stimmen ab, und die Mitte
     # gewinnt. Mit zwei Stimmen zaehlen nur die naechsten.
     monkeypatch.setattr(ab, "THEME_VOTERS", 2)
+    monkeypatch.setattr(ab, "THEME_MIN", 2)
 
     # Zwei visuelle Gruppen: A um (1,0,0), B um (0,1,0). Foto 4 ist visuell
     # in A, hat aber keine Beschreibung -- sein Text-Vektor ist Unsinn.
@@ -423,13 +423,13 @@ def test_themen_ohne_beschreibung_ueber_visuelle_nachbarn(monkeypatch):
     ], dtype=np.float32)
     meta = [{"caption": "a"}, {"caption": "a"}, {"caption": "b"}, {"caption": "b"}, {"caption": ""}]
 
-    coords, labels = ab.theme_layout(Xn, Xt, meta, k=2)
+    coords = ab.theme_layout(Xn, Xt, meta)
 
-    # Foto 4 landet bei Gruppe A -- Platz und Schublade seiner Nachbarn.
-    assert labels[4] == labels[0]
+    # Foto 4 landet bei Gruppe A -- am Platz seiner Nachbarn.
     assert np.allclose(coords[4], coords[[0, 1]].mean(axis=0), atol=1e-3)
     # Und die Fotos mit Beschreibung liegen dort, wo ihr Text sie hinlegt.
-    assert labels[0] == labels[1] and labels[2] == labels[3] and labels[0] != labels[2]
+    assert np.allclose(coords[0], coords[1]) and np.allclose(coords[2], coords[3])
+    assert not np.allclose(coords[0], coords[2])
 
 
 def test_themen_brauchen_genug_beschriebene_fotos(monkeypatch):
@@ -440,7 +440,7 @@ def test_themen_brauchen_genug_beschriebene_fotos(monkeypatch):
     meta = [{"caption": "a"}, {"caption": ""}, {"caption": ""}]
     import pytest
     with pytest.raises(SystemExit):
-        ab.theme_layout(Xn, Xt, meta, k=2)
+        ab.theme_layout(Xn, Xt, meta)
 
 
 def test_load_second_fuellt_fehlende_mit_nan():
@@ -472,3 +472,116 @@ def test_describe_clusters_traegt_leere_kontinente_ehrlich():
     out = describe_clusters(labels, coords, meta, heads=set(), k=2)
     assert out[0]["n"] == 3 and out[0]["cover"] == meta[0]["id"]
     assert out[1]["n"] == 0 and out[1]["cover"] is None and out[1]["terms"] == []
+
+
+# --------------------------------------------------------------------------
+# Namen im Kontinentnamen
+# --------------------------------------------------------------------------
+
+def test_namen_stehen_nie_im_kontinentnamen():
+    """Eine Schublade hiess "Mira Faller", waehrend sie auf zwei von drei
+    Fotos fehlte. Keine Schwelle heilt das: Naehe traegt nicht, wer auf
+    einem Foto ist. Namen sind eine eigene Schicht (Anker), nie der Titel."""
+    labels, meta = _caption_corpus()
+    for i in range(10):
+        meta[i]["caption"] = f"Mira Faller feiert mit Freunden im Garten ({i})"
+        meta[i]["person_names"] = ["Mira Faller"]        # sogar auf allen
+    out = label_clusters(labels, meta, 10)
+    assert "mira" not in out[0]["terms"] and "kempter" not in out[0]["terms"]
+    assert "garten" in out[0]["terms"]
+
+
+def test_familienname_ist_auch_ein_name():
+    labels, meta = _caption_corpus()
+    for i in range(10):
+        meta[i]["caption"] = f"Die Familie Krueger beim Abendessen ({i})"
+        meta[i]["person_names"] = ["Tobias Krueger"]
+    out = label_clusters(labels, meta, 10)
+    assert "krueger" not in out[0]["terms"]
+    assert "abendessen" in out[0]["terms"]
+
+
+def test_confirmed_people_liefert_anteile():
+    from tools.atlas_build import confirmed_people
+
+    labels = np.asarray([0] * 4)
+    meta = [_meta(person_names=["Mira Faller"]), _meta(person_names=["Mira Faller", "Tobias Krueger"]),
+            _meta(person_names=[]), _meta(person_names=["Mira Faller"])]
+    assert confirmed_people(labels, meta, 0) == [("Mira Faller", 0.75), ("Tobias Krueger", 0.25)]
+
+
+# --------------------------------------------------------------------------
+# Inseln und Anker
+# --------------------------------------------------------------------------
+
+def test_inseln_sind_das_was_man_sieht():
+    """k-means teilte in genau k Stuecke; die Inseln der Karte sind variabel
+    viele, und was zu keiner gehoert, ist Streuung mit eigenem Index."""
+    from tools.atlas_build import island_clusters
+
+    rng = np.random.default_rng(1)
+    a = rng.normal([0.2, 0.2], 0.02, (200, 2))
+    b = rng.normal([0.8, 0.8], 0.02, (200, 2))
+    streu = rng.uniform(0, 1, (30, 2))
+    labels, loose = island_clusters(np.vstack([a, b, streu]).astype(np.float32),
+                                    min_size=50, min_samples=5)
+    assert loose == 2                                   # zwei Inseln, Streuung = Index 2
+    assert len(set(labels[:200].tolist())) == 1         # a ist eine Insel
+    assert len(set(labels[200:400].tolist())) == 1      # b auch
+    assert labels[0] != labels[200]
+    assert (labels == loose).sum() >= 1                 # Streuung gibt es
+
+
+def test_anker_sitzen_bei_den_fotos_die_sie_tragen():
+    """"Wintersport 2022 · Jonas": der Anker liegt am Schwerpunkt genau der
+    Fotos, auf denen die Person bestaetigt ist -- er kann nicht auf ein Foto
+    zeigen, auf dem sie fehlt."""
+    from tools.atlas_build import ANCHOR_MIN, anchors_for
+
+    n = ANCHOR_MIN * 2
+    labels = np.zeros(n, dtype=int)
+    coords = np.zeros((n, 2), dtype=np.float32)
+    meta = []
+    for i in range(n):
+        links = i < ANCHOR_MIN
+        coords[i] = (0.1, 0.5) if links else (0.9, 0.5)
+        meta.append(_meta(taken_at="2022-02-01T10:00:00Z" if links else "2024-02-01T10:00:00Z",
+                          person_names=["Mira Faller"] if links else ["Tobias Krueger"]))
+    anker = {(a["kind"], a["label"]): a for a in anchors_for(labels, coords, meta, 0)}
+    assert anker[("person", "Mira Faller")]["x"] < 0.2
+    assert anker[("person", "Tobias Krueger")]["x"] > 0.8
+    assert anker[("year", "2022")]["x"] < 0.2 and anker[("year", "2024")]["x"] > 0.8
+    assert anker[("person", "Mira Faller")]["n"] == ANCHOR_MIN
+
+
+def test_zu_kleine_gruppen_bekommen_keinen_anker():
+    from tools.atlas_build import ANCHOR_MIN, anchors_for
+
+    n = ANCHOR_MIN - 1
+    labels = np.zeros(n, dtype=int)
+    coords = np.full((n, 2), 0.5, dtype=np.float32)
+    meta = [_meta(taken_at="2022-02-01T10:00:00Z", person_names=["Mira Faller"]) for _ in range(n)]
+    assert anchors_for(labels, coords, meta, 0) == []
+
+
+def test_benannte_serie_wird_anker():
+    from tools.atlas_build import EVENT_ANCHOR_MIN, anchors_for
+
+    n = EVENT_ANCHOR_MIN
+    labels = np.zeros(n, dtype=int)
+    coords = np.full((n, 2), 0.3, dtype=np.float32)
+    meta = [_meta() for _ in range(n)]
+    events = [{"i": 0, "name": "Skiurlaub 2022"}]
+    anker = anchors_for(labels, coords, meta, 0, event_of_photo=[0] * n, events=events)
+    assert [(a["kind"], a["label"], a["ref"]) for a in anker] == [("event", "Skiurlaub 2022", 0)]
+
+
+def test_streuung_ist_ein_eintrag_ohne_schild():
+    from tools.atlas_build import describe_clusters
+
+    labels = np.asarray([0, 0, 0, 1, 1])
+    coords = np.asarray([[0.1, 0.1], [0.1, 0.2], [0.2, 0.1], [0.9, 0.9], [0.5, 0.5]], dtype=np.float32)
+    meta = [_meta(caption="Kinder im Garten spielen") for _ in range(5)]
+    out = describe_clusters(labels, coords, meta, heads=set(), k=2, loose=1)
+    assert out[1]["loose"] is True and out[1]["terms"] == [] and out[1]["anchors"] == []
+    assert out[1]["n"] == 2 and out[0]["loose"] is False
