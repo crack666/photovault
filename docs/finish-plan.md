@@ -1,6 +1,6 @@
 ---
 titel: Fertigstellungs-Plan
-stand: 2026-09-12
+stand: 2026-09-15
 zweck: Auftragsbeschreibung fuer eine Ultracode-Session
 ---
 
@@ -148,8 +148,42 @@ Unterlage) und die Mindestquote auf 10 % heben (nahm `abiball · silvester`,
 hatten einen Platz doppelt belegt), Monatsnamen und Unterlage-Wörter als
 Stoppwörter: 28 gleich, 11 besser, 0 schlechter.
 
-Offen: bei k=60 hat eine Schublade ~250 Fotos; „Verletzungen" mit 25 bekommt
-keinen eigenen Platz. Feinere Schubladen brauchen Hierarchie, nicht mehr k.
+~~Offen: bei k=60 hat eine Schublade ~250 Fotos; „Verletzungen" mit 25 bekommt
+keinen eigenen Platz. Feinere Schubladen brauchen Hierarchie, nicht mehr k.~~
+→ erledigt 15.09., siehe Nachtrag 7.
+
+## Nachtrag 2026-09-15: Inseln und Anker — die zweite Ebene
+
+Anlass: eine Schublade hieß nach einer Person, die auf zwei von drei ihrer
+Fotos fehlte. Nicht erfunden — auf 82 von 259 bestätigt —, aber das Ranking
+behandelte den Namen wie ein Themenwort. Der erste Fix war eine Schwelle
+(60 %, gemessen: zu Recht benannte Schubladen bei 71–98 %, falsche bei
+30–46 %). Der Nutzer hat sie zu Recht abgelehnt: sie schneidet ein Symptom.
+Cluster-Zugehörigkeit ist Nähe; ob jemand auf einem Foto ist, ist eine
+Tatsache. Zwei Sorten Wahrheit vertragen keinen gemeinsamen Mechanismus.
+
+Zwei Messungen haben die Lösung festgelegt:
+
+- **Kontinente ≠ sichtbare Inseln.** k-means (768-d, PCA-50, genau k Stücke)
+  gegen HDBSCAN auf den Kartenkoordinaten: Median-Deckung 56 % (Themen) / 70 %
+  (visuell), ein Drittel der Inseln mehrheitlich unter einem fremden Schild.
+  Deshalb stand die Beschriftung nicht dort, wo der Haufen war, den man sah.
+- **Die Streuung ist real.** ~32 % der Fotos liegen auf dünnen Brücken
+  zwischen Inseln. (Ein erstes Messskript las die auf vier Nachkommastellen
+  gerundeten Koordinaten aus der JSON und sah eine „Bistabilität" — 20 % vs.
+  35 % —, die es auf den echten Koordinaten nicht gibt. Der Bau rechnet in
+  float64.)
+
+Gebaut, drei Commits: Kontinente = Inseln des Layouts (beide Anordnungen),
+Streuung als eigener Eintrag ohne Schild; Personennamen nie im Titel; je
+Insel **Anker** aus Tatsachen (Jahre, bestätigte Personen, benannte Serien)
+am Schwerpunkt ihrer Fotos, sichtbar beim Hineinzoomen, klickbar. Schwellen
+nur noch für Kartendichte (≥ 15 Fotos, ≤ 8 Personen je Insel).
+
+Offen: Inseln über ~1.000 Fotos (Screenshots 1.125) sind nur über die Anker
+begehbar; eine Unterteilung in Sub-Inseln wäre der nächste Schritt, wenn das
+nicht reicht. Und `cluster_selection_epsilon` ist in sklearn 1.7 kaputt
+(TypeError im Baum-Code) — nicht benutzen.
 
 ### Zum Schnitt: die Reihenfolge ist enger als hier notiert
 

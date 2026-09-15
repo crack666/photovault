@@ -450,6 +450,35 @@ Rangwörter; nach dem ersten Ausfall wird nicht weiter gefragt.
 Caption-Modell dafür zu schwer ist (gemessen 2026-09-12: 27B mit 262k
 Kontext, rund eine Minute je Titel bei voller GPU).
 
+**Kontinente sind die Inseln, die man sieht.** Bis zum 15.09.2026 kamen sie
+aus k-means im 768-dimensionalen Raum, in genau k Stücke. Der Betrachter sieht
+aber die 2D-Karte — und dort Inseln, die k-means nicht kannte: gemessen deckten
+sich Insel und Kontinent im Median nur zu 56 % (Themen) bzw. 70 % (visuell),
+ein Drittel der Inseln lag mehrheitlich unter einem fremden Schild. Seitdem
+findet HDBSCAN die Inseln auf den Kartenkoordinaten selbst: variabel viele
+(76 bzw. 70 an diesem Bestand), variabel groß, und was zwischen ihnen liegt —
+rund 32 % der Fotos auf dünnen Brücken — ist **Streuung**: grau, ohne Schild,
+nicht in der Sprungliste. Ein Name dafür wäre eine Behauptung über Fotos, die
+nichts verbindet. `--clusters N` rechnet zum Vergleich weiter mit k-means.
+
+**Personennamen stehen nie im Kontinentnamen — Personen sind Anker.** Eine
+Schublade hieß nach einer Person, die auf 82 ihrer 259 Fotos bestätigt war;
+die anderen zwei Drittel, darunter ein Familienfoto ohne sie, lagen unter
+ihrem Namen. Das Ranking behandelte den Namen wie „garten": 32 % der
+Beschreibungen, selten im Bestand, hohe PMI. Für ein Thema stimmt das, für
+eine Person nicht — sie ist auf einem Foto oder nicht. Eine Schwelle (60 %,
+gemessen zwischen 46 und 71 % liegt nichts) schnitte nur das Symptom:
+Cluster-Zugehörigkeit ist Nähe, und Nähe kann nie garantieren, dass jemand auf
+allen Fotos ist. Deshalb zwei Mechanismen für zwei Sorten Wahrheit: der Titel
+beschreibt die Situation („Gartenfeste in Tracht"), und jede Insel trägt
+**Anker** aus Tatsachen — Jahre, bestätigte Personen (Gesichter, nicht
+Caption-Text), benannte Serien —, jeder am Schwerpunkt genau der Fotos, die
+ihn tragen. Sie erscheinen beim Hineinzoomen: von weitem „Tracht", näher
+„2016 · 2018 · 2022 · Mira", nah die Bilder. Ein Anker kann nicht auf ein
+Foto zeigen, auf dem die Person fehlt; ein Klick darauf wählt genau seine
+Fotos. Was bleibt an Schwellen, ist Kartendichte, keine Wahrheit: ab 15 Fotos
+ein Anker, höchstens acht Personen je Insel.
+
 **Was die Karte nicht weiß: wer zu sehen ist.** CLIP kodiert, wie ein Bild
 *aussieht* — nicht, wer darauf ist. Ein Ganzkörper-Spiegelselfie landet neben
 anderen Ganzkörper-Spiegelselfies, gleich wer davorsteht: die zwölf nächsten
