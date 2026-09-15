@@ -484,10 +484,10 @@ def test_namen_stehen_nie_im_kontinentnamen():
     einem Foto ist. Namen sind eine eigene Schicht (Anker), nie der Titel."""
     labels, meta = _caption_corpus()
     for i in range(10):
-        meta[i]["caption"] = f"Mira Faller feiert mit Freunden im Garten ({i})"
+        meta[i]["caption"] = f"Mira Faller feiert Miras Geburtstag mit Freunden im Garten ({i})"
         meta[i]["person_names"] = ["Mira Faller"]        # sogar auf allen
     out = label_clusters(labels, meta, 10)
-    assert "mira" not in out[0]["terms"] and "kempter" not in out[0]["terms"]
+    assert not {"mira", "faller", "miras"} & set(out[0]["terms"])   # auch der Genitiv nicht
     assert "garten" in out[0]["terms"]
 
 
@@ -585,3 +585,64 @@ def test_streuung_ist_ein_eintrag_ohne_schild():
     out = describe_clusters(labels, coords, meta, heads=set(), k=2, loose=1)
     assert out[1]["loose"] is True and out[1]["terms"] == [] and out[1]["anchors"] == []
     assert out[1]["n"] == 2 and out[0]["loose"] is False
+
+
+class TestRetitle:
+    """Titel neu rechnen, ohne die Karte neu zu bauen.
+
+    Ein Kaltstart kostete einmal alle 76 Kontinente ihren Titel; die
+    Karte darunter war gut. Vierzig Minuten UMAP fuer zwanzig Minuten
+    Titel waeren der falsche Preis."""
+
+    def _karte(self, tmp_path):
+        import json
+        ids = [f"00000000-0000-0000-0000-00000000000{i}" for i in range(6)]
+        payload = {
+            "version": 3, "ids": ids, "x": [0] * 6, "y": [0] * 6, "fl": [0] * 6,
+            "cl": [0, 0, 0, 1, 1, 2],
+            "clusters": [
+                {"i": 0, "n": 3, "terms": ["strand"], "title": None, "loose": False, "anchors": []},
+                {"i": 1, "n": 2, "terms": ["schnee"], "title": "Alt", "loose": False, "anchors": []},
+                {"i": 2, "n": 1, "terms": [], "title": None, "loose": True, "anchors": []},
+            ],
+            "themes": {"cl": [0, 0, 0, 0, 0, 1], "k": 2, "x": [0] * 6, "y": [0] * 6,
+                       "clusters": [
+                           {"i": 0, "n": 5, "terms": ["wiese"], "title": None, "loose": False},
+                           {"i": 1, "n": 1, "terms": [], "title": None, "loose": True},
+                       ]},
+            "built_at": "2020-01-01T00:00:00+00:00",
+        }
+        (tmp_path / "atlas.json").write_text(json.dumps(payload), encoding="utf-8")
+        return ids
+
+    def test_beide_ebenen_neu_betitelt_rest_unangetastet(self, tmp_path):
+        import json
+        from tools.atlas_build import retitle
+
+        ids = self._karte(tmp_path)
+
+        class Punkt:
+            def __init__(self, i, cap, names):
+                self.id, self.payload = i, {"caption_de": cap, "person_names": names}
+
+        class QC:
+            def retrieve(self, collection_name, ids, with_payload, with_vectors):
+                return [Punkt(i, f"Beschreibung {k}", ["Mira Faller"] if k < 3 else [])
+                        for k, i in enumerate(ids)]
+
+        prompts = []
+
+        def ask(prompt):
+            prompts.append(prompt)
+            return {"titel": "Mira Faller am Strand"} if "strand" in prompt else {"titel": "Neu"}
+
+        out = retitle(tmp_path, qc=QC(), ask=ask)
+        titel = [c["title"] for c in out["clusters"]]
+        assert titel[0] == "Am Strand"            # Name durchgesetzt, auch beim Neu-Titeln
+        assert titel[1] == "Neu" and titel[2] is None   # Streuung wird nicht gefragt
+        assert [c["title"] for c in out["themes"]["clusters"]] == ["Neu", None]
+        assert "Mira Faller 100 %" in prompts[0]   # die Anteile stehen im Prompt
+        gespeichert = json.loads((tmp_path / "atlas.json").read_text(encoding="utf-8"))
+        assert gespeichert["clusters"][0]["title"] == "Am Strand"
+        assert gespeichert["ids"] == ids and gespeichert["cl"] == [0, 0, 0, 1, 1, 2]
+        assert gespeichert["built_at"] != "2020-01-01T00:00:00+00:00"

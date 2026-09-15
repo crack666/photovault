@@ -77,9 +77,9 @@ class TestTitleClusters:
         ask = lambda p: {"name": "Technik"}          # falscher Schluessel
         assert title_clusters(self.CLUSTERS, self._samples, ask) == [None, None]
 
-    def test_nach_dem_ersten_ausfall_wird_nicht_weiter_gefragt(self):
+    def test_nach_drei_ausfaellen_in_folge_wird_nicht_weiter_gefragt(self):
         """100 Kontinente gegen ein abgeschaltetes Ollama waeren 100
-        Timeouts a drei Minuten. Nach dem ersten `None` ist Schluss -- die
+        Timeouts a drei Minuten. Nach drei `None` in Folge ist Schluss -- die
         uebrigen behalten ihre Rangwoerter, die Karte kommt trotzdem."""
         zaehler = {"n": 0}
 
@@ -90,7 +90,7 @@ class TestTitleClusters:
         viele = [{"i": i, "n": 5, "terms": ["x"]} for i in range(20)]
         out = title_clusters(viele, lambda c: [], ask)
         assert out == [None] * 20
-        assert zaehler["n"] == 1
+        assert zaehler["n"] == 3
 
 
 class TestApplyTitles:
@@ -185,3 +185,69 @@ class TestPersonenImPrompt:
         title_clusters(clusters, lambda c: ["x"], ask,
                        people_of=lambda c: [("Mira Faller", 0.32)])
         assert "Mira Faller 32 %" in gesehen[0]
+
+
+class TestNamenWerdenDurchgesetzt:
+    """Das Modell hat "nie nach einer Person" acht Mal ignoriert -- gerade
+    dort, wo die Person auf ueber 90 % der Fotos war. Eine Regel, die nur
+    im Prompt steht, ist keine."""
+
+    FORBIDDEN = {"mira", "faller", "jonas"}
+
+    def test_namensteile_werden_gestrichen(self):
+        from ingest.cluster_titles import without_names
+
+        assert without_names("Mira Faller Alltag", self.FORBIDDEN) == ("Alltag", True)
+        assert without_names("Baby Mira Faller", self.FORBIDDEN) == ("Baby", True)
+        assert without_names("Jonas im Kindergarten", self.FORBIDDEN) == ("Im Kindergarten", True)
+        # Der Genitiv ist derselbe Name: nach dem ersten durchgesetzten Lauf
+        # stand "<Vorname>s 18. Geburtstag" wieder auf der Karte.
+        assert without_names("Miras 18. Geburtstag", self.FORBIDDEN) == ("18. Geburtstag", True)
+        assert without_names("Jonas' Abschied", self.FORBIDDEN) == ("Abschied", True)
+
+    def test_ohne_tragendes_wort_kein_titel(self):
+        from ingest.cluster_titles import without_names
+
+        assert without_names("Mira Faller", self.FORBIDDEN) == (None, True)
+        assert without_names("Mira und Jonas", self.FORBIDDEN) == (None, True)   # "und" traegt nicht
+
+    def test_ohne_namen_unveraendert(self):
+        from ingest.cluster_titles import without_names
+
+        assert without_names("Feste im Freien", self.FORBIDDEN) == ("Feste im Freien", False)
+        assert without_names(None, self.FORBIDDEN) == (None, False)
+
+    def test_erst_nachfragen_dann_streichen(self):
+        """Beim Verstoss einmal nachfragen; kommt wieder ein Name, bleibt
+        der gestrichene erste Vorschlag."""
+        from ingest.cluster_titles import title_clusters
+
+        antworten = iter([{"titel": "Mira Faller Alltag"}, {"titel": "Familienalltag"}])
+        gefragt = []
+
+        def ask(prompt):
+            gefragt.append(prompt)
+            return next(antworten)
+
+        out = title_clusters([{"i": 0, "n": 9, "terms": ["alltag"]}], lambda c: ["x"], ask,
+                             forbidden=self.FORBIDDEN)
+        assert out == ["Familienalltag"]
+        assert len(gefragt) == 2 and "enthielt einen Personennamen" in gefragt[1]
+
+    def test_zweiter_verstoss_faellt_auf_das_gestrichene(self):
+        from ingest.cluster_titles import title_clusters
+
+        antworten = iter([{"titel": "Mira Faller Alltag"}, {"titel": "Jonas Alltag"}])
+        out = title_clusters([{"i": 0, "n": 9, "terms": ["alltag"]}], lambda c: ["x"],
+                             lambda p: next(antworten), forbidden=self.FORBIDDEN)
+        assert out == ["Alltag"]
+
+    def test_abbruch_erst_nach_drei_ausfaellen_in_folge(self):
+        """Der allererste Aufruf nach der UMAP-Phase lief in einen Kaltstart --
+        mit Abbruch nach dem ersten blieben 76 Kontinente ohne Titel."""
+        from ingest.cluster_titles import title_clusters
+
+        antworten = iter([None, {"titel": "Feste"}, None, None, None, {"titel": "Nie"}])
+        clusters = [{"i": i, "n": 5, "terms": ["x"]} for i in range(6)]
+        out = title_clusters(clusters, lambda c: [], lambda p: next(antworten))
+        assert out == [None, "Feste", None, None, None, None]   # nach drei in Folge Schluss

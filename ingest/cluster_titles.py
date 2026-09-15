@@ -41,9 +41,12 @@ SAMPLES = 8
 MAX_WORDS = 5
 MAX_CHARS = 40
 
-#: Nach dem ersten Fehler wird nicht weiter versucht: 100 Kontinente gegen
-#: ein abgeschaltetes Ollama waeren 100 Timeouts a drei Minuten.
-_ABORT_AFTER = 1
+#: Nach so vielen Fehlern *hintereinander* wird nicht weiter versucht: 100
+#: Kontinente gegen ein abgeschaltetes Ollama waeren 100 Timeouts a drei
+#: Minuten. Aber nicht nach dem ersten: der allererste Aufruf nach der
+#: UMAP-Phase lief in einen Kaltstart, und mit "eins" blieben 76 Kontinente
+#: ohne Titel, waehrend die naechsten 70 alle durchkamen.
+_ABORT_AFTER = 3
 
 PROMPT = """Du beschriftest eine Schublade in einem privaten Fotoarchiv.
 
@@ -129,23 +132,70 @@ def disambiguate(clusters: list[dict], titles: list[str | None]) -> list[str | N
     return out
 
 
+def is_name(word: str, forbidden: set[str]) -> bool:
+    """Ob ein Wort ein Namensteil ist -- auch im Genitiv.
+
+    Die Captions schreiben "Miras 18. Geburtstag" und "Jonas' Abschied";
+    ein Vergleich ganzer Woerter sah "miras" nicht als "mira", und der
+    Name stand wieder im Titel. Ein angehaengtes s (oder 's) faellt
+    deshalb beim Vergleich weg. `forbidden` ist klein geschrieben.
+    """
+    w = word.strip(".,·-\"'").lower()
+    if w in forbidden:
+        return True
+    for suffix in ("'s", "s"):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 3 and w[:-len(suffix)] in forbidden:
+            return True
+    return False
+
+
+def without_names(title: str | None, forbidden: set[str]) -> tuple[str | None, bool]:
+    """(Titel ohne Namensteile, ob welche drin waren).
+
+    Das Modell hat "Benenne nie nach einer Person" acht Mal ignoriert --
+    genau dort, wo die Person auf ueber 90 % der Fotos war: "Mira Faller
+    Alltag", "Baby Nele Sturm". Eine Regel, die nur im Prompt steht, ist
+    keine. Hier wird sie durchgesetzt: die Namensteile fallen weg, und
+    bleibt danach kein tragendes Wort, ist es kein Titel.
+    """
+    if not title:
+        return None, False
+    woerter = title.split()
+    rest = [w for w in woerter if not is_name(w, forbidden)]
+    if len(rest) == len(woerter):
+        return title, False
+    # Fuellwoerter, die nach dem Streichen allein uebrig bleiben koennen
+    # ("Mira und Jonas" -> "und"). Vier Buchstaben, weil "Baby", "Kita",
+    # "Hund" tragen -- "und", "mit", "der" nicht.
+    tragend = [w for w in rest if len(w.strip(".,·-")) >= 4
+               and w.lower() not in {"beim", "ohne", "nach", "über", "unter"}]
+    if not tragend:
+        return None, True
+    neu = " ".join(rest).strip(" ·-,")
+    return (neu[:1].upper() + neu[1:]), True
+
+
 def title_clusters(
     clusters: list[dict],
     samples_of: Callable[[int], list[str]],
     ask: Callable[[str], dict | None],
     step: Callable[[str], None] | None = None,
     people_of: Callable[[int], list[tuple[str, float]]] | None = None,
+    forbidden: set[str] | None = None,
 ) -> list[str | None]:
     """Je Kontinent ein Titel -- oder None, wo keiner zu bekommen war.
 
     `clusters` sind die Eintraege mit `i`, `n`, `terms`; `samples_of(i)`
     liefert Beschreibungen aus dem Kontinent; `people_of(i)` die
     bestaetigten Personen mit Anteil; `ask(prompt)` fragt das Modell und
-    gibt das JSON zurueck (oder None).
+    gibt das JSON zurueck (oder None). `forbidden` sind Namensteile, die
+    in keinem Titel stehen duerfen -- enthaelt ein Vorschlag einen, wird
+    einmal nachgefragt, danach gestrichen.
 
     Der Rueckfall ist Sache des Aufrufers: er hat die Rangwoerter ohnehin.
     Hier wird nur nicht so getan, als waere ein Fehler ein Titel.
     """
+    forbidden = {t.lower() for t in (forbidden or set())}
     out: list[str | None] = []
     fehler = 0
     for c in clusters:
@@ -158,10 +208,22 @@ def title_clusters(
                               list(samples_of(int(c["i"])) or [])[:SAMPLES],
                               people=people_of(int(c["i"])) if people_of else None)
         antwort = ask(prompt)
-        titel = clean_title((antwort or {}).get("titel")) if isinstance(antwort, dict) else None
         if antwort is None:
             fehler += 1
-            logger.warning("Kein Titel fuer Kontinent %s -- Modell antwortet nicht; "
-                           "die uebrigen behalten ihre Rangwoerter.", c["i"])
+            logger.warning("Kein Titel fuer Kontinent %s -- Modell antwortet nicht "
+                           "(%d von %d Versuchen in Folge).", c["i"], fehler, _ABORT_AFTER)
+            out.append(None)
+            continue
+        fehler = 0
+        titel = clean_title(antwort.get("titel")) if isinstance(antwort, dict) else None
+        titel, hatte_namen = without_names(titel, forbidden)
+        if hatte_namen:
+            # Einmal nachfragen, mit dem Verstoss im Wortlaut. Meist reicht das.
+            nochmal = ask(prompt + "\n\nDer vorige Vorschlag enthielt einen Personennamen. "
+                                   "Nenne die Situation ohne Namen.")
+            zweiter = clean_title(nochmal.get("titel")) if isinstance(nochmal, dict) else None
+            zweiter, noch_namen = without_names(zweiter, forbidden)
+            if zweiter and not noch_namen:
+                titel = zweiter
         out.append(titel)
     return disambiguate(clusters, out)

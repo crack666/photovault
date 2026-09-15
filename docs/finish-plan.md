@@ -180,6 +180,15 @@ Insel **Anker** aus Tatsachen (Jahre, bestätigte Personen, benannte Serien)
 am Schwerpunkt ihrer Fotos, sichtbar beim Hineinzoomen, klickbar. Schwellen
 nur noch für Kartendichte (≥ 15 Fotos, ≤ 8 Personen je Insel).
 
+Der erste betitelte Bau zeigte zwei Fehler, beide nur im Titel-Schritt:
+die visuelle Seite hatte 0 von 76 Titeln (Kaltstart des Modells beim ersten
+Aufruf, Abbruch nach *einem* Fehler), und acht Themen-Titel trugen trotz der
+Prompt-Regel einen Personennamen — genau dort, wo die Person auf über 90 %
+der Fotos war. Beides behoben: Abbruch erst nach drei Ausfällen in Folge,
+Namensregel im Code durchgesetzt (`without_names`: einmal nachfragen, dann
+streichen, ohne tragendes Wort kein Titel), und `--retitle` rechnet die
+Titel auf der vorhandenen Karte neu, statt 40 Minuten UMAP zu wiederholen.
+
 Offen: Inseln über ~1.000 Fotos (Screenshots 1.125) sind nur über die Anker
 begehbar; eine Unterteilung in Sub-Inseln wäre der nächste Schritt, wenn das
 nicht reicht. Und `cluster_selection_epsilon` ist in sklearn 1.7 kaputt

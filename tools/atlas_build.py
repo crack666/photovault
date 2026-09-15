@@ -7,6 +7,7 @@ den vorhandenen StaticFiles-Mount, es braucht **keinen API-Neustart**.
 
     python -m tools.atlas_build                 # aus CLIP-Vektoren
     python -m tools.atlas_build --space text    # aus den grounded Textvektoren
+    python -m tools.atlas_build --retitle       # nur die Titel, Karte bleibt
 
 Drei Entscheidungen stecken darin, alle an diesem Bestand gemessen:
 
@@ -45,6 +46,7 @@ from typing import Any
 import numpy as np
 
 from api.qdrant_util import PHOTOS, client
+from ingest.cluster_titles import is_name
 from ingest.spaces import assign
 
 logger = logging.getLogger(__name__)
@@ -430,7 +432,7 @@ def label_clusters(labels: np.ndarray, meta: list[dict], k: int, top_n: int = 4)
             # Kontinent -- und unter MIN_SHARE der Captions ist es Beifang.
             if seen_here < 3 or seen_here / local < MIN_SHARE:
                 continue
-            if term in name_tokens:
+            if is_name(term, name_tokens):   # auch "miras", "jonas'"
                 continue
             p_all = doc_freq[term] / n_docs
             if p_all > MAX_DOC_FREQ:
@@ -755,7 +757,8 @@ def apply_titles(clusters: list[dict], labels: np.ndarray, meta: list[dict],
     # fuer ein "Diverse Aufnahmen", das nirgends gezeichnet wird.
     echte = [c for c in clusters if not c.get("loose") and c.get("n", 0) > 0]
     titles = title_clusters(echte, samples_of, ask, step=step,
-                            people_of=lambda c: confirmed_people(labels, meta, c))
+                            people_of=lambda c: confirmed_people(labels, meta, c),
+                            forbidden=person_tokens(meta))
     n = 0
     for c in clusters:
         c["title"] = None
@@ -1141,6 +1144,43 @@ def report(payload: dict) -> None:
         print("  Keine Titel vom Sprachmodell -- die Karte zeigt die Rangwoerter.")
 
 
+def retitle(out_dir: Path, qc: Any = None, ask: Any = None) -> dict:
+    """Nur die Titel neu rechnen -- auf der Karte, die schon da ist.
+
+    Die Titel sind der langsame Teil, den man am ehesten wiederholen will:
+    ein Kaltstart des Modells kostete einmal 76 Kontinente ihren Titel,
+    und eine geaenderte Regel (keine Namen) soll nicht 40 Minuten UMAP
+    kosten. Gelesen werden Kontinente und Zuordnung aus der Datei, die
+    Beschreibungen und bestaetigten Personen aus dem Index.
+    """
+    qc = qc or client()
+    target = out_dir / "atlas.json"
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    ids = payload["ids"]
+    meta: list[dict] = [{"id": i, "caption": "", "person_names": [], "tags": [],
+                         "taken_at": None} for i in ids]
+    pos = {pid: k for k, pid in enumerate(ids)}
+    for start in range(0, len(ids), 512):
+        for p in qc.retrieve(collection_name=PHOTOS, ids=ids[start:start + 512],
+                             with_payload=["caption_de", "person_names", "scene_tags", "taken_at"],
+                             with_vectors=False):
+            pl = p.payload or {}
+            m = meta[pos[str(p.id)]]
+            m["caption"] = pl.get("caption_de") or ""
+            m["person_names"] = pl.get("person_names") or []
+            m["tags"] = pl.get("scene_tags") or []
+            m["taken_at"] = pl.get("taken_at")
+
+    n = apply_titles(payload["clusters"], np.asarray(payload["cl"]), meta, ask=ask)
+    if payload.get("themes"):
+        n += apply_titles(payload["themes"]["clusters"], np.asarray(payload["themes"]["cl"]), meta,
+                          ask=ask)
+    payload["built_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    target.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    logger.info("%s: %d Titel neu geschrieben", target, n)
+    return payload
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--space", choices=("clip", "text"), default="clip",
@@ -1156,9 +1196,17 @@ def main() -> None:
                     help="ohne die Themen-Anordnung")
     ap.add_argument("--no-titles", action="store_true",
                     help="keine Titel vom Sprachmodell, nur Rangwoerter")
+    ap.add_argument("--retitle", action="store_true",
+                    help="nur die Titel der vorhandenen Karte neu rechnen")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.retitle:
+        from ingest.ollama_client import apply_llm_env
+
+        apply_llm_env()
+        report(retitle(args.out))
+        return
     if not args.no_titles:
         # Wie die anderen CLI-Einstiege: LiteLLM ist der Chokepoint. Ohne
         # das fiel der Titler auf Ollama zurueck, das den Pool-Alias `local`
