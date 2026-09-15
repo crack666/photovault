@@ -174,3 +174,49 @@ describe("Flags", () => {
     assert.ok(!(m.fl[0] & FLAG.VIDEO));
   });
 });
+
+/* ---- Format 3: Inseln, Streuung, Anker ---------------------------------- */
+
+import { anchorLine, colorFor, photosOfAnchor } from "../../web/static/atlas/model.js";
+
+function karteV3() {
+  const raw = karte();
+  // Kontinent 1 wird zur Streuung; Kontinent 0 bekommt Anker.
+  raw.clusters[1] = { ...raw.clusters[1], loose: true, title: null, terms: [], anchors: [] };
+  raw.persons = ["Mira Faller"];
+  raw.pe = [[0], [0], [], [0], [], []];
+  raw.clusters[0].anchors = [
+    { kind: "year", label: "2020", n: 2, x: 0.1, y: 0.55, ref: 2020 },
+    { kind: "person", label: "Mira Faller", n: 2, x: 0.1, y: 0.5, ref: "Mira Faller" },
+  ];
+  return raw;
+}
+
+describe("Streuung", () => {
+  it("traegt kein Schild und ist grau -- ein Name waere eine Behauptung", async () => {
+    faelscheFetch(karteV3());
+    const m = await loadAtlas();
+    assert.equal(m.clusterLabel[1], "");
+    assert.equal(colorFor(m, 3, "kontinent"), "#6b7280");
+    assert.notEqual(colorFor(m, 0, "kontinent"), "#6b7280");
+  });
+});
+
+describe("Anker", () => {
+  it("sammeln genau die Fotos ein, die sie tragen", async () => {
+    faelscheFetch(karteV3());
+    const m = await loadAtlas();
+    const [jahr, person] = m.clusters[0].anchors;
+    // Kontinent 0 = Punkte 0,1,2. Mira ist auf 0 und 1 (und auf 3, aber der liegt woanders).
+    assert.deepEqual(photosOfAnchor(m, 0, person, null), [0, 1]);
+    // 2020 = Tage 18300/18301 -> Punkte 0 und 1.
+    assert.deepEqual(photosOfAnchor(m, 0, jahr, null), [0, 1]);
+    assert.equal(anchorLine(m.clusters[0]), "2020 · Mira Faller");
+  });
+
+  it("eine unbekannte Person ergibt keine Fotos, nicht alle", async () => {
+    faelscheFetch(karteV3());
+    const m = await loadAtlas();
+    assert.deepEqual(photosOfAnchor(m, 0, { kind: "person", ref: "Niemand" }, null), []);
+  });
+});
