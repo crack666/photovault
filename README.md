@@ -445,10 +445,16 @@ hinter den Captions je Kontinent die Rangwörter und acht Beschreibungen und
 lässt es titeln: „Freizeit im Freien", „Klettern in der Halle". Wo ein Haufen
 kein Thema hat, sagt es das („Diverse Nahaufnahmen") — ehrlicher als
 Rangwörter, die eines vortäuschen. Ohne erreichbares Modell bleiben die
-Rangwörter; nach dem ersten Ausfall wird nicht weiter gefragt.
+Rangwörter; nach drei Ausfällen in Folge wird nicht weiter gefragt — nicht
+nach dem ersten: der erste Aufruf nach der UMAP-Phase lief einmal in einen
+Kaltstart, und 76 Kontinente blieben ohne Titel, während die nächsten 70
+alle durchkamen. `python -m tools.atlas_build --retitle` rechnet nur die
+Titel neu, auf der Karte, die schon da ist — die Titel sind der Teil, den
+man am ehesten wiederholt, und sie sollen keine 40 Minuten UMAP kosten.
 `PHOTOVAULT_TITLE_MODEL` wählt einen anderen Pool-Alias, wenn das
 Caption-Modell dafür zu schwer ist (gemessen 2026-09-12: 27B mit 262k
-Kontext, rund eine Minute je Titel bei voller GPU).
+Kontext, rund eine Minute je Titel bei voller GPU; über den Pool-Alias
+`local` am 15.09.2026: 7–11 s).
 
 **Kontinente sind die Inseln, die man sieht.** Bis zum 15.09.2026 kamen sie
 aus k-means im 768-dimensionalen Raum, in genau k Stücke. Der Betrachter sieht
@@ -477,7 +483,12 @@ ihn tragen. Sie erscheinen beim Hineinzoomen: von weitem „Tracht", näher
 „2016 · 2018 · 2022 · Mira", nah die Bilder. Ein Anker kann nicht auf ein
 Foto zeigen, auf dem die Person fehlt; ein Klick darauf wählt genau seine
 Fotos. Was bleibt an Schwellen, ist Kartendichte, keine Wahrheit: ab 15 Fotos
-ein Anker, höchstens acht Personen je Insel.
+ein Anker, höchstens acht Personen je Insel. Die Regel „nie nach einer
+Person" steht im Prompt *und* im Code: das Modell hat sie beim ersten Lauf
+acht Mal ignoriert, genau dort, wo jemand auf über 90 % der Fotos war. Ein
+Vorschlag mit Namensteil wird einmal mit dem Verstoß im Wortlaut zurückgegeben;
+kommt wieder einer, fallen die Namensteile weg — und bleibt kein tragendes
+Wort, ist es kein Titel.
 
 **Was die Karte nicht weiß: wer zu sehen ist.** CLIP kodiert, wie ein Bild
 *aussieht* — nicht, wer darauf ist. Ein Ganzkörper-Spiegelselfie landet neben
