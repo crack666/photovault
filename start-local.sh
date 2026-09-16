@@ -99,11 +99,20 @@ pruefe_fotos() {
         return 0
     fi
     # Der Mount steht in /etc/fstab mit `nofail` -- nach einem WSL-Neustart
-    # ist er weg, wenn das NAS gerade nicht da war. Nachholen braucht root,
-    # und passwortloses sudo gibt es hier nicht: deshalb wird gefragt, und
-    # zwar mit Begruendung, statt still an einer Passwortabfrage zu haengen.
-    warn "${PHOTO_DIR} ist nicht gemountet -- hole das nach (braucht dein sudo-Passwort)"
-    if sudo mount "${PHOTO_DIR}" 2>/dev/null && mountpoint -q "${PHOTO_DIR}"; then
+    # ist er weg, wenn das NAS beim Boot noch nicht da war. WSL startet ihn
+    # ueber /usr/local/sbin/photovault-mount.sh nach; hier nur nachholen,
+    # und zwar mit `sudo -n`, damit nicht-interaktive Starts nicht an einer
+    # Passwortabfrage haengen.
+    #
+    # `sudo -n` setzt eine NOPASSWD-Regel voraus -- ohne sie scheitert der
+    # Aufruf sofort und still, und der Zweig unten meldet "Mount
+    # fehlgeschlagen", obwohl nur die Berechtigung fehlt. Auf crackdesk
+    # gemessen 2026-09-17 per `sudo -n -l`:
+    #     (root) NOPASSWD: /usr/bin/mount /mnt/photo, /usr/bin/umount /mnt/photo
+    # Auf einer frischen Maschine muss diese Zeile erst in /etc/sudoers.d/
+    # stehen; sie gehoert nicht ins Repo, weil sie Maschinenzustand ist.
+    warn "${PHOTO_DIR} ist nicht gemountet -- hole das nach"
+    if sudo -n mount "${PHOTO_DIR}" 2>/dev/null && mountpoint -q "${PHOTO_DIR}"; then
         ok "Fotos: ${PHOTO_DIR} nachgemountet"
         return 0
     fi
