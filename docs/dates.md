@@ -32,8 +32,12 @@ Extraktor hat 306 zuerst genommen. Genau das mischt fremde Anlässe.
 Zwei andere Fehler sehen ähnlich aus und sind es nicht:
 
 - **Zurückgefallene Kamera-Uhr** (Batteriewechsel, Werksdatum 2005-01-01) —
-  Original *und* 306 sind falsch. Das findet `tools/clock_report.py`; der
-  Bestandsbefund dazu steht in [exif-pruefbericht.md](exif-pruefbericht.md).
+  Original *und* 306 sind falsch. Das findet `tools/clock_report.py`,
+  korrigieren lässt es sich mit `tools/exif_offset.py` (Versatz je Gruppe,
+  `--expect` als Schranke, umkehrbar). Der Bestandsbefund dazu liegt in
+  `docs/exif-pruefbericht.md` — **nicht versioniert**, weil er echte Album-
+  und Personennamen nennt und dieses Repository öffentlich ist. Selbst
+  erzeugen: `python -m tools.clock_report`.
 - **WhatsApp ohne EXIF** — es gibt nichts zu lesen. Datum kommt aus Dateiname
   oder Dateizeit, nie aus Tag 306.
 
