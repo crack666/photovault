@@ -22,6 +22,15 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+# `.env` allein greift nicht bei `.env.bak-2026-08-24` -- und genau so heisst
+# eine Sicherung, die jemand vor einem Eingriff anlegt. Das Muster deckt
+# deshalb alles ab, was mit `.env.` beginnt, ausser dem Beispiel.
+.env.*
+!.env.example
+# Sicherungskopien tragen nie das Muster, gegen das sie gesichert werden.
+*.bak
+*.bak.*
+*.bak-*
 qdrant_data/
 *.log
 logs/
