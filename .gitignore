@@ -58,3 +58,10 @@ web/static/atlas/atlas.json
 # er gehoert nicht ins Repository, aber auch nicht unter ~/.cache, wo ihn
 # niemand findet. `tools/thumbs.py` sagt, wo er liegt und was er kostet.
 data/
+
+# Der EXIF-Pruefbericht nennt echte Album- und Personennamen aus dem
+# Bestand. Das Repository ist oeffentlich -- der Bericht bleibt lokal.
+# Von 2026-09-15 (PR 12) bis 2026-09-17 war er versioniert; er steht
+# deshalb weiter in der Historie. Selbst erzeugen: tools/clock_report.py,
+# Einordnung in docs/dates.md.
+docs/exif-pruefbericht.md
