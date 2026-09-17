@@ -127,20 +127,24 @@ und irgendwohin entpacken — auf den Desktop reicht.
 | Windows | Doppelklick auf **`start.bat`** |
 | macOS / Linux | Terminal im Ordner öffnen, `./start.sh` eingeben |
 
-Das Skript fragt einmal nach deinem Fotoordner, lädt beim ersten Mal rund 2 GB
-herunter und öffnet danach den Browser. Anschließend fragt es, ob es die Fotos
-einlesen soll — und zeigt vorher, was es gefunden hat, damit du es abnicken
-kannst.
+Auf einer **frischen Maschine** fragt das Skript einmal nach dem Fotoordner,
+lädt rund 2 GB herunter und öffnet den Browser. Die Antworten stehen in `.env`
+(nicht im Git). Anschließend fragt es, ob es die Fotos einlesen soll — und
+zeigt vorher, was es gefunden hat.
 
-Beim nächsten Mal genügt derselbe Doppelklick; die Antworten sind gemerkt.
+Beim nächsten Mal genügt derselbe Doppelklick.
 
-> **`start.sh` ist ein Einrichtungsassistent, kein Starter.** Er baut einen
-> eigenen Docker-Verbund mit eigenem Qdrant und hängt den Fotoordner als
-> `/photos` hinein. Wer stattdessen die Installation aus [Ohne Docker
-> entwickeln](#ohne-docker-entwickeln) betreibt — venv, Qdrant aus einem
-> anderen Verbund, Fotos unter einem echten Pfad — nimmt **`start-local.sh`**.
-> Beide zu mischen ergibt zwei verschieden konfigurierte Stapel, deren
-> Indizes auf unterschiedliche Pfade zeigen.
+Läuft PhotoVault hier schon **ohne** den Docker-Verbund (venv unter
+`~/.venvs/photovault`, oder `RUNTIME=local` in
+`~/.config/photovault/runtime`) — dann reicht derselbe Doppelklick trotzdem:
+`start.bat` / `start.sh` geben an `start-local` weiter und ziehen **keinen**
+zweiten Stack hoch. `start.bat setup` erzwingt den Assistenten.
+
+> **Zwei Betriebsmodi, nicht mischen.** Der Assistent baut einen eigenen
+> Docker-Verbund mit eigenem Qdrant und hängt den Fotoordner als `/photos`
+> hinein. Die Installation aus [Ohne Docker entwickeln](#ohne-docker-entwickeln)
+> benutzt venv, Qdrant aus einem anderen Verbund und echte Host-Pfade. Beide
+> gleichzeitig ergeben zwei Indizes, die auf unterschiedliche Pfade zeigen.
 
 > **Nichts verlässt deinen Rechner.** Weder Fotos noch Gesichter noch Namen.
 > Es gibt keinen Server, bei dem man sich anmeldet.
@@ -641,18 +645,21 @@ und tut nichts doppelt.
 ./start-local.sh logs 60    # die letzten Zeilen
 ```
 
-Von Windows aus: Doppelklick auf **`start-local.bat`** — das ruft dasselbe
-Skript in WSL auf und öffnet danach den Browser.
+Von Windows aus reicht **`start.bat`** (erkennt die venv) oder direkt
+**`start-local.bat`**. Beenden: `stop.bat` bzw. `./start-local.sh stop`.
 
-Geprüft wird der Reihe nach: venv, der Foto-Mount, Qdrant, Ollama. Fehlt der
-Mount (`nofail` in `/etc/fstab`, nach einem WSL-Neustart ohne NAS also weg),
-holt das Skript ihn nach und sagt vorher, warum es das sudo-Passwort braucht.
-Fehlt Qdrant, versucht es `docker start qdrant` — der Container gehört zum
-ai-stack, nicht zu PhotoVault. Fehlt Ollama, läuft alles außer
-Bildbeschreibungen und Freitextsuche weiter, und das steht dann dabei.
+Geprüft wird der Reihe nach: venv, der Foto-Mount, optional der Windows-SMB-
+Share, Qdrant, Ollama. Fehlt der Mount (`nofail` in `/etc/fstab`, nach einem
+WSL-Neustart ohne NAS also weg), holt das Skript ihn mit `sudo -n mount` nach
+— ohne Passwortabfrage, sofern `/etc/sudoers.d/` das erlaubt. Fehlt Qdrant,
+versucht es `docker start qdrant` — der Container gehört zum ai-stack, nicht
+zu PhotoVault. Fehlt Ollama, läuft alles außer Bildbeschreibungen und
+Freitextsuche weiter, und das steht dann dabei.
 
-Abweichende Pfade über Umgebungsvariablen: `PHOTO_DIR`, `API_PORT`,
-`QDRANT_URL`, `OLLAMA_URL`, `VENV`.
+Lokale Pfade (Foto-Mount, UNC des Shares) gehören nach
+`~/.config/photovault/runtime`, Vorlage `runtime.example` — nicht ins
+Repository. Abweichende Werte sonst über Umgebungsvariablen: `PHOTO_DIR`,
+`API_PORT`, `QDRANT_URL`, `OLLAMA_URL`, `VENV`.
 
 Von Hand geht es weiterhin:
 

@@ -6,7 +6,10 @@
 #   start.sh        der Weg fuer neue Nutzer. Baut einen eigenen
 #                   Docker-Verbund mit eigenem Qdrant, haengt den Fotoordner
 #                   als /photos hinein und fragt beim ersten Mal, wo er
-#                   liegt. Fuer eine frische Maschine richtig.
+#                   liegt. Fuer eine frische Maschine richtig. Auf einer
+#                   Maschine mit ~/.venvs/photovault (oder RUNTIME=local
+#                   in ~/.config/photovault/runtime) reicht start.sh:
+#                   es reicht an dieses Skript weiter.
 #
 #   start-local.sh  dieser hier. Nimmt die venv unter ~/.venvs/photovault,
 #                   das Qdrant aus dem ai-stack und die Fotos unter
@@ -25,6 +28,34 @@
 set -u
 
 cd "$(dirname "$0")" || exit 1
+
+# Optionale Maschineneinstellungen. Liegen unter ~/.config, nicht im Repo.
+# Windows-Datei unter /mnt/c/Users/<du>/... gilt, falls WSL kein eigenes
+# ~/.config/photovault hat.
+_load_runtime() {
+    local f line key val
+    for f in \
+        "${HOME}/.config/photovault/runtime" \
+        "/mnt/c/Users/${USER}/.config/photovault/runtime"
+    do
+        [ -f "${f}" ] || continue
+        while IFS= read -r line || [ -n "${line}" ]; do
+            case "${line}" in
+                ''|\#*) continue ;;
+            esac
+            key="${line%%=*}"
+            val="${line#*=}"
+            case "${key}" in
+                PHOTO_DIR|API_PORT|API_HOST|QDRANT_URL|OLLAMA_URL|VENV)
+                    eval "if [ -z \"\${${key}:-}\" ]; then ${key}=\"\${val}\"; fi"
+                    ;;
+            esac
+        done < "${f}"
+        break
+    done
+}
+_load_runtime
+unset -f _load_runtime
 
 PHOTO_DIR="${PHOTO_DIR:-/mnt/photo}"
 API_HOST="${API_HOST:-127.0.0.1}"

@@ -4,6 +4,42 @@
 set -u
 
 cd "$(dirname "$0")" || exit 1
+
+force_setup=0
+case "${1:-}" in
+    setup|--docker) force_setup=1; shift ;;
+esac
+
+is_local() {
+    [ -x "${HOME}/.venvs/photovault/bin/python" ] && return 0
+    local f
+    for f in \
+        "${HOME}/.config/photovault/runtime" \
+        "/mnt/c/Users/${USER}/.config/photovault/runtime"
+    do
+        [ -f "${f}" ] || continue
+        grep -q '^RUNTIME=local' "${f}" && return 0
+    done
+    return 1
+}
+
+# Lokale Installation: nicht den Docker-Wizard daneben hochziehen.
+# Der Index hier zeigt auf /mnt/photo, nicht auf /photos im Container.
+if [ "${force_setup}" -eq 0 ] && [ -f ./start-local.sh ] && is_local; then
+    exec ./start-local.sh "$@"
+fi
+
+case "${1:-}" in
+    stop)
+        docker compose down
+        exit $?
+        ;;
+    status)
+        docker compose ps
+        exit $?
+        ;;
+esac
+
 echo
 echo "  PhotoVault"
 echo "  =========="

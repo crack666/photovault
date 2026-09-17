@@ -1,0 +1,14 @@
+# Maschineneinstellungen fuer den 1-Click-Start.
+# Kopieren nach:  %USERPROFILE%\.config\photovault\runtime
+#                 (WSL liest dieselbe Datei unter /mnt/c/Users/<du>/...)
+# Nicht ins Repository legen — hier stehen lokale Pfade.
+
+# local  = venv unter ~/.venvs/photovault, Qdrant aus dem ai-stack
+# docker = start.sh / start.bat als Einrichtungsassistent
+RUNTIME=local
+
+# Optional: Windows-Sicht auf denselben Share (Explorer / Credential Manager).
+# WSL mountet unabhaengig davon nach PHOTO_DIR (Default /mnt/photo).
+# SMB_UNC=\\NAS\photo
+
+# PHOTO_DIR=/mnt/photo

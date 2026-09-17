@@ -2,11 +2,43 @@
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 title PhotoVault
+cd /d "%~dp0"
+
+REM setup / --docker: immer der Einrichtungsassistent, auch auf dieser Maschine.
+set "FORCE_SETUP="
+if /i "%~1"=="setup" set "FORCE_SETUP=1"
+if /i "%~1"=="--docker" set "FORCE_SETUP=1"
+
+REM Lokale Installation? Dann nicht den Docker-Wizard daneben hochziehen --
+REM der Index hier zeigt auf /mnt/photo, nicht auf /photos im Container.
+set "LOCAL="
+if exist "%USERPROFILE%\.config\photovault\runtime" (
+    findstr /b /i /c:"RUNTIME=local" "%USERPROFILE%\.config\photovault\runtime" >nul 2>&1 && set "LOCAL=1"
+)
+if not defined LOCAL (
+    wsl.exe -e bash -lc "test -x ~/.venvs/photovault/bin/python" >nul 2>&1
+    if not errorlevel 1 set "LOCAL=1"
+)
+
+if not defined FORCE_SETUP if defined LOCAL (
+    call "%~dp0start-local.bat" %*
+    exit /b %ERRORLEVEL%
+)
+
+if /i "%~1"=="stop" (
+    docker compose down
+    exit /b %ERRORLEVEL%
+)
+if /i "%~1"=="status" (
+    docker compose ps
+    exit /b %ERRORLEVEL%
+)
 
 echo.
 echo   PhotoVault
 echo   ==========
 echo.
+
 
 REM --- 1. Laeuft Docker? -----------------------------------------------------
 docker version >nul 2>&1
