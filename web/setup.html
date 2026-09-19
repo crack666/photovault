@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PhotoVault — Einrichtung</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/core/ui.css" />
+  <link rel="stylesheet" href="/static/setup.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">PhotoVault</div>
+    <nav><span class="tab on">Einrichtung</span></nav>
+  </header>
+
+  <main class="view setup">
+    <h1>Willkommen. Vier Schritte, dann läuft es.</h1>
+    <p class="lead">
+      Nichts verlässt diesen Rechner: weder Fotos noch Gesichter noch Namen.
+      Was du hier einstellst, kannst du später jederzeit ändern — unter
+      <b>Jobs</b> oder wieder auf dieser Seite.
+    </p>
+
+    <ol class="steps" id="steps">
+      <li data-step="1"><b>1</b> Ordner</li>
+      <li data-step="2"><b>2</b> Einlesen</li>
+      <li data-step="3"><b>3</b> Beschreibungen</li>
+      <li data-step="4"><b>4</b> Fertig</li>
+    </ol>
+
+    <!-- ---- 1: Ordner ---------------------------------------------------- -->
+    <section class="step" id="step-1">
+      <h2>Wo liegen deine Fotos?</h2>
+      <p>
+        Ein Klick auf einen Namen geht hinein. Die Zahl sagt, wie viele Bilder
+        direkt darin liegen — Unterordner sind nicht mitgezählt. <b>Als Quelle</b>
+        nimmt einen Ordner samt allem darunter; <b>Ausschließen</b> nimmt einen
+        Unterordner wieder heraus (Screenshots, Downloads).
+      </p>
+      <div class="browse">
+        <div>
+          <div class="crumbs" id="crumbs"></div>
+          <div class="tree" id="tree">lädt …</div>
+        </div>
+        <div class="chosen card">
+          <h3>Gewählt</h3>
+          <ul id="chosen"></ul>
+          <div class="actions">
+            <button type="button" class="plain" id="btn-preview">Zählen, was gefunden würde</button>
+          </div>
+          <div class="preview" id="preview"></div>
+        </div>
+      </div>
+      <p class="msg" id="msg-1"></p>
+      <div class="actions">
+        <span class="hint" id="hint-1">Mindestens einen Ordner als Quelle wählen.</span>
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="next-1" disabled>Weiter</button>
+      </div>
+      <div class="card warn" id="restart" hidden>
+        <h3>Einen Moment — die Ordner werden beschreibbar eingebunden.</h3>
+        <p>PhotoVault startet dafür einmal neu. Das Fenster von <code>start.bat</code>
+           erledigt das; hier geht es automatisch weiter.</p>
+        <p class="msg" id="restart-msg">warte …</p>
+        <div class="actions" id="restart-actions" hidden>
+          <button type="button" class="plain" id="restart-skip">Trotzdem weiter</button>
+          <span class="hint">Dann sind die Ordner bis zum nächsten Start nur lesbar — Einlesen geht trotzdem.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- 2: Einlesen -------------------------------------------------- -->
+    <section class="step" id="step-2">
+      <h2>Einlesen</h2>
+      <p>
+        PhotoVault liest jetzt alle Fotos einmal: Gesichter, Szenen, Aufnahmedatum.
+        Das dauert je nach Menge und Rechner Minuten bis Stunden; beim ersten Mal
+        lädt es vorher rund 1,5 GB Modelle. Ein Abbruch ist unkritisch — es geht
+        danach an derselben Stelle weiter.
+      </p>
+      <div class="card" id="ingest-card">
+        <div id="ingest-idle">
+          <p id="ingest-ready" class="msg"></p>
+          <div class="actions">
+            <button type="button" class="primary" id="btn-ingest">Jetzt einlesen</button>
+            <button type="button" class="link" id="skip-ingest">Später (über die Jobs-Seite)</button>
+          </div>
+        </div>
+        <div id="ingest-run" hidden>
+          <div class="bar" id="ingest-bar"><i></i></div>
+          <div class="nums" id="ingest-nums"></div>
+          <div class="actions">
+            <button type="button" class="plain" id="btn-abort">Beenden</button>
+            <span class="hint" id="ingest-phase"></span>
+          </div>
+        </div>
+        <div id="ingest-done" hidden>
+          <p class="msg ok" id="ingest-summary"></p>
+        </div>
+      </div>
+      <div class="actions">
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="next-2" hidden>Weiter</button>
+      </div>
+    </section>
+
+    <!-- ---- 3: Beschreibungen -------------------------------------------- -->
+    <section class="step" id="step-3">
+      <h2>Bildbeschreibungen</h2>
+      <p>
+        Ein Sprachmodell kann jedes Foto in ein, zwei deutschen Sätzen beschreiben
+        („Zwei Kinder am Strand, Griechenland 2015"). Damit werden Fotos nach
+        einem getippten Satz findbar, und die Karte bekommt lesbare Namen.
+        Optional: Gesichter, Datum, Serien und Suche funktionieren auch ohne.
+      </p>
+
+      <div class="card" id="llm-env" hidden>
+        <h3>Hier legt die Umgebung das Sprachmodell fest.</h3>
+        <p id="llm-env-text"></p>
+      </div>
+
+      <div id="llm-choose">
+        <div class="choice" id="choice">
+          <button type="button" data-mode="ollama">
+            <h3>Ollama auf diesem Rechner <span class="rec">· empfohlen</span></h3>
+            <p>Läuft lokal, nichts verlässt den Rechner. Braucht das kostenlose
+               Programm Ollama; das Modell wird hier ausgesucht und geladen.</p>
+          </button>
+          <button type="button" data-mode="openai">
+            <h3>Ein Anbieter im Netz</h3>
+            <p>OpenAI-kompatible Schnittstelle mit eigenem Schlüssel. Schneller
+               ohne Grafikkarte — aber die Fotos verlassen dafür den Rechner.</p>
+          </button>
+          <button type="button" data-mode="later">
+            <h3>Später</h3>
+            <p>Erst einmal ohne Beschreibungen. Diese Seite bleibt erreichbar.</p>
+          </button>
+        </div>
+      </div>
+
+      <!-- Ollama -->
+      <div id="llm-ollama" hidden>
+        <div class="card bad" id="ollama-missing" hidden>
+          <h3>Ollama ist nicht erreichbar.</h3>
+          <p>Installieren: <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>
+             — nach der Installation läuft Ollama im Hintergrund, ein Neustart ist
+             nicht nötig. Gesucht wurde unter <code id="ollama-url"></code>.</p>
+          <div class="actions">
+            <button type="button" class="primary" id="ollama-recheck">Erneut prüfen</button>
+          </div>
+        </div>
+        <div id="ollama-ok" hidden>
+          <div class="card" id="gpu-card">
+            <h3 id="gpu-title"></h3>
+            <p id="gpu-why"></p>
+          </div>
+          <div class="card">
+            <div class="form">
+              <label for="sel-caption">Bildbeschreibung</label>
+              <select id="sel-caption"></select>
+              <label for="sel-embed">Text-Vektoren</label>
+              <select id="sel-embed"></select>
+            </div>
+            <p class="models msg" id="ollama-have"></p>
+            <div class="actions">
+              <button type="button" class="primary" id="btn-pull">Modelle laden und prüfen</button>
+              <span class="hint" id="pull-hint"></span>
+            </div>
+            <div id="pulls"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Anbieter -->
+      <div id="llm-openai" hidden>
+        <div class="card warn">
+          <h3>Vorher klar gesagt</h3>
+          <p>Mit dieser Einstellung schickt PhotoVault jedes Foto <b>verkleinert</b> an
+             den Anbieter, den du hier einträgst, und bekommt die Beschreibung zurück.
+             Die Fotos verlassen also den Rechner. Der Schlüssel liegt nur in
+             <code>data/settings.json</code> und wird nie angezeigt oder protokolliert.</p>
+        </div>
+        <div class="card">
+          <div class="form">
+            <label for="oa-url">Adresse</label>
+            <input id="oa-url" placeholder="https://api.example.com/v1" />
+            <label for="oa-key">Schlüssel</label>
+            <input id="oa-key" type="password" autocomplete="off" placeholder="wird nicht angezeigt" />
+            <label for="oa-caption">Modell für Bilder</label>
+            <input id="oa-caption" placeholder="Name beim Anbieter, muss Bilder verstehen" />
+            <label for="oa-embed">Modell für Text-Vektoren</label>
+            <input id="oa-embed" placeholder="Embedding-Modell beim Anbieter" />
+          </div>
+          <div class="actions">
+            <button type="button" class="primary" id="btn-openai">Speichern und prüfen</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ergebnis der Pruefung -->
+      <div class="card" id="llm-result" hidden>
+        <h3>Probe</h3>
+        <p id="probe-embed"></p>
+        <p id="probe-caption"></p>
+        <p id="probe-estimate"></p>
+        <div class="actions">
+          <button type="button" class="primary" id="btn-caption-now" hidden>Beschreibungen jetzt im Hintergrund starten</button>
+          <button type="button" class="plain" id="btn-caption-later">Später über die Jobs-Seite</button>
+        </div>
+      </div>
+
+      <p class="msg" id="msg-3"></p>
+      <div class="actions">
+        <button type="button" class="link" id="back-3" hidden>Andere Wahl</button>
+        <span class="spacer"></span>
+        <button type="button" class="primary" id="next-3" hidden>Weiter</button>
+      </div>
+    </section>
+
+    <!-- ---- 4: Fertig ---------------------------------------------------- -->
+    <section class="step" id="step-4">
+      <h2>Fertig.</h2>
+      <ul class="done-list" id="done-list"></ul>
+      <p>
+        Fang mit <b>Wer ist das?</b> an: Gesichter benennen, einmal je Person —
+        der Rest ordnet sich zu. Diese Seite gibt es weiterhin unter
+        <code>/setup</code>; lange Läufe steuerst du unter <b>Jobs</b>.
+      </p>
+      <div class="actions">
+        <a class="primary" id="go-app" href="/?tab=label" style="text-decoration:none;padding:.5rem 1rem;border-radius:8px;background:var(--accent);color:var(--on-accent);font-weight:600">Zu den Fotos</a>
+        <a class="plain" href="/jobs.html" style="text-decoration:none;padding:.45rem .9rem;border-radius:8px;background:var(--chip);color:var(--text);border:1px solid var(--line)">Jobs</a>
+      </div>
+    </section>
+  </main>
+
+<script type="module">
+/* Die Seite kennt vier Schritte und einen Zustand. Alles, was sie tut,
+   geht ueber die API -- auch das Ziehen eines Modells --, damit sie von
+   jedem Geraet aus dasselbe kann. */
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (n) => Number(n ?? 0).toLocaleString("de-DE");
+const gb = (x) => x == null ? "" : `${Number(x).toLocaleString("de-DE", { maximumFractionDigits: 1 })} GB`;
+const fmtDur = (s) => {
+  s = Math.max(0, Math.round(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h} h ${m} min` : (m ? `${m} min ${s % 60} s` : `${s} s`);
+};
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const text = await r.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text.slice(0, 200) }; }
+  if (!r.ok) throw new Error(data.detail || `${r.status}`);
+  return data;
+}
+const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body || {}) });
+
+const S = {
+  state: null,      // /api/setup/state
+  sources: [],      // Eintraege aus /api/sources
+  at: "",           // aktueller Pfad im Baum
+  preview: null,    // letzter Trockenlauf
+  clickedAt: 0,     // wann "Jetzt einlesen" gedrueckt wurde
+  ingestTimer: null,
+  mode: null,
+  probe: { photos: 0 },
+};
+
+function setMsg(id, text, kind = "") {
+  const el = $(id);
+  el.textContent = text || "";
+  el.className = `msg ${kind}`;
+}
+
+function showStep(n) {
+  document.querySelectorAll(".step").forEach((s) => s.classList.toggle("on", s.id === `step-${n}`));
+  document.querySelectorAll("#steps li").forEach((li) => {
+    const k = Number(li.dataset.step);
+    li.classList.toggle("on", k === n);
+    li.classList.toggle("done", k < n);
+  });
+  window.scrollTo({ top: 0 });
+}
+
+async function loadState() {
+  S.state = await api("/api/setup/state");
+  return S.state;
+}
+
+/* ---- 1: Ordner ---------------------------------------------------------- */
+
+async function loadSources() {
+  try {
+    const d = await api("/api/sources");
+    S.sources = d.entries || [];
+  } catch (e) {
+    // 404: die Datei gibt es noch nicht -- das ist der Normalfall beim ersten Mal.
+    S.sources = [];
+  }
+  paintChosen();
+}
+
+function paintChosen() {
+  const ul = $("chosen");
+  const rows = S.sources.filter((e) => e.enabled);
+  ul.innerHTML = rows.length ? rows.map((e) => `
+    <li>
+      <span class="path">${esc(e.path)}</span>
+      <span class="kind${e.exclude ? " ex" : ""}">${e.exclude ? "ausgeschlossen" : "Quelle"}</span>
+      <button type="button" class="x" data-line="${e.line}" title="Entfernen">✕</button>
+    </li>`).join("")
+    : '<li class="empty">Noch nichts gewählt.</li>';
+  const ok = rows.some((e) => !e.exclude);
+  $("next-1").disabled = !ok;
+  $("hint-1").textContent = ok ? "" : "Mindestens einen Ordner als Quelle wählen.";
+  $("btn-preview").disabled = !ok;
+}
+
+async function browse(path) {
+  const box = $("tree");
+  box.textContent = "lädt …";
+  let d;
+  try {
+    d = await api(`/api/sources/browse?path=${encodeURIComponent(path || "")}`);
+  } catch (e) {
+    box.innerHTML = `<p class="msg err">Nicht lesbar: ${esc(e.message)}</p>`;
+    return;
+  }
+  S.at = d.path;
+  const root = (d.root || "").replace(/\/+$/, "");
+  const rest = root && d.path.startsWith(root) ? d.path.slice(root.length) : d.path;
+  const parts = rest.split("/").filter(Boolean);
+  $("crumbs").innerHTML = `<button type="button" data-go="${esc(root || "/")}">${esc(root || "/")}</button>`
+    + parts.map((t, i) => `<span>/</span><button type="button" data-go="${esc(root)}/${
+      esc(parts.slice(0, i + 1).join("/"))}">${esc(t)}</button>`).join("");
+  box.innerHTML = d.dirs.length ? d.dirs.map((x) => `
+    <div class="row${x.listed ? " known" : ""}">
+      <button type="button" class="name" data-go="${esc(x.path)}">${esc(x.name)}</button>
+      <span class="n">${num(x.images)}${x.truncated ? "+" : ""} Bilder</span>
+      ${x.has_subdirs ? '<span class="sub">Unterordner</span>' : ""}
+      ${x.listed ? `<span class="tag">${x.listed === "exclude" ? "ausgeschlossen" : "Quelle"}</span>`
+        : `<button type="button" class="mini" data-add="${esc(x.path)}">Als Quelle</button>
+           <button type="button" class="mini x" data-ex="${esc(x.path)}">Ausschließen</button>`}
+    </div>`).join("")
+    : '<p class="msg">Keine Unterordner.</p>';
+}
+
+async function addSource(path, exclude) {
+  try {
+    await post("/api/sources/add", { path, exclude });
+  } catch (e) {
+    setMsg("msg-1", `Nicht hinzugefügt: ${e.message}`, "err");
+    return;
+  }
+  setMsg("msg-1", "");
+  S.preview = null;
+  $("preview").innerHTML = "";
+  await loadSources();
+  await browse(S.at);
+}
+
+async function removeSource(line) {
+  try {
+    await post("/api/sources/remove", { line });
+  } catch (e) {
+    setMsg("msg-1", `Nicht entfernt: ${e.message}`, "err");
+    return;
+  }
+  S.preview = null;
+  $("preview").innerHTML = "";
+  await loadSources();
+  await browse(S.at);
+}
+
+async function preview() {
+  const box = $("preview");
+  box.innerHTML = '<p class="msg">zählt … (bei großen Sammlungen eine Weile)</p>';
+  $("btn-preview").disabled = true;
+  try {
+    const d = await api("/api/sources/preview");
+    S.preview = d;
+    S.probe.photos = d.total || 0;
+    box.innerHTML = `
+      <table>
+        ${(d.per_source || []).map((r) => `<tr><td class="path">${esc(r.path)}</td><td class="n">${num(r.found)}</td></tr>`).join("")}
+        <tr><th>gesamt</th><th class="n">${num(d.total)}</th></tr>
+      </table>
+      ${(d.missing || []).length ? `<p class="msg err">Gibt es nicht: ${esc(d.missing.join(", "))}</p>` : ""}`;
+  } catch (e) {
+    box.innerHTML = `<p class="msg err">${esc(e.message)}</p>`;
+  } finally {
+    $("btn-preview").disabled = false;
+  }
+}
+
+$("crumbs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-go]");
+  if (b) browse(b.dataset.go);
+});
+$("tree").addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]");
+  if (go) return browse(go.dataset.go);
+  const add = e.target.closest("[data-add]");
+  if (add) return addSource(add.dataset.add, false);
+  const ex = e.target.closest("[data-ex]");
+  if (ex) return addSource(ex.dataset.ex, true);
+});
+$("chosen").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-line]");
+  if (b) removeSource(Number(b.dataset.line));
+});
+$("btn-preview").addEventListener("click", preview);
+
+/* Nach der Ordnerwahl: im Verbund bindet start.bat die gewaehlten Ordner
+   beschreibbar ein und erstellt den Container neu. Die Seite erkennt den
+   neuen Prozess an `started_at` und macht dann weiter -- ohne dass jemand
+   die Konsole anfasst. */
+$("next-1").addEventListener("click", async () => {
+  $("next-1").disabled = true;
+  try {
+    await post("/api/setup/step", { step: "sources-done" });
+  } catch (e) {
+    setMsg("msg-1", `Konnte den Schritt nicht speichern: ${e.message}`, "err");
+    $("next-1").disabled = false;
+    return;
+  }
+  if (!S.state?.two_phase) {
+    await enterIngest();
+    return;
+  }
+  const before = S.state.started_at;
+  $("restart").hidden = false;
+  const t0 = Date.now();
+  let gone = false;
+  while (Date.now() - t0 < 180_000) {
+    await sleep(2000);
+    try {
+      const st = await api("/api/setup/state");
+      if (st.started_at !== before) {
+        S.state = st;
+        $("restart").hidden = true;
+        await enterIngest();
+        return;
+      }
+      $("restart-msg").textContent = gone ? "PhotoVault ist wieder da, prüft …" : "warte auf den Neustart …";
+    } catch {
+      gone = true;
+      $("restart-msg").textContent = "PhotoVault startet neu …";
+    }
+  }
+  $("restart-msg").textContent = "Das dauert länger als erwartet. Läuft das Fenster von start.bat noch?";
+  $("restart-actions").hidden = false;
+});
+$("restart-skip").addEventListener("click", async () => {
+  $("restart").hidden = true;
+  await enterIngest();
+});
+
+/* ---- 2: Einlesen -------------------------------------------------------- */
+
+async function enterIngest() {
+  showStep(2);
+  try {
+    const d = await api("/api/jobs?kind=ingest&limit=1");
+    const r = (d.runnable || []).find((x) => x.id === "ingest");
+    const running = (d.jobs || []).find((j) => j.status === "running");
+    if (running) {
+      S.clickedAt = 0;
+      startPolling();
+      return;
+    }
+    if (r && !r.ready) {
+      setMsg("ingest-ready", r.blocked, "err");
+      $("btn-ingest").disabled = true;
+    } else {
+      setMsg("ingest-ready", "");
+      $("btn-ingest").disabled = false;
+    }
+  } catch (e) {
+    setMsg("ingest-ready", `Jobs nicht erreichbar: ${e.message}`, "err");
+  }
+  $("next-2").hidden = false;
+  $("next-2").textContent = "Weiter ohne Einlesen";
+}
+
+$("btn-ingest").addEventListener("click", async () => {
+  $("btn-ingest").disabled = true;
+  S.clickedAt = Date.now() / 1000;
+  try {
+    await post("/api/jobs/run", { job: "ingest" });
+  } catch (e) {
+    setMsg("ingest-ready", `Start fehlgeschlagen: ${e.message}`, "err");
+    $("btn-ingest").disabled = false;
+    return;
+  }
+  $("ingest-idle").hidden = true;
+  $("ingest-run").hidden = false;
+  $("next-2").hidden = true;
+  $("ingest-nums").textContent = "startet … (beim ersten Mal werden erst die Modelle geladen)";
+  startPolling();
+});
+$("skip-ingest").addEventListener("click", () => enterLlm());
+$("next-2").addEventListener("click", () => enterLlm());
+
+function startPolling() {
+  $("ingest-idle").hidden = true;
+  $("ingest-run").hidden = false;
+  clearInterval(S.ingestTimer);
+  S.ingestTimer = setInterval(pollIngest, 2000);
+  pollIngest();
+}
+
+async function pollIngest() {
+  let d;
+  try { d = await api("/api/jobs?kind=ingest&limit=1"); } catch { return; }
+  const j = (d.jobs || [])[0];
+  if (!j || (S.clickedAt && (j.started_at || 0) < S.clickedAt - 10)) return;   // der alte Lauf, nicht unserer
+  const pct = j.total ? Math.min(100, 100 * (j.processed || 0) / j.total) : 0;
+  $("ingest-bar").querySelector("i").style.width = `${pct}%`;
+  $("ingest-nums").innerHTML = `
+    <span><b>${num(j.processed)}</b> / ${num(j.total)} (${pct.toFixed(1)} %)</span>
+    <span><b>${(Number(j.rate_per_s) || 0).toFixed(2)}</b> Fotos/s</span>
+    <span>Laufzeit ${fmtDur(j.elapsed_s)}</span>
+    ${j.status === "running" && j.eta_s ? `<span>noch etwa ${fmtDur(j.eta_s)}</span>` : ""}
+    ${j.errors ? `<span><b>${num(j.errors)}</b> Fehler</span>` : ""}`;
+  $("ingest-phase").textContent = j.phase || "";
+  $("btn-abort").dataset.job = j.job_id;
+  if (j.status !== "running") {
+    clearInterval(S.ingestTimer);
+    $("ingest-bar").classList.add("done");
+    $("ingest-run").hidden = true;
+    $("ingest-done").hidden = false;
+    setMsg("ingest-summary", j.status === "done"
+      ? `Fertig: ${num(j.processed)} Fotos eingelesen${j.errors ? `, ${num(j.errors)} mit Fehler` : ""}.`
+      : `Lauf ${j.status}: ${num(j.processed)} von ${num(j.total)} — der Rest folgt beim nächsten Lauf.`,
+      j.status === "done" ? "ok" : "");
+    $("next-2").textContent = "Weiter";
+    $("next-2").hidden = false;
+    try { await loadState(); } catch {}
+  }
+}
+
+$("btn-abort").addEventListener("click", async () => {
+  const id = $("btn-abort").dataset.job;
+  if (!id) return;
+  $("btn-abort").disabled = true;
+  try { await post(`/api/jobs/${encodeURIComponent(id)}/abort`); } catch (e) { setMsg("ingest-ready", e.message, "err"); }
+  $("btn-abort").disabled = false;
+});
+
+/* ---- 3: Beschreibungen -------------------------------------------------- */
+
+async function enterLlm() {
+  clearInterval(S.ingestTimer);
+  showStep(3);
+  try { await loadState(); } catch (e) { setMsg("msg-3", e.message, "err"); return; }
+  const eff = S.state.llm.effective;
+  if (eff.from_env.pool || eff.from_env.caption_model) {
+    $("llm-env").hidden = false;
+    $("llm-env-text").textContent = eff.from_env.pool
+      ? `Ein Pool ist über die Umgebung eingetragen (${S.state.llm.url_in_use}), Modell „${eff.caption_model}“. Hier gibt es nichts einzustellen.`
+      : `PHOTOVAULT_CAPTION_MODEL ist auf „${eff.caption_model}“ gesetzt. Hier gibt es nichts einzustellen.`;
+    $("llm-choose").hidden = true;
+    $("next-3").hidden = false;
+    return;
+  }
+  $("llm-choose").hidden = false;
+}
+
+$("choice").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mode]");
+  if (!b) return;
+  document.querySelectorAll("#choice button").forEach((x) => x.classList.toggle("on", x === b));
+  chooseMode(b.dataset.mode);
+});
+
+async function chooseMode(mode) {
+  S.mode = mode;
+  $("llm-ollama").hidden = mode !== "ollama";
+  $("llm-openai").hidden = mode !== "openai";
+  $("llm-result").hidden = true;
+  $("next-3").hidden = true;
+  $("back-3").hidden = false;
+  setMsg("msg-3", "");
+  if (mode === "later") {
+    $("next-3").hidden = false;
+    setMsg("msg-3", "In Ordnung — ohne Beschreibungen. Später unter /setup oder Jobs nachholen.");
+    return;
+  }
+  if (mode === "ollama") await checkOllama();
+}
+
+$("back-3").addEventListener("click", () => {
+  document.querySelectorAll("#choice button").forEach((x) => x.classList.remove("on"));
+  $("llm-ollama").hidden = $("llm-openai").hidden = $("llm-result").hidden = true;
+  $("next-3").hidden = $("back-3").hidden = true;
+  setMsg("msg-3", "");
+});
+
+async function checkOllama() {
+  $("ollama-missing").hidden = true;
+  $("ollama-ok").hidden = true;
+  setMsg("msg-3", "prüft, ob Ollama läuft …");
+  let d;
+  try { d = await api("/api/setup/llm/models"); } catch (e) { setMsg("msg-3", e.message, "err"); return; }
+  setMsg("msg-3", "");
+  if (!d.reachable) {
+    $("ollama-url").textContent = d.url;
+    $("ollama-missing").hidden = false;
+    return;
+  }
+  $("ollama-ok").hidden = false;
+  const rec = S.state.gpu.recommendation;
+  const vram = S.state.gpu.vram_mb;
+  $("gpu-title").textContent = vram
+    ? `Grafikkarte mit ${num(Math.round(vram / 1024))} GB Speicher erkannt.`
+    : "Keine NVIDIA-Grafikkarte erkannt — Beschreibungen laufen auf dem Prozessor.";
+  $("gpu-why").textContent = rec.why;
+  const have = new Map(d.models.map((m) => [m.name, m.size_gb]));
+  const opts = (recName, recGb, kind) => {
+    const names = [recName, ...d.models.map((m) => m.name).filter((n) => n !== recName)];
+    return names.map((n) => {
+      const there = have.has(n);
+      const size = there ? have.get(n) : (n === recName ? recGb : null);
+      const label = `${n}${size != null ? ` · ${gb(size)}` : ""}${n === recName ? " · empfohlen" : ""}${there ? " · vorhanden" : ""}`;
+      return `<option value="${esc(n)}">${esc(label)}</option>`;
+    }).join("");
+  };
+  $("sel-caption").innerHTML = opts(rec.caption_model, rec.caption_gb, "caption");
+  $("sel-embed").innerHTML = opts(rec.embed_model, rec.embed_gb, "embed");
+  $("ollama-have").textContent = d.models.length
+    ? `Schon vorhanden: ${d.models.map((m) => m.name).join(", ")}.`
+    : "Noch kein Modell vorhanden — die beiden werden geladen.";
+  $("pull-hint").textContent = "Lädt, was fehlt, und macht danach eine Probe an einem deiner Fotos.";
+}
+$("ollama-recheck").addEventListener("click", checkOllama);
+
+/* Ziehen mit Fortschritt: der Server reicht die NDJSON-Zeilen von Ollama
+   durch. Summiert wird ueber alle Schichten, die bis dahin genannt wurden. */
+async function pull(model, host) {
+  const box = document.createElement("div");
+  box.innerHTML = `<p class="msg">${esc(model)}: lädt …</p><div class="bar"><i></i></div>`;
+  host.appendChild(box);
+  const label = box.querySelector("p"), bar = box.querySelector("i");
+  const r = await fetch("/api/setup/llm/pull", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model }),
+  });
+  if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  const layers = new Map();
+  let buf = "", ok = false;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.error) throw new Error(ev.error);
+      if (ev.digest && ev.total) layers.set(ev.digest, { total: ev.total, completed: ev.completed || 0 });
+      let total = 0, done_ = 0;
+      for (const l of layers.values()) { total += l.total; done_ += l.completed; }
+      const pct = total ? Math.min(100, 100 * done_ / total) : 0;
+      bar.style.width = `${pct}%`;
+      label.textContent = `${model}: ${ev.status || ""}${total ? ` · ${gb(done_ / 1e9)} von ${gb(total / 1e9)}` : ""}`;
+      if (ev.status === "success") ok = true;
+    }
+  }
+  if (!ok) throw new Error(`${model}: Ollama hat kein „success“ gemeldet`);
+  bar.style.width = "100%";
+  box.querySelector(".bar").classList.add("done");
+  label.textContent = `${model}: geladen.`;
+}
+
+$("btn-pull").addEventListener("click", async () => {
+  const caption = $("sel-caption").value, embed = $("sel-embed").value;
+  $("btn-pull").disabled = true;
+  $("pulls").innerHTML = "";
+  setMsg("msg-3", "");
+  try {
+    await post("/api/setup/llm", { mode: "ollama", caption_model: caption, embed_model: embed });
+    const have = new Set((await api("/api/setup/llm/models")).models.map((m) => m.name));
+    for (const m of [embed, caption]) {
+      if (!have.has(m)) await pull(m, $("pulls"));
+    }
+    await runProbe();
+  } catch (e) {
+    setMsg("msg-3", `Nicht geklappt: ${e.message}`, "err");
+    $("btn-pull").disabled = false;
+  }
+});
+
+$("btn-openai").addEventListener("click", async () => {
+  const url = $("oa-url").value.trim(), key = $("oa-key").value;
+  const caption = $("oa-caption").value.trim(), embed = $("oa-embed").value.trim();
+  if (!url || !caption || !embed) { setMsg("msg-3", "Adresse und beide Modellnamen sind nötig.", "err"); return; }
+  $("btn-openai").disabled = true;
+  setMsg("msg-3", "");
+  try {
+    await post("/api/setup/llm", { mode: "openai", url, key: key || null, caption_model: caption, embed_model: embed });
+    $("oa-key").value = "";
+    const d = await api("/api/setup/llm/models");
+    if (!d.reachable) throw new Error(`Anbieter nicht erreichbar: ${d.error || d.url}`);
+    await runProbe();
+  } catch (e) {
+    setMsg("msg-3", `Nicht geklappt: ${e.message}`, "err");
+  } finally {
+    $("btn-openai").disabled = false;
+  }
+});
+
+/* Die Probe: Dimension messen, eine Beschreibung mit Stoppuhr, hochrechnen.
+   Der Satz danach ist der, der auf einer Maschine ohne Grafikkarte ehrlich
+   sein muss. */
+async function runProbe() {
+  $("llm-result").hidden = false;
+  $("probe-embed").textContent = "Text-Vektoren: misst …";
+  $("probe-caption").textContent = "";
+  $("probe-estimate").textContent = "";
+  $("btn-caption-now").hidden = true;
+  const emb = await post("/api/setup/llm/embed", {});
+  $("probe-embed").textContent = `Text-Vektoren: ${emb.model} liefert ${num(emb.dim)} Dimensionen in ${emb.seconds} s.`
+    + (emb.stored ? "" : ` ${emb.note}`);
+  await loadState();
+  const photos = S.probe.photos || S.state.photos_indexed || 0;
+  if (!S.state.photos_indexed) {
+    $("probe-caption").textContent = "Beschreibung: zum Ausprobieren braucht es ein eingelesenes Foto — das kommt nach dem Einlesen.";
+    $("next-3").hidden = false;
+    return;
+  }
+  $("probe-caption").textContent = "Beschreibung: läuft an einem deiner Fotos … (beim ersten Mal lädt das Modell, das kann eine Minute dauern)";
+  let t;
+  try {
+    t = await post("/api/setup/llm/test", { photos });
+  } catch (e) {
+    $("probe-caption").textContent = `Beschreibung: ${e.message}`;
+    $("next-3").hidden = false;
+    return;
+  }
+  $("probe-caption").innerHTML = `Beschreibung (${t.seconds} s mit <code>${esc(t.model)}</code>): „${esc(t.caption_de)}“`;
+  const h = t.estimate.hours;
+  const dauer = h >= 48 ? `etwa ${Math.round(h / 24)} Tage` : h >= 1 ? `etwa ${Math.round(h)} Stunden` : `unter einer Stunde`;
+  $("probe-estimate").innerHTML = `Hochgerechnet auf <b>${num(t.estimate.photos)}</b> Fotos: <b>${dauer}</b>`
+    + (h >= 24 ? " — das läuft im Hintergrund, auch über Nacht; PhotoVault ist derweil benutzbar."
+                : " — das läuft im Hintergrund, PhotoVault ist derweil benutzbar.");
+  $("btn-caption-now").hidden = false;
+  $("next-3").hidden = false;
+}
+
+$("btn-caption-now").addEventListener("click", async () => {
+  $("btn-caption-now").disabled = true;
+  try {
+    await post("/api/jobs/run", { job: "caption" });
+    setMsg("msg-3", "Beschreibungen laufen im Hintergrund — Fortschritt unter Jobs.", "ok");
+  } catch (e) {
+    setMsg("msg-3", `Start fehlgeschlagen: ${e.message}`, "err");
+    $("btn-caption-now").disabled = false;
+    return;
+  }
+  $("btn-caption-now").hidden = true;
+});
+$("btn-caption-later").addEventListener("click", () => enterDone());
+$("next-3").addEventListener("click", () => enterDone());
+
+/* ---- 4: Fertig ---------------------------------------------------------- */
+
+async function enterDone() {
+  clearInterval(S.ingestTimer);
+  showStep(4);
+  try { await post("/api/setup/done", {}); } catch {}
+  try { await loadState(); } catch {}
+  const st = S.state || {};
+  const llm = st.llm || {};
+  const items = [
+    `<b>${num(st.photos_indexed)}</b> Fotos im Index${(S.sources.filter((e) => e.enabled && !e.exclude).length)
+      ? ` aus ${S.sources.filter((e) => e.enabled && !e.exclude).length} Quelle(n)` : ""}.`,
+    llm.caption_ready
+      ? `Beschreibungen: <code>${esc(llm.effective.caption_model)}</code> ist bereit.`
+      : `Beschreibungen: noch nicht eingerichtet — jederzeit unter <a href="/setup">/setup</a>.`,
+    `Gesichter, Datum, Serien und Suche: bereit.`,
+  ];
+  $("done-list").innerHTML = items.map((t) => `<li>${t}</li>`).join("");
+}
+
+/* ---- Start -------------------------------------------------------------- */
+
+(async () => {
+  showStep(1);
+  try {
+    await loadState();
+  } catch (e) {
+    setMsg("msg-1", `PhotoVault antwortet nicht: ${e.message}`, "err");
+    return;
+  }
+  await loadSources();
+  await browse("");
+})();
+</script>
+</body>
+</html>

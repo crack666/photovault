@@ -213,3 +213,59 @@ class TestStoppuhr:
         out = su.probe_embedding(su.EmbedProbeRequest())
         assert out["stored"] is False and "2560" in out["note"]
         assert settings.text_vector_size() == 2560
+
+
+class TestOrdnerwaehlerImVerbund:
+    """Zwei Fehler aus dem ersten Browserlauf des Wizards.
+
+    Ohne `sources.txt` starben Baum und Trockenlauf mit 500 -- der Wizard ist
+    aber genau der Moment, in dem es die Datei noch nicht gibt. Und nach der
+    ersten Quelle auf `D:` verweigerte die Bibliothekswurzel (gemeinsames
+    Elternverzeichnis) jede zweite auf `C:` -- im Verbund muss der Waehler
+    ueberall auf den Laufwerken hin duerfen."""
+
+    @pytest.fixture
+    def laufwerke(self, tmp_path, monkeypatch):
+        from api.routes import sources as sr
+
+        host = tmp_path / "host"
+        for rel in ("d/Fotos/Urlaub", "d/Fotos/Screenshots", "c/Users/x/Bilder"):
+            (host / rel).mkdir(parents=True)
+        (host / "d/Fotos/Urlaub/a.jpg").write_bytes(b"\xff\xd8" + b"x" * 64)
+        monkeypatch.setenv("PHOTOVAULT_BROWSE_ROOT", str(host))
+        monkeypatch.setenv("PHOTOVAULT_SOURCES", str(tmp_path / "sources.txt"))
+        monkeypatch.setattr(sr, "FILE", str(tmp_path / "sources.txt"))
+        monkeypatch.setattr(sr, "client", lambda: None)
+        monkeypatch.setattr(sr, "_count_in_index", lambda q, p: 0)
+        return host
+
+    def test_baum_und_trockenlauf_gehen_ohne_datei(self, laufwerke):
+        from api.routes import sources as sr
+
+        d = sr.browse("")
+        assert d["path"] == str(laufwerke) and {x["name"] for x in d["dirs"]} == {"c", "d"}
+        assert sr.preview()["total"] == 0
+
+    def test_erste_quelle_legt_die_datei_an(self, laufwerke, tmp_path):
+        from api.routes import sources as sr
+
+        sr.add_source(sr.AddRequest(path=str(laufwerke / "d/Fotos")))
+        text = (tmp_path / "sources.txt").read_text(encoding="utf-8")
+        assert str(laufwerke / "d/Fotos") in text and text.startswith("#")
+
+    def test_zweites_laufwerk_bleibt_erlaubt(self, laufwerke):
+        from api.routes import sources as sr
+
+        sr.add_source(sr.AddRequest(path=str(laufwerke / "d/Fotos")))
+        sr.add_source(sr.AddRequest(path=str(laufwerke / "d/Fotos/Screenshots"), exclude=True))
+        sr.add_source(sr.AddRequest(path=str(laufwerke / "c/Users/x/Bilder")))
+        aktiv = [e["path"] for e in sr.list_sources()["entries"] if e["enabled"]]
+        assert len(aktiv) == 3
+        assert sr.browse("")["root"] == str(laufwerke)     # die Krumen fangen bei den Laufwerken an
+
+    def test_ausserhalb_der_laufwerke_bleibt_zu(self, laufwerke, tmp_path):
+        from api.routes import sources as sr
+
+        with pytest.raises(HTTPException) as err:
+            sr.browse(str(tmp_path))
+        assert err.value.status_code == 403

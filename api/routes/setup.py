@@ -43,6 +43,11 @@ from ingest import settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+#: Wann dieser Prozess anfing. Der Wizard erkennt daran, dass `start.bat`
+#: den Container nach der Ordnerwahl neu erstellt hat (zweite Phase: die
+#: gewaehlten Ordner beschreibbar) -- eine andere Zahl heisst: neuer Prozess.
+STARTED_AT = time.time()
+
 #: Was zu welchem Speicher passt. Gemessen am 19.09.2026 gegen die
 #: Ollama-Bibliothek: `qwen3.8` gibt es nur als 27B (18 GB) -- fuer 16 GB
 #: muss eine andere Familie her, und `gemma4` hat die Leiter mit Bild-
@@ -127,6 +132,11 @@ def state() -> dict:
     return {
         "setup": conf["setup"],
         "needs_setup": needs_setup(),
+        "started_at": STARTED_AT,
+        # Setzt die Compose des Wizards: dann wartet die Seite nach der
+        # Ordnerwahl auf den Neustart, den start.bat auslöst.
+        "two_phase": (os.environ.get("PHOTOVAULT_TWO_PHASE") or "").strip() in ("1", "true", "yes"),
+        "photos_indexed": _index_count(),
         "sources": {"blocked": sources_ready(), "browse_root": browse_root() or None,
                     "photo_root": photo_root() or None},
         "gpu": {"vram_mb": vram, "recommendation": recommend(vram)},

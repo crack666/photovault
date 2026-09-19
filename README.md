@@ -139,6 +139,16 @@ zeigt vorher, was es gefunden hat.
 
 Beim nächsten Mal genügt derselbe Doppelklick.
 
+Der Rest passiert im Browser, unter `/setup` — und dorthin führt `/` von
+selbst, solange noch keine Quelle eingetragen ist: Ordner anhaken (Baum,
+keine Pfade tippen), zählen lassen, einlesen mit Fortschritt, dann das
+Sprachmodell: Ollama wird erkannt oder verlinkt, das Modell nach gemessenem
+Grafikspeicher vorgeschlagen und mit Balken geladen, und eine Test-Caption
+mit Stoppuhr sagt vorher, wie lange der ganze Bestand dauern würde. Wer
+lieber einen Anbieter im Netz nimmt, trägt ihn dort ein — mit dem Satz, der
+dazugehört: die Fotos verlassen dann den Rechner. Die Seite bleibt
+erreichbar; was sie festlegt, steht in `data/settings.json`.
+
 Läuft PhotoVault hier schon **ohne** den Docker-Verbund (venv unter
 `~/.venvs/photovault`, oder `RUNTIME=local` in
 `~/.config/photovault/runtime`) — dann reicht derselbe Doppelklick trotzdem:

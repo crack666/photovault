@@ -179,9 +179,37 @@ GitHub Action → `ghcr.io/crack666/photovault:<tag>`; Compose auf `image:`,
   `/setup`, sobald `web/setup.html` existiert (B). Eine Installation mit
   Quellen kommt dort nie vorbei.
 
-**B — Browser-Wizard `/setup`** — Quellen (Baum, Ausschlüsse, Zahlen aus dem
-Trockenlauf) → Einlesen als Job mit Fortschritt (vorhanden) → LLM (E2–E4) →
-Fertig-Seite: was geht, was fehlt, wo man klickt.
+**B — Browser-Wizard `/setup`** — *gebaut 19.09.2026* (`web/setup.html`,
+`web/static/setup.css`; eigenständig, hängt nicht an `app.js`). Quellen
+(Baum ab `PHOTOVAULT_BROWSE_ROOT`, Ausschlüsse, Zählen) → nach „Weiter"
+`POST /api/setup/step sources-done`; im Verbund (`PHOTOVAULT_TWO_PHASE=1`)
+wartet die Seite auf den Neustart durch `start.bat` und erkennt ihn an
+`started_at` → Einlesen als Job mit Fortschritt, Abbruch, Zusammenfassung →
+Beschreibungen: Ollama (Erkennung, Empfehlung nach VRAM, Auswahl aus
+vorhandenen Modellen, Pull mit Balken, Probe: Dimension, Test-Caption mit
+Stoppuhr und Hochrechnung, dann „jetzt im Hintergrund" / „später"),
+Anbieter (Formular mit Warnung, Schlüssel wird nie zurückgegeben) oder
+„später" → Fertig-Seite, `POST /api/setup/done`.
+
+Im Browser durchgespielt gegen ein eigenes Qdrant und das echte Ollama
+(isolierte Instanz auf :8123, `/tmp/pvw` als `/host`): Quellen auf zwei
+„Laufwerken" plus Ausschluss, 146 Fotos eingelesen, Neustart erkannt,
+Probe 2 560 Dimensionen in 3,7 s, Test-Caption 15 s mit `qwen3.8:27b`,
+Ollama-nicht-da-Karte und Anbieter-Formular. **Nicht** im Browser geprüft:
+ein echter Pull (nur das Stream-Parsing serverseitig getestet) — Messpunkt
+für die Ryzen-Maschine.
+
+Zwei Fehler, die erst der Browserlauf zeigte, mit Tests festgehalten:
+`browse`/`preview` starben ohne `sources.txt` (500) — die erste Quelle legt
+die Datei jetzt an; und nach der ersten Quelle auf `D:` verweigerte die
+Bibliothekswurzel jede zweite auf `C:` — im Verbund ist die Grenze des
+Wählers jetzt `PHOTOVAULT_BROWSE_ROOT`, die Wurzel gilt weiter fürs Löschen.
+Dazu: `ingest/spaces.py` las die Quellen fest aus `<repo>/sources.txt` statt
+aus `PHOTOVAULT_SOURCES` — zwei Wahrheiten, jetzt eine.
+
+Bekannte Grenze (v1): mit Quellen auf zwei Laufwerken ist die gemeinsame
+Wurzel `/host`, und die **Bereiche** (erste Ordnerebene darunter) heißen dann
+`c` und `d`. Für eine Sammlung auf einem Laufwerk ändert sich nichts.
 
 **A — `start.bat` / `start.sh`** — Docker-Prüfung mit Klartext (Virtualisierung
 im BIOS, WSL2-Update), Laufwerke → Override-Datei, zweite Phase nach der
