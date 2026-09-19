@@ -28,6 +28,17 @@ SOURCES_FILE = os.path.join(
 )
 
 
+def browse_root() -> str:
+    """Wo der Ordnerwaehler anfaengt, solange es noch keine Quellen gibt.
+
+    Im Docker-Verbund haengen die Laufwerke des Rechners unter `/host`
+    (`PHOTOVAULT_BROWSE_ROOT`); ohne Quelle gibt es keine Bibliothekswurzel,
+    und `/` waere dann die Wahl zwischen `/etc` und `/proc`. Leer ohne
+    Umgebung: der lokale Betrieb bleibt, wie er war.
+    """
+    return _slash(os.environ.get("PHOTOVAULT_BROWSE_ROOT", "").strip()).rstrip("/")
+
+
 def photo_root() -> str:
     """Das gemeinsame Elternverzeichnis der indizierten Quellen, oder `""`.
 

@@ -57,11 +57,13 @@ def _in_der_bibliothek(pfad: str) -> str:
     Loeschen waere fail-closed hier der Einrichtungstod: ohne Quellen gibt
     es keine Wurzel, und ohne Waehler kaeme man nie zur ersten Quelle.
     Wer eine zweite Bibliothek woanders hat, setzt `PHOTOVAULT_PHOTO_ROOT`
-    -- die Variable gibt es schon.
+    -- die Variable gibt es schon. Im Docker-Verbund gilt vor der ersten
+    Quelle `PHOTOVAULT_BROWSE_ROOT` (`/host`): die Laufwerke, nichts vom
+    Container selbst.
     """
-    from ingest.spaces import photo_root, under_root
+    from ingest.spaces import browse_root, photo_root, under_root
 
-    root = photo_root()
+    root = photo_root() or browse_root()
     if not root:
         return pfad
     if not under_root(pfad, root):
@@ -216,12 +218,13 @@ def browse(path: str = "") -> dict:
     Je Ordner steht dabei, wieviele Bilder direkt darin liegen und ob es
     Unterordner gibt -- sonst klickt man sich blind durch einen Baum.
     """
-    from ingest.spaces import photo_root
+    from ingest.spaces import browse_root, photo_root
 
     # Ohne Pfad nicht `/`, sondern die Bibliothekswurzel: das ist der Ort,
     # an dem der Waehler anfangen soll, und `/` war nie eine sinnvolle
-    # Antwort auf "welchen Fotoordner meinst du".
-    p = Path(_in_der_bibliothek(path) if path else (photo_root() or "/"))
+    # Antwort auf "welchen Fotoordner meinst du". Vor der ersten Quelle im
+    # Verbund: die Laufwerke unter /host.
+    p = Path(_in_der_bibliothek(path) if path else (photo_root() or browse_root() or "/"))
     if not p.is_absolute():
         raise HTTPException(400, "Absoluter Pfad erwartet")
     if not p.is_dir():
@@ -267,7 +270,7 @@ def browse(path: str = "") -> dict:
     # die Oberflaeche einen Weg nach oben, den die Schranke gleich mit 403
     # beantwortet. Ein Knopf, der zuverlaessig scheitert, ist schlimmer als
     # keiner.
-    root = photo_root()
+    root = photo_root() or browse_root()
     oben = None if p.parent == p else str(p.parent)
     if root and str(p).rstrip("/") == root.rstrip("/"):
         oben = None

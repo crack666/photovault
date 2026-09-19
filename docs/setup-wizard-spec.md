@@ -106,16 +106,23 @@ Verbund (CPU-Profil für Leute, die nichts installieren wollen) ist v2.
 schreibt `GPU_VRAM_MB` in `.env`; kein `nvidia-smi` → 0. Der Wizard schlägt
 danach vor — die 5060 Ti gibt es mit 8 und mit 16 GB:
 
-| VRAM | Caption-Modell | Bemerkung |
-|---|---|---|
-| ≥ 24 GB | `qwen3.8:27b` (17 GB) | derselbe Stand wie hier |
-| 12–16 GB | kleinere Größe derselben Familie — Tag beim Bau gegen die Ollama-Bibliothek prüfen | 17 GB passen nicht in 16 |
-| 6–8 GB | 4B-Klasse mit Bild-Eingang | |
-| < 6 GB, keine GPU | CPU | eine Test-Caption stoppen, hochrechnen, ehrlich sagen — oder Cloud (E4) |
+Gemessen am 19.09.2026 gegen die Ollama-Bibliothek: `qwen3.8` gibt es **nur
+als 27B** (18 GB) — für 16 GB muss eine andere Familie her, und `gemma4` hat
+die Leiter mit Bild-Eingang. Tabelle in `api/routes/setup.py`
+(`RECOMMENDATIONS`), ein Test prüft, dass jede Stufe in ihr Band passt:
 
-Der Embedder ist **nicht** wählbar: `qwen3-embedding:4b` überall (2,5 GB,
-passt in 8 GB und läuft auf CPU). Die Textvektor-Größe der Collection hängt
-daran; ein anderes Embedding-Modell hieße eine andere Collection.
+| VRAM | Caption-Modell | Embedder | Bemerkung |
+|---|---|---|---|
+| ≥ 24 GB | `qwen3.8:27b` (18 GB) | `qwen3-embedding:4b` (2,5 GB) | derselbe Stand wie hier |
+| 12–23 GB | `gemma4:12b` (7,6 GB) | `qwen3-embedding:4b` | 18 GB passen nicht in 16 |
+| 8–11 GB | `gemma4:e4b-it-qat` (6,1 GB) | `qwen3-embedding:0.6b` (0,6 GB) | beide müssen nebeneinander passen |
+| < 8 GB, keine GPU | `gemma4:e2b-it-qat` (4,3 GB), CPU | `qwen3-embedding:0.6b` | Test-Caption stoppen, hochrechnen, ehrlich sagen — oder Cloud (E4) |
+
+Der Embedder ist nicht frei wählbar, nur die zwei Größen aus der Tabelle.
+Die Textvektor-Größe der Collection hängt daran: der Wizard **misst** sie per
+Probe-Aufruf (`POST /api/setup/llm/embed`, 4b → 2560, 0.6b → 1024) und legt
+die Collection damit an; gibt es sie schon mit einer anderen, wird nichts
+überschrieben, sondern gesagt.
 
 Der Wizard zieht das gewählte Modell über die API (`/api/pull` als Stream,
 Fortschritt im Browser — der Browser spricht nicht selbst mit Ollama, damit
@@ -156,14 +163,21 @@ GitHub Action → `ghcr.io/crack666/photovault:<tag>`; Compose auf `image:`,
 
 ## Was gebaut wird, in Reihenfolge
 
-**C — Backend (zuerst, alles andere baut darauf)**
+**C — Backend (zuerst, alles andere baut darauf)** — *gebaut 19.09.2026*
 - `ingest/settings.py`: laden, speichern, Vorrang wie E5; Schlüssel nie loggen.
-- Captioner/Embedder/Capabilities lesen Modell und Modus daraus.
-- `api/routes/setup.py`: `GET state`, `GET tree?path=`, `POST sources`,
-  `POST dry-run` (Job), `GET ollama/models`, `POST ollama/pull` (Stream),
-  `POST llm/test` (eine Caption, mit Dauer), `POST llm` (Modus/Modell speichern),
-  `POST done`.
-- Erstlauf: `setup.done == false` und keine Quellen → `/` leitet auf `/setup`.
+- Captioner, Embedder, Capabilities, Jobs und die Pipeline-Vorwärmung lesen
+  Modell und Modus zur Laufzeit (`caption_model()`, `embed_model()`,
+  `text_vector_size()`), nicht beim Import.
+- Ordnerbaum, Haken und Trockenlauf gab es schon (`/api/sources/browse`,
+  `/add`, `/toggle`, `/preview`); neu ist nur `PHOTOVAULT_BROWSE_ROOT`
+  (`/host` im Verbund) als Startpunkt und Grenze vor der ersten Quelle.
+- `api/routes/setup.py`: `GET state`, `POST llm`, `GET llm/models`,
+  `POST llm/pull` (NDJSON-Stream), `POST llm/test` (eine Caption mit Dauer
+  und Hochrechnung), `POST llm/embed` (Dimension messen und merken),
+  `POST step`, `POST done`.
+- Erstlauf: `setup.done == false` und keine aktive Quelle → `/` leitet auf
+  `/setup`, sobald `web/setup.html` existiert (B). Eine Installation mit
+  Quellen kommt dort nie vorbei.
 
 **B — Browser-Wizard `/setup`** — Quellen (Baum, Ausschlüsse, Zahlen aus dem
 Trockenlauf) → Einlesen als Job mit Fortschritt (vorhanden) → LLM (E2–E4) →

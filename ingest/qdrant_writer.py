@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from ingest.ollama_client import TEXT_VECTOR_SIZE
+from ingest.ollama_client import text_vector_size
 from ingest.spaces import space_of
 
 logger = logging.getLogger(__name__)
@@ -70,10 +70,10 @@ class QdrantWriter:
             vectors = getattr(info.config.params, "vectors", None) or {}
             text_cfg = vectors.get("text") if isinstance(vectors, dict) else None
             size = getattr(text_cfg, "size", None)
-            if size and size != TEXT_VECTOR_SIZE:
+            if size and size != text_vector_size():
                 raise RuntimeError(
                     f"Collection '{self.collection}' text vector size is {size}, "
-                    f"expected {TEXT_VECTOR_SIZE}. Recreate the collection."
+                    f"expected {text_vector_size()}. Recreate the collection."
                 )
             # Bestehende Collection: Indizes trotzdem nachziehen.
             #
@@ -94,7 +94,7 @@ class QdrantWriter:
             vectors_config={
                 "face": VectorParams(size=512, distance=Distance.COSINE),
                 "clip": VectorParams(size=768, distance=Distance.COSINE),
-                "text": VectorParams(size=TEXT_VECTOR_SIZE, distance=Distance.COSINE),
+                "text": VectorParams(size=text_vector_size(), distance=Distance.COSINE),
             },
         )
         self._ensure_photo_indexes()

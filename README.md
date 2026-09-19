@@ -92,11 +92,16 @@ funktioniert.
 | Alternative | `gemma4:26b` | ~18 GB | 1,3 s/Foto · kürzere Ergebnisse, Namensregeln ungeprüft |
 | Textvektor | `qwen3-embedding:4b` | ~4 GB | 20 ms je Foto im Stapel |
 
-Beide Vision-Modelle brauchen viel VRAM. Mit weniger als 16 GB wird es eng —
-dann lohnt ein kleineres Modell, das PhotoVault über
-`PHOTOVAULT_CAPTION_MODEL` akzeptiert. Getestet haben wir nur die beiden oben;
-die Prompt-Regeln gegen erfundene Namen sind auf `qwen3.8` abgestimmt und
-sollten mit einem anderen Modell an einer Stichprobe nachgeprüft werden.
+Beide Vision-Modelle brauchen viel VRAM. Mit weniger als 24 GB passt keines
+davon — `qwen3.8` gibt es nur als 27B. Der Setup-Wizard schlägt deshalb nach
+gemessenem Speicher vor (Stand der Ollama-Bibliothek 19.09.2026): ab 12 GB
+`gemma4:12b` (7,6 GB), ab 8 GB `gemma4:e4b-it-qat` (6,1 GB) mit dem kleinen
+Embedder `qwen3-embedding:0.6b`, darunter oder ohne Grafikkarte
+`gemma4:e2b-it-qat` (4,3 GB) auf dem Prozessor — mit einer Test-Caption und
+Stoppuhr, bevor ein Lauf über Tage startet. Getestet an diesem Archiv sind
+nur die beiden oben; die Prompt-Regeln gegen erfundene Namen sind auf
+`qwen3.8` abgestimmt und sollten mit einem anderen Modell an einer Stichprobe
+nachgeprüft werden.
 
 Modelle für Gesichter (insightface) und Szenen (CLIP) lädt PhotoVault beim
 ersten Lauf selbst, rund 1,5 GB.
@@ -685,6 +690,15 @@ sudo mkdir -p /mnt/photo && sudo mount -t drvfs '\\192.0.2.10\photo' /mnt/photo
 ```
 
 Env: `OLLAMA_URL`, `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
+
+**Einstellungen zur Laufzeit.** Was der Setup-Wizard festlegt — Modus
+(`ollama`, `openai`-kompatibler Anbieter, `off`), Adresse, Schlüssel,
+Modellnamen, gemessene Embedding-Dimension — steht in `data/settings.json`
+(`PHOTOVAULT_SETTINGS`), nicht im Repo. Vorrang ist **Umgebung > Datei >
+Vorgabe**: eine gesetzte Variable gewinnt immer, eine Installation mit `.env`
+oder `start-local` merkt von der Datei nichts. Ohne Pool spricht PhotoVault
+Ollama-Tags, mit `LITELLM_URL` die Pool-Aliasse `local`/`embedder`. Der
+Schlüssel wird nie zurückgegeben und nie protokolliert.
 
 ### Was einen Re-Ingest überlebt
 
