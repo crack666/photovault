@@ -38,7 +38,7 @@ from pydantic import BaseModel
 
 from api import capabilities as cap
 from api.qdrant_util import PHOTOS, client
-from ingest import settings
+from ingest import nas, settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -139,6 +139,7 @@ def state() -> dict:
         "photos_indexed": _index_count(),
         "sources": {"blocked": sources_ready(), "browse_root": browse_root() or None,
                     "photo_root": photo_root() or None},
+        "nas": nas.redacted(),
         "gpu": {"vram_mb": vram, "recommendation": recommend(vram)},
         "llm": llm,
     }
@@ -345,6 +346,45 @@ def probe_embedding(req: EmbedProbeRequest) -> dict:
             "Entweder das bisherige Modell behalten oder die Collection neu anlegen "
             "und die Text-Vektoren neu rechnen."),
     }
+
+
+# --------------------------------------------------------------------------
+# Netzwerkfreigaben
+# --------------------------------------------------------------------------
+
+class NasRequest(BaseModel):
+    unc: str                  #: \\server\freigabe[\unterordner]
+    user: str = ""
+    password: Optional[str] = None   # None: bestehendes Passwort behalten
+    name: str = ""
+
+
+@router.post("/nas")
+def add_nas(req: NasRequest) -> dict:
+    """Eine Freigabe eintragen. Eingebunden wird sie beim naechsten Neustart
+    des Containers -- im Wizard loest `start.bat` ihn aus (Schritt
+    `nas-added`), danach erscheint sie im Ordnerbaum unter /host/nas/<name>."""
+    password = req.password
+    if password is None:
+        try:
+            name = nas._NAME.sub("-", (req.name or nas.suggest_name(req.unc)).lower()).strip("-")
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        old = next((s for s in nas.shares() if s.get("name") == name), None)
+        password = (old or {}).get("password") or ""
+    try:
+        entry = nas.add_share(req.unc, req.user, password, req.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True, "share": nas.redacted([entry])[0], "fragment": str(nas.fragment_path()),
+            "note": "Eingebunden nach dem Neustart des Containers (start.bat erledigt das)."}
+
+
+@router.delete("/nas/{name}")
+def remove_nas(name: str) -> dict:
+    if not nas.remove_share(name):
+        raise HTTPException(404, f"Keine Freigabe namens {name}")
+    return {"ok": True, "removed": name}
 
 
 @router.post("/done")

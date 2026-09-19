@@ -150,6 +150,7 @@ def toggle_source(req: ToggleRequest) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     src.write(FILE, lines)
+    _nas_nachziehen()
     return {"ok": True, "line": req.line, "enabled": req.enabled}
 
 
@@ -161,6 +162,18 @@ NEW_FILE_HEAD = [
     "# ein '-' davor schliesst aus, ein '#' davor legt still.",
     "",
 ]
+
+
+def _nas_nachziehen() -> None:
+    """Freigaben: welche Unterordner beschreibbar gemountet werden, haengt an
+    den Quellen -- also nach jeder Aenderung die Volume-Datei neu schreiben."""
+    try:
+        from ingest import nas
+
+        if nas.shares():
+            nas.write_fragment(FILE)
+    except Exception as e:  # pragma: no cover - darf die Quellenliste nie blockieren
+        logger.warning("nas-volumes.yml nicht geschrieben: %s", e)
 
 
 def _read_or_new() -> src.SourcesFile:
@@ -183,6 +196,7 @@ def add_source(req: AddRequest) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     src.write(FILE, lines)
+    _nas_nachziehen()
     return {"ok": True, "path": p, "exclude": req.exclude}
 
 
@@ -211,6 +225,7 @@ def remove_source(req: RemoveRequest) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     src.write(FILE, lines)
+    _nas_nachziehen()
     return {
         "ok": True,
         "removed": treffer.path,

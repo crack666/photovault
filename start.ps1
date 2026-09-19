@@ -44,6 +44,9 @@ $EnvFile = Join-Path $Repo ".env"
 $DataDir = Join-Path $Repo "data"
 $SourcesFile = Join-Path $DataDir "sources.txt"
 $OverrideFile = Join-Path $Repo "docker-compose.override.yml"
+#: Netzwerkfreigaben als CIFS-Volumes -- schreibt der Server (ingest/nas.py),
+#: weil er Zugangsdaten und Quellen kennt. Hier nur in COMPOSE_FILE eintragen.
+$NasFile = Join-Path $DataDir "nas-volumes.yml"
 
 function Say($m) { Write-Host "  $m" }
 function Ok($m) { Write-Host "  * $m" }
@@ -364,8 +367,17 @@ if ($useGpu) {
 $port = if ($envMap["API_PORT"]) { [int]$envMap["API_PORT"] } else { 8000 }
 $url = "http://localhost:$port"
 
+function Set-ComposeFiles {
+    # Compose fuehrt beliebig viele Dateien zusammen; Trenner unter Windows ist ';'.
+    $files = @("docker-compose.yml", "docker-compose.override.yml")
+    if (Test-Path -LiteralPath $NasFile) { $files += "data/nas-volumes.yml" }
+    Set-EnvValue "COMPOSE_FILE" ($files -join ";")
+    Set-EnvValue "COMPOSE_PATH_SEPARATOR" ";"
+}
+
 # --- Laufwerke und gewaehlte Ordner -----------------------------------------
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+Set-ComposeFiles
 # Ollama darf die Karte auch mit aelterem Treiber nutzen; die API nur mit CUDA 13.
 $chosen = Write-Override ($vram -gt 0 -and $envMap["PHOTOVAULT_GPU"] -ne "0") $useGpu
 $drives = Get-FixedDrives
@@ -405,17 +417,31 @@ while (((Get-Date) - $t0).TotalMinutes -lt 120) {
     Start-Sleep -Seconds 3
     $step = Get-SetupStep $url
     if ($step -in @("sources-done", "done")) { break }
+    if ($step -eq "nas-added") {
+        # Eine Freigabe wurde eingetragen: die Volume-Datei des Servers
+        # aufnehmen und den Container neu erstellen. Die Seite setzt den
+        # Schritt danach zurueck; solange er steht, nicht noch einmal starten.
+        Ok "Freigabe einbinden ..."
+        Set-ComposeFiles
+        Compose up -d
+        Write-Host -NoNewline "  Warte, bis PhotoVault wieder da ist "
+        if (-not (Wait-Api $url 300 "")) { Bad "PhotoVault kommt nicht hoch. Protokoll: docker compose logs api"; exit 1 }
+        $t1 = Get-Date
+        while ((Get-SetupStep $url) -eq "nas-added" -and ((Get-Date) - $t1).TotalMinutes -lt 5) { Start-Sleep -Seconds 2 }
+    }
 }
 if ($step -notin @("sources-done", "done")) {
     Warn "Zwei Stunden ohne Ordnerwahl -- beim naechsten start.bat werden gewaehlte Ordner beschreibbar."
     exit 0
 }
 $chosen = Write-Override ($vram -gt 0 -and $envMap["PHOTOVAULT_GPU"] -ne "0") $useGpu
-if (-not $chosen.Count) {
-    Warn "Keine Ordner in data/sources.txt gefunden, die auf ein Laufwerk zeigen -- nichts einzubinden."
+Set-ComposeFiles
+if ($chosen.Count) { Ok ("Beschreibbar einbinden: " + (($chosen | ForEach-Object { $_.Host }) -join ", ")) }
+elseif (Test-Path -LiteralPath $NasFile) { Ok "Beschreibbar einbinden: gewaehlte Ordner auf Freigaben (data/nas-volumes.yml)" }
+else {
+    Warn "Keine Ordner in data/sources.txt gefunden, die auf ein Laufwerk oder eine Freigabe zeigen -- nichts einzubinden."
     exit 0
 }
-Ok ("Beschreibbar einbinden: " + (($chosen | ForEach-Object { $_.Host }) -join ", "))
 Compose up -d
 Write-Host -NoNewline "  Warte, bis PhotoVault wieder da ist "
 if (-not (Wait-Api $url 300 "")) {

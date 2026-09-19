@@ -257,9 +257,40 @@ GHCR öffentlich stellen. Bis dahin baut `start.bat` lokal — mit demselben
 Dockerfile, gemessen funktionsfähig. README „Der einfache Weg" ist auf den
 neuen Ablauf umgeschrieben; Feinschliff und Klemmliste nach dem Test.
 
-**v2, nicht jetzt:** Netzlaufwerke, Ordnerdialog als Rückfall. *(GPU für den
-Container und Ollama im Verbund waren als v2 geplant und sind auf Wunsch des
-Nutzers am 19.09.2026 in v1 gewandert — siehe E2 und E7.)*
+**v2, nicht jetzt:** Ordnerdialog als Rückfall. *(GPU für den Container,
+Ollama im Verbund und Netzwerkfreigaben waren als v2 geplant und sind am
+19.09.2026 in v1 gewandert — siehe E2, E7 und E8.)*
+
+### E8 — Netzwerkfreigaben als CIFS-Volumes
+
+*Nachgezogen 19.09.2026, Anlass: der erste Fremde.* Er hatte den alten
+`master` und die alte README; die alte `start.bat` versprach „ein
+Netzlaufwerk geht auch, wenn es im Explorer sichtbar ist" — und seine Fotos
+liegen auf einem NAS. Es ging nicht: Docker Desktop reicht gemappte
+Netzlaufwerke nicht als Bind-Mount durch. Was geht, **gemessen** gegen einen
+Samba-Container unter Docker Desktop (WSL2): ein Volume vom Typ `cifs` — die
+Docker-VM mountet die Freigabe selbst, ohne Laufwerksbuchstaben; die Freigabe
+lesend unter `/host/nas/<name>`, gewählte Unterordner am selben Pfad noch
+einmal beschreibbar (CIFS mountet Unterpfade; `touch` im Unterordner klappt,
+darüber „Read-only file system").
+
+Die Definitionen schreibt **der Server** (`ingest/nas.py` →
+`data/nas-volumes.yml`, 0600): er kennt Zugangsdaten (`settings.json`) und
+gewählte Ordner (`sources.txt`) und hat Python — die Skripte müssten sonst
+JSON in Batch parsen. Sie tragen die Datei nur in `COMPOSE_FILE` ein
+(Compose führt beliebig viele Dateien zusammen) und reagieren auf den
+Wizard-Schritt `nas-added` mit einem `up -d`; die Seite wartet auf den
+Neustart wie bei der Ordnerwahl und springt dann in den Baum der Freigabe.
+Volume-Namen hängen am Inhalt (Hash aus Adresse und Optionen): geänderte
+Zugangsdaten sind ein neues Volume, sonst behielte Docker das alte Passwort.
+Das Passwort steht in der Datei im Klartext — anders kennt der Kernel-Mount
+es nicht; die Seite sagt das nicht extra, die Datei selbst tut es.
+
+Im Browser geprüft (isolierte Instanz): Freigabe eintragen, Liste zeigt sie
+mit Status, Passwort nirgends im Zustand, Datei geschrieben. **Nicht**
+geprüft: der Neustart-Ablauf mit echtem NAS — das ist der Messpunkt beim
+Freund. macOS/Linux: eine gemountete Freigabe (`/Volumes`, `/mnt`) geht wie
+ein Ordner; CIFS-Volumes funktionieren dort ebenso, sind aber ungemessen.
 
 ### E7 — Die Karte auch für PhotoVault selbst, als Wahl
 
@@ -329,3 +360,9 @@ ist ein Fehler. Solange das Paket auf GHCR nicht öffentlich ist, sagt
 8. Optional: natives Ollama installieren, im Wizard „Eigenes Ollama auf
    diesem Rechner" → *Messen:* erreicht der Container es ohne
    `OLLAMA_HOST=0.0.0.0`? (Erwartung: nein; die Seite sagt es.)
+9. **NAS** (beim Freund): Freigabe eintragen (`\\nas\fotos`, Benutzer,
+   Passwort) → Konsole meldet „Freigabe einbinden", Neustart, Baum zeigt
+   `nas/<name>` mit den Ordnern. Ordner darunter als Quelle, „Weiter" →
+   zweiter Neustart, Papierkorb an einem Testfoto auf dem NAS. *Messen:*
+   Dauer, Fehlertext bei falschem Passwort (`docker compose logs api`),
+   Fotos/s über das Netz.

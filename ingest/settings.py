@@ -42,6 +42,8 @@ DEFAULTS: dict[str, Any] = {
         "embed_model": "qwen3-embedding:4b",
         "embed_dim": 2560,
     },
+    # Netzwerkfreigaben als CIFS-Volumes (ingest/nas.py): name, unc, user, password.
+    "nas": [],
 }
 
 MODES = ("ollama", "openai", "off")
@@ -139,6 +141,8 @@ def redacted(data: dict | None = None) -> dict:
     llm["key"] = ("•" * 8 + key[-4:]) if len(key) > 4 else ("•" * len(key))
     llm["has_key"] = bool(key)
     out["llm"] = llm
+    out["nas"] = [{**s, "password": "•" * 8 if s.get("password") else "",
+                   "has_password": bool(s.get("password"))} for s in (out.get("nas") or [])]
     return out
 
 

@@ -43,13 +43,33 @@
           <div class="crumbs" id="crumbs"></div>
           <div class="tree" id="tree">lädt …</div>
         </div>
-        <div class="chosen card">
-          <h3>Gewählt</h3>
-          <ul id="chosen"></ul>
-          <div class="actions">
-            <button type="button" class="plain" id="btn-preview">Zählen, was gefunden würde</button>
+        <div>
+          <div class="chosen card">
+            <h3>Gewählt</h3>
+            <ul id="chosen"></ul>
+            <div class="actions">
+              <button type="button" class="plain" id="btn-preview">Zählen, was gefunden würde</button>
+            </div>
+            <div class="preview" id="preview"></div>
           </div>
-          <div class="preview" id="preview"></div>
+          <div class="card" id="nas-card">
+            <h3>Fotos auf einem NAS?</h3>
+            <p class="msg">Freigabe eintragen — PhotoVault bindet sie selbst ein, ohne
+               Netzlaufwerk. Danach erscheint sie links im Baum unter <code>nas</code>.</p>
+            <ul id="nas-list" class="nas-list"></ul>
+            <div class="form">
+              <label for="nas-unc">Adresse</label>
+              <input id="nas-unc" placeholder="\\nas\fotos" />
+              <label for="nas-user">Benutzer</label>
+              <input id="nas-user" placeholder="wie am NAS" autocomplete="off" />
+              <label for="nas-pass">Passwort</label>
+              <input id="nas-pass" type="password" autocomplete="off" placeholder="wird nicht angezeigt" />
+            </div>
+            <div class="actions">
+              <button type="button" class="plain" id="nas-add">Freigabe einbinden</button>
+              <span class="hint" id="nas-status"></span>
+            </div>
+          </div>
         </div>
       </div>
       <p class="msg" id="msg-1"></p>
@@ -59,7 +79,7 @@
         <button type="button" class="primary" id="next-1" disabled>Weiter</button>
       </div>
       <div class="card warn" id="restart" hidden>
-        <h3>Einen Moment — die Ordner werden beschreibbar eingebunden.</h3>
+        <h3 id="restart-title">Einen Moment — die Ordner werden beschreibbar eingebunden.</h3>
         <p>PhotoVault startet dafür einmal neu. Das Fenster von <code>start.bat</code>
            erledigt das; hier geht es automatisch weiter.</p>
         <p class="msg" id="restart-msg">warte …</p>
@@ -442,25 +462,14 @@ $("chosen").addEventListener("click", (e) => {
 });
 $("btn-preview").addEventListener("click", preview);
 
-/* Nach der Ordnerwahl: im Verbund bindet start.bat die gewaehlten Ordner
-   beschreibbar ein und erstellt den Container neu. Die Seite erkennt den
-   neuen Prozess an `started_at` und macht dann weiter -- ohne dass jemand
-   die Konsole anfasst. */
-$("next-1").addEventListener("click", async () => {
-  $("next-1").disabled = true;
-  try {
-    await post("/api/setup/step", { step: "sources-done" });
-  } catch (e) {
-    setMsg("msg-1", `Konnte den Schritt nicht speichern: ${e.message}`, "err");
-    $("next-1").disabled = false;
-    return;
-  }
-  if (!S.state?.two_phase) {
-    await enterIngest();
-    return;
-  }
+/* Auf den Neustart warten, den start.bat ausloest -- die Seite erkennt den
+   neuen Prozess an `started_at`. Liefert true, wenn er kam. */
+async function waitForRestart(title) {
   const before = S.state.started_at;
+  $("restart-title").textContent = title;
   $("restart").hidden = false;
+  $("restart-actions").hidden = true;
+  $("restart-msg").textContent = "warte auf den Neustart …";
   const t0 = Date.now();
   let gone = false;
   while (Date.now() - t0 < 180_000) {
@@ -470,8 +479,7 @@ $("next-1").addEventListener("click", async () => {
       if (st.started_at !== before) {
         S.state = st;
         $("restart").hidden = true;
-        await enterIngest();
-        return;
+        return true;
       }
       $("restart-msg").textContent = gone ? "PhotoVault ist wieder da, prüft …" : "warte auf den Neustart …";
     } catch {
@@ -481,10 +489,84 @@ $("next-1").addEventListener("click", async () => {
   }
   $("restart-msg").textContent = "Das dauert länger als erwartet. Läuft das Fenster von start.bat noch?";
   $("restart-actions").hidden = false;
+  return false;
+}
+
+/* Nach der Ordnerwahl: im Verbund bindet start.bat die gewaehlten Ordner
+   beschreibbar ein und erstellt den Container neu -- ohne dass jemand die
+   Konsole anfasst. */
+$("next-1").addEventListener("click", async () => {
+  $("next-1").disabled = true;
+  try {
+    await post("/api/setup/step", { step: "sources-done" });
+  } catch (e) {
+    setMsg("msg-1", `Konnte den Schritt nicht speichern: ${e.message}`, "err");
+    $("next-1").disabled = false;
+    return;
+  }
+  if (!S.state?.two_phase) { await enterIngest(); return; }
+  if (await waitForRestart("Einen Moment — die Ordner werden beschreibbar eingebunden.")) await enterIngest();
 });
 $("restart-skip").addEventListener("click", async () => {
   $("restart").hidden = true;
   await enterIngest();
+});
+
+/* ---- NAS: Freigabe als CIFS-Volume ---------------------------------------
+   Docker Desktop reicht kein Netzlaufwerk durch; die Docker-VM mountet die
+   Freigabe selbst. Eintragen -> start.bat erstellt den Container neu -> die
+   Freigabe steht im Baum unter /host/nas/<name>. */
+function paintNas() {
+  const list = S.state?.nas || [];
+  $("nas-list").innerHTML = list.map((n) => `
+    <li>
+      <span class="path">${esc(n.unc)}</span>
+      <span class="kind${n.mounted ? "" : " ex"}">${n.mounted ? "eingebunden" : "noch nicht eingebunden"}</span>
+      <button type="button" class="x" data-nas="${esc(n.name)}" title="Entfernen">✕</button>
+    </li>`).join("");
+}
+$("nas-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-nas]");
+  if (!b) return;
+  try { await api(`/api/setup/nas/${encodeURIComponent(b.dataset.nas)}`, { method: "DELETE" }); }
+  catch (err) { setMsg("msg-1", err.message, "err"); return; }
+  await loadState(); paintNas();
+  setMsg("msg-1", "Entfernt. Ausgehängt wird sie beim nächsten Start von start.bat.");
+});
+$("nas-add").addEventListener("click", async () => {
+  const unc = $("nas-unc").value.trim(), user = $("nas-user").value.trim(), pass = $("nas-pass").value;
+  if (!unc) { setMsg("msg-1", "Adresse der Freigabe fehlt (\\\\server\\freigabe).", "err"); return; }
+  $("nas-add").disabled = true;
+  $("nas-status").textContent = "trägt ein …";
+  setMsg("msg-1", "");
+  let share;
+  try {
+    share = (await post("/api/setup/nas", { unc, user, password: pass })).share;
+    $("nas-pass").value = "";
+  } catch (err) {
+    setMsg("msg-1", `Nicht eingetragen: ${err.message}`, "err");
+    $("nas-add").disabled = false; $("nas-status").textContent = "";
+    return;
+  }
+  await loadState(); paintNas();
+  if (!S.state.two_phase) {
+    setMsg("msg-1", "Eingetragen. Eingebunden wird die Freigabe beim nächsten Start.");
+    $("nas-add").disabled = false; $("nas-status").textContent = "";
+    return;
+  }
+  try { await post("/api/setup/step", { step: "nas-added" }); } catch {}
+  const ok = await waitForRestart("Einen Moment — die Freigabe wird eingebunden.");
+  try { await post("/api/setup/step", { step: "sources" }); } catch {}
+  $("nas-add").disabled = false; $("nas-status").textContent = "";
+  await loadState(); paintNas();
+  const eintrag = (S.state.nas || []).find((n) => n.name === share.name);
+  if (ok && eintrag?.mounted) {
+    setMsg("msg-1", "Freigabe eingebunden — links im Baum unter nas.", "ok");
+    await browse(eintrag.mount);
+  } else if (ok) {
+    setMsg("msg-1", "PhotoVault ist neu gestartet, aber die Freigabe ist leer oder nicht erreichbar — "
+      + "Adresse, Benutzer und Passwort prüfen (Fenster von start.bat: docker compose logs api).", "err");
+  }
 });
 
 /* ---- 2: Einlesen -------------------------------------------------------- */
@@ -923,6 +1005,7 @@ async function enterDone() {
     return;
   }
   await loadSources();
+  paintNas();
   await browse("");
 })();
 </script>

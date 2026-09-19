@@ -30,6 +30,9 @@ ENV_FILE="$REPO/.env"
 DATA_DIR="$REPO/data"
 SOURCES_FILE="$DATA_DIR/sources.txt"
 OVERRIDE_FILE="$REPO/docker-compose.override.yml"
+# Netzwerkfreigaben als CIFS-Volumes -- schreibt der Server (ingest/nas.py).
+# Hier nur in COMPOSE_FILE eintragen, wenn es die Datei gibt.
+NAS_FILE="$DATA_DIR/nas-volumes.yml"
 
 say()  { echo "  $*"; }
 ok()   { echo "  * $*"; }
@@ -257,8 +260,15 @@ fi
 port="$(grep '^API_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2)"; port="${port:-8000}"
 url="http://localhost:$port"
 
+set_compose_files() {
+    local files="docker-compose.yml:docker-compose.override.yml"
+    [ -f "$NAS_FILE" ] && files="$files:data/nas-volumes.yml"
+    set_env COMPOSE_FILE "$files"
+}
+
 # --- 3. Orte und gewaehlte Ordner --------------------------------------------
 mkdir -p "$DATA_DIR"
+set_compose_files
 write_override "$gpu" "$api_gpu"
 ok "Lesend eingebunden: $(photo_roots | tr '\n' ' ')"
 chosen="$(chosen_paths "$SOURCES_FILE" | tr '\n' ' ')"
@@ -306,19 +316,33 @@ t0=$(date +%s)
 while [ $(( $(date +%s) - t0 )) -lt 7200 ]; do
     sleep 3
     step="$(setup_step)"
-    case "$step" in sources-done|done) break ;; esac
+    case "$step" in
+        sources-done|done) break ;;
+        nas-added)
+            # Freigabe eingetragen: Volume-Datei des Servers aufnehmen, Container neu.
+            ok "Freigabe einbinden ..."
+            set_compose_files
+            compose up -d
+            printf "  Warte, bis PhotoVault wieder da ist "
+            wait_api 300 "" || { bad "PhotoVault kommt nicht hoch. Protokoll: docker compose logs api"; exit 1; }
+            t1=$(date +%s)
+            while [ "$(setup_step)" = "nas-added" ] && [ $(( $(date +%s) - t1 )) -lt 300 ]; do sleep 2; done
+            ;;
+    esac
 done
 case "$step" in
     sources-done|done) ;;
     *) warn "Zwei Stunden ohne Ordnerwahl -- beim naechsten Start werden gewaehlte Ordner beschreibbar."; exit 0 ;;
 esac
 write_override "$gpu" "$api_gpu"
+set_compose_files
 chosen="$(chosen_paths "$SOURCES_FILE" | tr '\n' ' ')"
-if [ -z "$chosen" ]; then
+if [ -n "$chosen" ]; then ok "Beschreibbar einbinden: $chosen"
+elif [ -f "$NAS_FILE" ]; then ok "Beschreibbar einbinden: gewaehlte Ordner auf Freigaben (data/nas-volumes.yml)"
+else
     warn "Keine Ordner in data/sources.txt gefunden, die unter /host liegen -- nichts einzubinden."
     exit 0
 fi
-ok "Beschreibbar einbinden: $chosen"
 compose up -d
 printf "  Warte, bis PhotoVault wieder da ist "
 wait_api 300 "" || { bad "PhotoVault kommt nach dem Neustart nicht hoch. Protokoll: docker compose logs api"; exit 1; }

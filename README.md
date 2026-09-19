@@ -164,6 +164,13 @@ den Container einmal neu — nur dort darf PhotoVault Dateien anfassen
 das ab. Ordner, die später dazukommen, werden beim nächsten Start
 beschreibbar; einlesen geht sofort.
 
+**Fotos auf einem NAS?** Kein Netzlaufwerk nötig — Docker Desktop könnte es
+ohnehin nicht durchreichen. Im Wizard die Freigabe eintragen
+(`\\nas\fotos`, Benutzer, Passwort); PhotoVault bindet sie selbst als
+CIFS-Volume ein und zeigt sie im Baum unter `nas`. Die Zugangsdaten liegen in
+`data/settings.json` und `data/nas-volumes.yml` (beides nicht im Git, nur für
+dich lesbar) — im Klartext, anders kennt der Mount sie nicht.
+
 Beim nächsten Mal genügt derselbe Doppelklick.
 
 Läuft PhotoVault hier schon **ohne** den Docker-Verbund (venv unter

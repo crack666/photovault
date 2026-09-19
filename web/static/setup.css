@@ -122,6 +122,17 @@ button.link:hover { color: var(--text); }
 .chosen .x:hover { color: var(--danger); }
 .chosen .empty { color: var(--muted); font-size: .84rem; }
 
+.nas-list { list-style: none; margin: 0 0 .6rem; padding: 0; }
+.nas-list li {
+  display: flex; align-items: baseline; gap: 8px; padding: 4px 0;
+  border-bottom: 1px solid var(--line); font-size: .84rem;
+}
+.nas-list .path { flex: 1 1 auto; min-width: 0; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.nas-list .kind { color: #7fc79a; font-size: .74rem; white-space: nowrap; }
+.nas-list .kind.ex { color: #e0b46a; }
+.nas-list .x { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0 .2rem; }
+.nas-list .x:hover { color: var(--danger); }
+
 .preview table { border-collapse: collapse; font-size: .84rem; width: 100%; }
 .preview td, .preview th { padding: 3px 6px; text-align: left; }
 .preview td.n, .preview th.n { text-align: right; font-variant-numeric: tabular-nums; }
