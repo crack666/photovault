@@ -238,32 +238,68 @@ darunter), damit Quellen und Einstellungen den Neubau des Containers
 überleben und das Skript sie lesen kann. Dazu `.dockerignore` — vorher
 wanderten `.env`, `data/` und `logs/` ins Image.
 
-**D — Image und Doku** — Action, Compose, README „Der einfache Weg" nach dem
-Test neu, Windows-Klemmliste.
+**D — Image und Doku** — *Image gebaut 19.09.2026.* Gemessen in einem
+frischen `python:3.11-slim`: `insightface` kommt als Quellpaket und
+kompiliert eine Cython-Erweiterung — ohne `g++` bricht der Bau ab. Das alte
+Dockerfile hätte auf jeder fremden Maschine an dieser Stelle versagt; dazu
+zog `pip install torch` die CUDA-Fassung (~3 GB) für einen Container ohne
+GPU, und `ffmpeg`/`onnxruntime` fehlten. Jetzt zweistufig: Baustufe mit
+Compiler, Image ohne; torch **und** torchvision aus dem CPU-Index (getrennt
+installiert passten sie nicht zueinander — „operator torchvision::nms does
+not exist"), `onnxruntime`, `ffmpeg`, `[atlas]`, Healthcheck; das Projekt
+wird nicht als Paket installiert (setuptools verweigert das Flat-Layout mit
+`api`, `ingest`, `web`), es läuft aus `/app`. Rauchtest im fertigen Image:
+alle Importe, torch 2.14+cpu, onnxruntime 1.30, ffmpeg 7.1; 3,4 GB
+entpackt, davon 773 MB torch. `.github/workflows/image.yml` baut amd64 und
+arm64 nativ, macht denselben Rauchtest vor dem Push und schiebt nach
+`ghcr.io/crack666/photovault:latest`. Einmalig vom Besitzer: das Paket auf
+GHCR öffentlich stellen. Bis dahin baut `start.bat` lokal — mit demselben
+Dockerfile, gemessen funktionsfähig. README „Der einfache Weg" ist auf den
+neuen Ablauf umgeschrieben; Feinschliff und Klemmliste nach dem Test.
 
 **v2, nicht jetzt:** GPU-Overlay für den Container (CLIP/Gesichter), Ollama-
 Profil im Verbund, Netzlaufwerke, Ordnerdialog als Rückfall.
 
 ## Testliste Ryzen-Maschine (Windows 11, APU, keine NVIDIA)
 
-Genau so, wie der Freund es täte: ZIP von `master` (nicht `git clone`),
-Docker Desktop frisch, ein *kopierter* Ordner mit einigen hundert Fotos.
-Nicht eingreifen, mitschreiben.
+Genau so, wie der Freund es täte: ZIP des Branches (bis zum Merge
+`archive/refs/heads/setup-wizard.zip`, danach `master`), nicht `git clone`;
+Docker Desktop frisch; ein *kopierter* Ordner mit einigen hundert Fotos.
+Nicht eingreifen, mitschreiben — jede Stelle, an der man eingreifen wollte,
+ist ein Fehler. Solange das Paket auf GHCR nicht öffentlich ist, sagt
+`start.bat` „kein fertiges Image erreichbar — baue selbst" und baut lokal
+(gemessen 19.09.2026 auf der Entwicklungsmaschine: das geht, siehe D).
 
-1. Docker Desktop installieren → Neustart → Wal ruhig. *Messen:* Meldung bei
-   Virtualisierung aus? WSL2-Nachfrage?
-2. ZIP entpacken, `start.bat`. *Messen:* Zeit bis `:8000`; kommt der falsche
-   Alarm nach 2 Minuten, weil Gewichte laden?
-3. Browser öffnet `/setup`. Ordner anhaken, Ausschlüsse, Trockenlauf-Zahlen
-   stimmen mit dem Explorer überein?
-   3a. Nach der Ordnerwahl: Konsole meldet den Neustart, Wizard läuft weiter.
-   *Messen:* ist `/host/d/Fotos` danach beschreibbar (Papierkorb an einem
-   Testfoto), der Rest von `D:/` weiterhin nicht? Dauer des Neustarts.
+1. Docker Desktop installieren → Neustart → Wal ruhig. *Messen:* Was sagt
+   `start.bat`, wenn Docker noch nicht läuft? Bei Virtualisierung aus im BIOS
+   (einmal absichtlich ausschalten, falls das Board es zulässt): kommt der
+   gemessene Satz „Virtualisierung ist im BIOS AUS"?
+2. ZIP entpacken, `start.bat`. *Messen:* Zeit bis „Läuft"; Zeit des lokalen
+   Baus; kommt der Hinweis auf die Modell-Downloads; öffnet der Browser
+   `/setup`; steht in der `.env` `GPU_VRAM_MB=0` und `COMPOSE_PROFILES=ollama`;
+   listet die Override alle festen Laufwerke lesend?
+3. Browser: Ordner anhaken (auch einen auf einem zweiten Laufwerk, falls es
+   eines gibt), einen Unterordner ausschließen, „Zählen". *Messen:* Stimmen
+   die Zahlen mit dem Explorer überein? Dauer des Zählens.
+   3a. „Weiter": das Konsolenfenster meldet „Beschreibbar einbinden", der
+   Container wird neu erstellt, die Seite geht von allein zu Schritt 2.
+   *Messen:* Dauer; danach ist `/host/d/…/<Quelle>` beschreibbar (Papierkorb
+   an einem Testfoto leeren, Datei ist weg), der Rest von `D:/` nicht
+   (Jobs-Seite → Ordner außerhalb der Quelle als Quelle hinzufügen und dort
+   ein Foto löschen → muss scheitern). **Das ist der Messpunkt für
+   verschachtelte ro/rw-Mounts unter Docker Desktop.**
 4. Einlesen: Fortschritt sichtbar, Abbruch und Fortsetzen funktionieren.
-   *Messen:* Fotos/s auf dieser CPU (README nennt 1,6–2,6).
-5. Ollama fehlt → Wizard erklärt, „später" führt zu einer benutzbaren
-   Oberfläche. Dann Ollama installieren, Wizard erneut: erkennt es, schlägt
-   CPU-Modell vor, zieht es mit Fortschritt, Test-Caption mit Dauer und
-   Hochrechnung. *Messen:* Sekunden je Caption auf CPU.
+   *Messen:* Fotos/s auf dieser CPU (README nennt 1,6–2,6); wie lange die
+   Modell-Downloads beim ersten Mal dauern.
+5. Beschreibungen: Ollama-Karte zeigt die vorbelegte Adresse
+   (`http://ollama:11434`), „Verbinden" findet das mitgelieferte Ollama;
+   Empfehlung ist das CPU-Modell (`gemma4:e2b-it-qat`, Embedder 0.6b); Pull
+   zeigt Balken; Probe nennt die Dimension (1 024); Test-Caption mit Dauer
+   und Hochrechnung. *Messen:* Sekunden je Caption auf CPU, Pull-Dauer, ist
+   der Hochrechnungs-Satz ehrlich? Danach „Später" oder „jetzt starten".
 6. „Wer ist das?" — erstes Gesicht benennen. Fertig.
-7. Rechner neu starten, `start.bat` erneut: läuft ohne Fragen, Index da.
+7. Rechner neu starten, `start.bat` erneut: läuft ohne Fragen, Index da,
+   Fenster sagt „Eingerichtet" und geht zu.
+8. Optional: natives Ollama installieren, im Wizard „Eigenes Ollama auf
+   diesem Rechner" → *Messen:* erreicht der Container es ohne
+   `OLLAMA_HOST=0.0.0.0`? (Erwartung: nein; die Seite sagt es.)

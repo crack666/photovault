@@ -1,0 +1,135 @@
+# Das fertige Image: einmal hier gebaut und geprueft, statt auf jeder
+# fremden Maschine. Der Bau auf der Maschine des Nutzers war der fragilste
+# Schritt der ganzen Kette -- und mit dem alten Dockerfile schlug er sicher
+# fehl (insightface kompiliert, python:3.11-slim hat keinen Compiler).
+#
+# Zwei Architekturen, jede nativ gebaut (GitHub stellt oeffentlichen Repos
+# arm64-Runner bereit; QEMU-Emulation fuer torch und insightface waere eine
+# Stunde und Glueckssache), dann zu einem Manifest zusammengefuehrt.
+# Vor dem Push importiert ein Rauchtest im frischen Image alles, was die
+# Pipeline braucht -- ein Image, das erst beim Nutzer "ModuleNotFoundError"
+# sagt, hilft niemandem.
+#
+# Damit `docker compose pull` ohne Anmeldung geht, muss das Paket auf GHCR
+# einmal auf "public" gestellt werden (Repo -> Packages -> photovault ->
+# Package settings). Das kann nur der Besitzer.
+name: image
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    paths: [Dockerfile, pyproject.toml, .dockerignore, .github/workflows/image.yml]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/photovault
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Bauen (lokal, fuer den Rauchtest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: photovault:smoke
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Rauchtest im frischen Image
+        run: |
+          docker run --rm photovault:smoke python -c "
+          import insightface, open_clip, onnxruntime, umap, sklearn, torch, fastapi
+          import api.main, ingest.pipeline, ingest.settings
+          print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
+          "
+          docker run --rm photovault:smoke ffmpeg -version | head -1
+
+      - name: Anmelden bei GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bauen und nach Digest schieben
+        if: github.event_name != 'pull_request'
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+
+      - name: Digest merken
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.push.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags bestimmen
+        id: tags
+        run: |
+          tags="-t $IMAGE:latest -t $IMAGE:sha-${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tags="$tags -t $IMAGE:${GITHUB_REF#refs/tags/}"; fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - name: Manifest aus beiden Digests
+        run: |
+          refs=""
+          for f in /tmp/digests/*; do refs="$refs $IMAGE@$(cat "$f")"; done
+          docker buildx imagetools create ${{ steps.tags.outputs.tags }} $refs
+          docker buildx imagetools inspect "$IMAGE:latest"
