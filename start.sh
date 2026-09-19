@@ -1,10 +1,134 @@
 #!/usr/bin/env bash
-# PhotoVault starten -- fuer Linux und macOS.
-# Windows: start.bat doppelklicken.
+# PhotoVault starten -- Linux und macOS. Windows: start.bat doppelklicken.
+#
+#   ./start.sh            starten; beim ersten Mal der Einrichtungsassistent
+#   ./start.sh stop       Verbund anhalten (Index und Einstellungen bleiben)
+#   ./start.sh status
+#   ./start.sh restart
+#   ./start.sh setup      Assistent erzwingen, auch wo eine lokale Installation liegt
+#
+# Was das Skript tut, und warum (die Windows-Fassung start.ps1 tut dasselbe):
+#
+# 1. Docker pruefen und im Klartext sagen, was fehlt.
+# 2. .env anlegen: freie Ports, Ollama aus dem Buendel, gemessener Grafikspeicher.
+# 3. docker-compose.override.yml erzeugen: die Orte, an denen Fotos liegen
+#    koennen (macOS /Users und /Volumes; Linux $HOME, /media, /mnt, /run/media),
+#    *lesend* unter /host/...; die gewaehlten Fotoordner (data/sources.txt)
+#    zusaetzlich *beschreibbar* am selben Pfad. Nur dort darf PhotoVault
+#    schreiben -- Papierkorb, Verschieben, exif_repair --, und nirgends sonst.
+# 4. Verbund hochfahren, Browser auf die Einrichtung.
+# 5. Zweite Phase: sobald im Browser die Ordner gewaehlt sind, die Override
+#    mit den beschreibbaren Mounts neu schreiben und den Container neu
+#    erstellen. Der Nutzer tippt dafuer nichts; die Seite wartet.
+#
+# ZIP von GitHub: das Ausfuehrbar-Bit fehlt dann -- `bash start.sh` geht immer.
 set -u
 
 cd "$(dirname "$0")" || exit 1
+REPO="$(pwd)"
+ENV_FILE="$REPO/.env"
+DATA_DIR="$REPO/data"
+SOURCES_FILE="$DATA_DIR/sources.txt"
+OVERRIDE_FILE="$REPO/docker-compose.override.yml"
 
+say()  { echo "  $*"; }
+ok()   { echo "  * $*"; }
+warn() { echo "  ! $*"; }
+bad()  { echo "  x $*"; }
+
+# --- Orte, an denen Fotos liegen koennen -----------------------------------
+
+photo_roots() {
+    # Nur, was es gibt. Ganz `/` einzubinden waere die Wahl zwischen /etc und /proc.
+    local r
+    case "$(uname -s)" in
+        Darwin) for r in /Users /Volumes; do [ -d "$r" ] && echo "$r"; done ;;
+        *)      for r in "${HOME}" /media /mnt /run/media; do [ -d "$r" ] && echo "$r"; done ;;
+    esac
+}
+
+has_nvidia() { command -v nvidia-smi >/dev/null 2>&1; }
+
+vram_mb() {
+    has_nvidia || { echo 0; return; }
+    local n
+    n="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')"
+    case "$n" in ''|*[!0-9]*) echo 0 ;; *) echo "$n" ;; esac
+}
+
+# Aktive Quellen aus data/sources.txt als Host-Pfade: /host/home/x/Bilder -> /home/x/Bilder.
+# Ausschluesse (fuehrendes -) und stillgelegte Zeilen (#) zaehlen nicht.
+chosen_paths() {
+    local file="$1" line p
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%%#*}"
+        line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        [ -z "$line" ] && continue
+        case "$line" in
+            -*) continue ;;
+            /host/*) p="${line#/host}"; p="${p%/}"; [ -n "$p" ] && echo "$p" ;;
+        esac
+    done < "$file"
+}
+
+# Override-Text: Wurzeln lesend, gewaehlte Ordner beschreibbar, GPU wenn gemessen.
+#   emit_override <sources-datei> <gpu 0|1> <wurzel...>
+emit_override() {
+    local sources="$1" gpu="$2"; shift 2
+    local roots=("$@") r p inside
+    echo "# Von start.sh erzeugt -- bei jedem Start neu. Nicht von Hand aendern."
+    echo "# Orte lesend unter /host/...; die gewaehlten Fotoordner aus data/sources.txt"
+    echo "# zusaetzlich beschreibbar am selben Pfad."
+    echo "services:"
+    if [ "$gpu" = "1" ]; then
+        echo "  ollama:"
+        echo "    deploy:"
+        echo "      resources:"
+        echo "        reservations:"
+        echo "          devices:"
+        echo "            - driver: nvidia"
+        echo "              count: all"
+        echo "              capabilities: [gpu]"
+    fi
+    echo "  api:"
+    echo "    volumes:"
+    for r in "${roots[@]}"; do
+        echo "      - type: bind"
+        echo "        source: \"$r\""
+        echo "        target: /host$r"
+        echo "        read_only: true"
+    done
+    while IFS= read -r p; do
+        [ -z "$p" ] && continue
+        inside=0
+        for r in "${roots[@]}"; do
+            case "$p" in "$r"/*) inside=1 ;; esac
+        done
+        # Ausserhalb der eingebundenen Orte, oder ein Ort selbst: nicht beschreibbar.
+        [ "$inside" = "1" ] || continue
+        [ -d "$p" ] || continue
+        echo "      - type: bind"
+        echo "        source: \"$p\""
+        echo "        target: /host$p"
+    done < <(chosen_paths "$sources")
+}
+
+write_override() {
+    local gpu="$1" roots
+    mapfile -t roots < <(photo_roots)
+    emit_override "$SOURCES_FILE" "$gpu" "${roots[@]}" > "$OVERRIDE_FILE"
+}
+
+# --- Testmodus --------------------------------------------------------------
+if [ "${1:-}" = "--emit-override" ]; then
+    # ./start.sh --emit-override <sources> <gpu 0|1> <wurzel...>
+    shift
+    emit_override "$@"
+    exit 0
+fi
+
+# --- Lokale Installation? (Entwicklungsmaschine) ---------------------------
 force_setup=0
 case "${1:-}" in
     setup|--docker) force_setup=1; shift ;;
@@ -13,141 +137,146 @@ esac
 is_local() {
     [ -x "${HOME}/.venvs/photovault/bin/python" ] && return 0
     local f
-    for f in \
-        "${HOME}/.config/photovault/runtime" \
-        "/mnt/c/Users/${USER}/.config/photovault/runtime"
-    do
+    for f in "${HOME}/.config/photovault/runtime" "/mnt/c/Users/${USER}/.config/photovault/runtime"; do
         [ -f "${f}" ] || continue
         grep -q '^RUNTIME=local' "${f}" && return 0
     done
     return 1
 }
 
-# Lokale Installation: nicht den Docker-Wizard daneben hochziehen.
-# Der Index hier zeigt auf /mnt/photo, nicht auf /photos im Container.
 if [ "${force_setup}" -eq 0 ] && [ -f ./start-local.sh ] && is_local; then
-    exec ./start-local.sh "$@"
+    exec bash ./start-local.sh "$@"
 fi
 
-case "${1:-}" in
-    stop)
-        docker compose down
-        exit $?
-        ;;
-    status)
-        docker compose ps
-        exit $?
-        ;;
-esac
+ACTION="${1:-start}"
+compose() { docker compose "$@"; }
 
 echo
 echo "  PhotoVault"
 echo "  =========="
 echo
 
-# --- 1. Laeuft Docker? -------------------------------------------------------
+case "$ACTION" in
+    stop)   compose down; exit $? ;;
+    status) compose ps; exit $? ;;
+    start|restart) ;;
+    *) bad "Unbekannt: $ACTION (start, stop, status, restart, setup)"; exit 2 ;;
+esac
+
+# --- 1. Docker --------------------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+    bad "Docker ist nicht installiert."
+    say "macOS: Docker Desktop -- https://www.docker.com/products/docker-desktop/"
+    say "Linux: https://docs.docker.com/engine/install/  (dazu: docker compose)"
+    exit 1
+fi
 if ! docker version >/dev/null 2>&1; then
-    echo "  Docker laeuft nicht."
-    echo
-    echo "  macOS:  Docker Desktop starten und warten, bis das Symbol oben"
-    echo "          in der Menueleiste ruhig steht."
-    echo "  Linux:  sudo systemctl start docker"
-    echo
-    echo "  Noch nicht installiert? https://www.docker.com/products/docker-desktop/"
-    echo
+    bad "Docker laeuft nicht."
+    say "macOS:  Docker Desktop starten und warten, bis das Symbol oben ruhig steht."
+    say "Linux:  sudo systemctl start docker  -- und der Nutzer in der Gruppe docker."
     exit 1
 fi
 
-# --- 2. Wo liegen die Fotos? -------------------------------------------------
-if [ ! -f .env ]; then
-    echo "  Beim ersten Start: Wo liegen deine Fotos?"
-    echo
-    echo "  Beispiel:  /home/$(whoami)/Bilder   oder   /Volumes/NAS/Fotos"
-    echo
-    read -rp "   Ordner: " PHOTODIR
-    if [ -z "${PHOTODIR}" ]; then
-        echo; echo "  Kein Ordner angegeben. Abbruch."; exit 1
-    fi
-    if [ ! -d "${PHOTODIR}" ]; then
-        echo; echo "  Diesen Ordner gibt es nicht: ${PHOTODIR}"; exit 1
-    fi
+# --- 2. .env ----------------------------------------------------------------
+port_free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+free_port() { local p="$1"; while ! port_free "$p"; do p=$((p + 1)); done; echo "$p"; }
+
+if [ ! -f "$ENV_FILE" ]; then
+    api="$(free_port 8000)"; qd="$(free_port 6333)"; ol="$(free_port 11434)"
     {
-        echo "PHOTO_DIR=${PHOTODIR}"
-        echo "API_PORT=8000"
-        echo "QDRANT_PORT=6333"
-        echo "OLLAMA_URL=http://host.docker.internal:11434"
-    } > .env
+        echo "# Von start.sh angelegt. Ports frei gewaehlt; Fotoordner stehen in data/sources.txt."
+        echo "API_PORT=$api"
+        echo "QDRANT_PORT=$qd"
+        echo "OLLAMA_PORT=$ol"
+        echo "# Ollama aus dem Buendel. Eigenes Ollama? Zeile leeren (COMPOSE_PROFILES=) und"
+        echo "# im Wizard die Adresse eintragen, z.B. http://host.docker.internal:11434."
+        echo "COMPOSE_PROFILES=ollama"
+        echo "GPU_VRAM_MB=0"
+    } > "$ENV_FILE"
+    [ "$api" != 8000 ] || [ "$qd" != 6333 ] && warn "Port 8000 oder 6333 war belegt -- PhotoVault nimmt $api / $qd."
+    [ "$ol" != 11434 ] && say "Port 11434 ist belegt -- laeuft hier schon ein Ollama? Das Buendel nimmt $ol; im Wizard laesst sich auch das eigene eintragen."
+fi
+vram="$(vram_mb)"
+if grep -q '^GPU_VRAM_MB=' "$ENV_FILE"; then
+    sed -i.bak "s/^GPU_VRAM_MB=.*/GPU_VRAM_MB=$vram/" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+else
+    echo "GPU_VRAM_MB=$vram" >> "$ENV_FILE"
+fi
+if [ "$vram" -gt 0 ]; then
+    ok "Grafikkarte: $((vram / 1024)) GB Speicher"
+    [ "$(uname -s)" = "Linux" ] && say "Fuer die GPU im Container braucht Docker das NVIDIA Container Toolkit."
+else
+    say "Keine NVIDIA-Grafikkarte gefunden -- Beschreibungen liefe der Prozessor."
+    [ "$(uname -s)" = "Darwin" ] && say "macOS: ein natives Ollama (ollama.com) nutzt die GPU; im Wizard die Adresse http://host.docker.internal:11434 eintragen."
+fi
+gpu=0; [ "$vram" -gt 0 ] && [ "$(uname -s)" = "Linux" ] && gpu=1
+port="$(grep '^API_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2)"; port="${port:-8000}"
+url="http://localhost:$port"
+
+# --- 3. Orte und gewaehlte Ordner --------------------------------------------
+mkdir -p "$DATA_DIR"
+write_override "$gpu"
+ok "Lesend eingebunden: $(photo_roots | tr '\n' ' ')"
+chosen="$(chosen_paths "$SOURCES_FILE" | tr '\n' ' ')"
+[ -n "$chosen" ] && ok "Beschreibbar: $chosen"
+
+# --- 4. Hochfahren ----------------------------------------------------------
+[ "$ACTION" = "restart" ] && compose down
+say "Hole das fertige Image (falls vorhanden) ..."
+compose pull api >/dev/null 2>&1 || say "Kein fertiges Image erreichbar -- baue selbst. Beim ersten Mal einige Minuten."
+say "Starte ..."
+compose up -d || { bad "Start fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1; }
+
+wait_api() {
+    local seconds="$1" note="$2" t0 shown=0
+    t0=$(date +%s)
+    while [ $(( $(date +%s) - t0 )) -lt "$seconds" ]; do
+        if curl -sf -m 3 -o /dev/null "$url/api/health"; then echo; return 0; fi
+        if [ "$shown" = 0 ] && [ -n "$note" ] && [ $(( $(date +%s) - t0 )) -gt 25 ]; then echo; say "$note"; shown=1; fi
+        printf "."
+        sleep 2
+    done
     echo
-    echo "  Gemerkt in .env -- beim naechsten Mal geht es ohne Nachfrage."
-fi
+    return 1
+}
+setup_step() {
+    curl -sf -m 5 "$url/api/setup/state" 2>/dev/null | grep -o '"step":"[^"]*"' | head -1 | cut -d'"' -f4
+}
 
-# --- 3. Was soll eingelesen werden? ------------------------------------------
-if [ ! -f sources.txt ]; then
-    cat > sources.txt <<'EOF'
-# Welche Verzeichnisse eingelesen werden.
-# /photos ist dein Fotoordner, so wie er im Container heisst.
-# Zeilen mit '#' am Anfang zaehlen nicht mit.
-/photos
-
-# Was draussen bleibt -- Bildschirmfotos und Heruntergeladenes gehoeren
-# nicht in eine Foto-Sammlung:
--/photos/Screenshots
--/photos/Download
-EOF
-fi
-
-# --- 4. Starten --------------------------------------------------------------
-echo
-echo "  Starte ... (beim ersten Mal dauert das einige Minuten,"
-echo "  es werden rund 2 GB heruntergeladen)"
-echo
-docker compose up -d --build || { echo; echo "  Start fehlgeschlagen."; exit 1; }
-
-echo
 printf "  Warte, bis PhotoVault bereit ist "
-for _ in $(seq 1 60); do
-    if curl -sf -m 2 -o /dev/null http://localhost:8000/; then
-        echo " ok"
-        break
-    fi
-    printf "."
-    sleep 2
-done
-echo
-echo "  Laeuft: http://localhost:8000"
-command -v xdg-open >/dev/null && xdg-open http://localhost:8000 >/dev/null 2>&1
-command -v open >/dev/null && open http://localhost:8000 >/dev/null 2>&1
+wait_api 900 "Beim ersten Mal laedt PhotoVault rund 1,5 GB Modelle -- das dauert." \
+    || { bad "PhotoVault antwortet nicht auf $url. Protokoll: docker compose logs api"; exit 1; }
+ok "Laeuft: $url"
+command -v xdg-open >/dev/null && xdg-open "$url" >/dev/null 2>&1
+command -v open >/dev/null && open "$url" >/dev/null 2>&1
 
-# --- 5. Fotos einlesen -------------------------------------------------------
+# --- 5. Zweite Phase: nach der Ordnerwahl beschreibbar einbinden -----------
+step="$(setup_step)"
+case "$step" in
+    sources-done|done) say "Eingerichtet. Dieses Fenster kann zu."; exit 0 ;;
+esac
 echo
-echo "  Noch sind keine Fotos eingelesen."
-echo
-read -rp "   Jetzt einlesen? (j/n): " DOSCAN
-if [ "${DOSCAN}" != "j" ] && [ "${DOSCAN}" != "J" ]; then
-    echo
-    echo "  Spaeter mit:"
-    echo "    docker compose exec api python -m ingest.pipeline --sources-file sources.txt --skip-caption"
-    echo
+say "Im Browser geht es weiter: Ordner waehlen. Dieses Fenster wartet darauf"
+say "und bindet die gewaehlten Ordner dann beschreibbar ein -- bitte offen lassen."
+t0=$(date +%s)
+while [ $(( $(date +%s) - t0 )) -lt 7200 ]; do
+    sleep 3
+    step="$(setup_step)"
+    case "$step" in sources-done|done) break ;; esac
+done
+case "$step" in
+    sources-done|done) ;;
+    *) warn "Zwei Stunden ohne Ordnerwahl -- beim naechsten Start werden gewaehlte Ordner beschreibbar."; exit 0 ;;
+esac
+write_override "$gpu"
+chosen="$(chosen_paths "$SOURCES_FILE" | tr '\n' ' ')"
+if [ -z "$chosen" ]; then
+    warn "Keine Ordner in data/sources.txt gefunden, die unter /host liegen -- nichts einzubinden."
     exit 0
 fi
-
-echo
-echo "  Erst ein Blick, was gefunden wird -- es wird noch nichts gespeichert:"
-echo
-docker compose exec api python -m ingest.pipeline --sources-file sources.txt --dry-run
-
-echo
-read -rp "   Passt das? Dann einlesen (j/n): " GO
-if [ "${GO}" != "j" ] && [ "${GO}" != "J" ]; then
-    echo; echo "  Abgebrochen. Du kannst sources.txt anpassen und neu starten."; exit 0
-fi
-
-echo
-echo "  Liest ein. Das dauert je nach Menge und Rechner Minuten bis Stunden;"
-echo "  ein Abbruch ist unkritisch, es geht danach an derselben Stelle weiter."
-echo
-docker compose exec api python -m ingest.pipeline --sources-file sources.txt --skip-caption
-
-echo
-echo "  Fertig. Oeffne http://localhost:8000 und fang mit \"Wer ist das?\" an."
-echo
+ok "Beschreibbar einbinden: $chosen"
+compose up -d
+printf "  Warte, bis PhotoVault wieder da ist "
+wait_api 300 "" || { bad "PhotoVault kommt nach dem Neustart nicht hoch. Protokoll: docker compose logs api"; exit 1; }
+ok "Fertig -- weiter im Browser. Dieses Fenster kann zu."
+exit 0

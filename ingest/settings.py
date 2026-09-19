@@ -181,14 +181,20 @@ def pool_key() -> str:
 
 
 def ollama_base() -> str:
-    """Adresse von Ollama: Umgebung, sonst die im Modus `ollama` eingetragene."""
+    """Adresse von Ollama.
+
+    `OLLAMA_URL` in der Umgebung nagelt sie fest; sonst die im Wizard
+    eingetragene (Modus `ollama`); sonst `PHOTOVAULT_OLLAMA_DEFAULT` -- die
+    Compose setzt darueber das Ollama aus dem Buendel, ohne dem Wizard die
+    Wahl zu nehmen; sonst der Rechner selbst.
+    """
     env = _env("OLLAMA_URL")
     if env:
         return env.rstrip("/")
     llm = load().get("llm") or {}
     if llm.get("mode") == "ollama" and llm.get("url"):
         return str(llm["url"]).rstrip("/")
-    return "http://127.0.0.1:11434"
+    return (_env("PHOTOVAULT_OLLAMA_DEFAULT") or "http://127.0.0.1:11434").rstrip("/")
 
 
 def caption_model() -> str:

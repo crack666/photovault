@@ -82,9 +82,13 @@ Jobs-Seite: Läufe, deren Voraussetzung nicht da ist, sind dort gesperrt und
 nennen den Grund, statt „gestartet" zu melden und still zu sterben.
 
 **Optional — [Ollama](https://ollama.com) für deutsche Bildbeschreibungen.**
-Läuft auf dem Host, nicht im Compose-Verbund: es braucht GPU-Durchreichung und
-lädt zweistellige Gigabyte. Ohne Ollama fehlen nur die Captions; alles andere
-funktioniert.
+Der Docker-Verbund bringt eines mit (Profil `ollama`, `start.bat` schaltet es
+ein; mit NVIDIA-Karte reicht das Skript die GPU durch, sonst rechnet der
+Prozessor). Wer schon ein Ollama hat, trägt im Wizard dessen Adresse ein —
+es muss dann auf allen Adressen lauschen (`OLLAMA_HOST=0.0.0.0`), sonst
+erreicht der Container es nicht. Unter macOS ist ein natives Ollama die
+bessere Wahl: Docker Desktop reicht dort keine GPU durch. Ohne Ollama fehlen
+nur die Captions; alles andere funktioniert.
 
 | Zweck | Empfehlung | VRAM | gemessen |
 |---|---|---|---|
@@ -130,24 +134,32 @@ und irgendwohin entpacken — auf den Desktop reicht.
 | | |
 |---|---|
 | Windows | Doppelklick auf **`start.bat`** |
-| macOS / Linux | Terminal im Ordner öffnen, `./start.sh` eingeben |
+| macOS / Linux | Terminal im Ordner öffnen, `bash start.sh` eingeben |
 
-Auf einer **frischen Maschine** fragt das Skript einmal nach dem Fotoordner,
-lädt rund 2 GB herunter und öffnet den Browser. Die Antworten stehen in `.env`
-(nicht im Git). Anschließend fragt es, ob es die Fotos einlesen soll — und
-zeigt vorher, was es gefunden hat.
-
-Beim nächsten Mal genügt derselbe Doppelklick.
+Das Skript fragt nichts. Es prüft Docker (und sagt im Klartext, was fehlt —
+etwa Virtualisierung im BIOS), wählt freie Ports, misst den Grafikspeicher,
+bindet die Laufwerke des Rechners **lesend** in den Verbund ein, lädt beim
+ersten Mal einige Gigabyte und öffnet den Browser. Was es festhält, steht in
+`.env` und `docker-compose.override.yml` (beides nicht im Git).
 
 Der Rest passiert im Browser, unter `/setup` — und dorthin führt `/` von
 selbst, solange noch keine Quelle eingetragen ist: Ordner anhaken (Baum,
 keine Pfade tippen), zählen lassen, einlesen mit Fortschritt, dann das
-Sprachmodell: Ollama wird erkannt oder verlinkt, das Modell nach gemessenem
-Grafikspeicher vorgeschlagen und mit Balken geladen, und eine Test-Caption
-mit Stoppuhr sagt vorher, wie lange der ganze Bestand dauern würde. Wer
-lieber einen Anbieter im Netz nimmt, trägt ihn dort ein — mit dem Satz, der
-dazugehört: die Fotos verlassen dann den Rechner. Die Seite bleibt
-erreichbar; was sie festlegt, steht in `data/settings.json`.
+Sprachmodell: das mitgelieferte Ollama oder ein eigenes, das Modell nach
+gemessenem Grafikspeicher vorgeschlagen und mit Balken geladen, und eine
+Test-Caption mit Stoppuhr sagt vorher, wie lange der ganze Bestand dauern
+würde. Wer lieber einen Anbieter im Netz nimmt, wählt ihn dort aus der
+Liste — mit dem Satz, der dazugehört: die Fotos verlassen dann den Rechner.
+Die Seite bleibt erreichbar; was sie festlegt, steht in `data/settings.json`.
+
+Das Fenster von `start.bat` bleibt während der Einrichtung offen: sobald die
+Ordner gewählt sind, bindet es genau diese **beschreibbar** ein und erstellt
+den Container einmal neu — nur dort darf PhotoVault Dateien anfassen
+(Papierkorb, Verschieben, EXIF-Reparatur), nirgends sonst. Die Seite wartet
+das ab. Ordner, die später dazukommen, werden beim nächsten Start
+beschreibbar; einlesen geht sofort.
+
+Beim nächsten Mal genügt derselbe Doppelklick.
 
 Läuft PhotoVault hier schon **ohne** den Docker-Verbund (venv unter
 `~/.venvs/photovault`, oder `RUNTIME=local` in

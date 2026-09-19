@@ -123,9 +123,10 @@
       <div id="llm-choose">
         <div class="choice" id="choice">
           <button type="button" data-mode="ollama">
-            <h3>Ollama auf diesem Rechner <span class="rec">· empfohlen</span></h3>
-            <p>Läuft lokal, nichts verlässt den Rechner. Braucht das kostenlose
-               Programm Ollama; das Modell wird hier ausgesucht und geladen.</p>
+            <h3>Ollama <span class="rec">· empfohlen</span></h3>
+            <p>Läuft lokal, nichts verlässt den Rechner. PhotoVault bringt eines
+               mit; ein eigenes geht genauso. Das Modell wird hier ausgesucht
+               und geladen.</p>
           </button>
           <button type="button" data-mode="openai">
             <h3>Ein Anbieter im Netz</h3>
@@ -141,14 +142,27 @@
 
       <!-- Ollama -->
       <div id="llm-ollama" hidden>
-        <div class="card bad" id="ollama-missing" hidden>
-          <h3>Ollama ist nicht erreichbar.</h3>
-          <p>Installieren: <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>
-             — nach der Installation läuft Ollama im Hintergrund, ein Neustart ist
-             nicht nötig. Gesucht wurde unter <code id="ollama-url"></code>.</p>
-          <div class="actions">
-            <button type="button" class="primary" id="ollama-recheck">Erneut prüfen</button>
+        <div class="card">
+          <div class="form">
+            <label for="ol-url">Adresse</label>
+            <input id="ol-url" placeholder="http://ollama:11434" />
           </div>
+          <p class="msg" id="ol-url-hint"></p>
+          <div class="actions">
+            <button type="button" class="primary" id="ol-connect">Verbinden</button>
+            <button type="button" class="link" id="ol-own">Eigenes Ollama auf diesem Rechner</button>
+            <span class="hint" id="ol-status"></span>
+          </div>
+        </div>
+        <div class="card bad" id="ollama-missing" hidden>
+          <h3>Unter dieser Adresse antwortet kein Ollama.</h3>
+          <p id="ollama-missing-text"></p>
+          <p>Noch keins? Installieren: <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>
+             — danach läuft Ollama im Hintergrund, ein Neustart ist nicht nötig; dann
+             oben „Eigenes Ollama auf diesem Rechner" und „Verbinden". Ein eigenes
+             Ollama muss auf allen Adressen lauschen, sonst erreicht PhotoVault es
+             nicht: Umgebungsvariable <code>OLLAMA_HOST=0.0.0.0</code> setzen und
+             Ollama neu starten.</p>
         </div>
         <div id="ollama-ok" hidden>
           <div class="card" id="gpu-card">
@@ -183,15 +197,26 @@
         </div>
         <div class="card">
           <div class="form">
+            <label for="oa-preset">Anbieter</label>
+            <select id="oa-preset"></select>
             <label for="oa-url">Adresse</label>
             <input id="oa-url" placeholder="https://api.example.com/v1" />
             <label for="oa-key">Schlüssel</label>
             <input id="oa-key" type="password" autocomplete="off" placeholder="wird nicht angezeigt" />
-            <label for="oa-caption">Modell für Bilder</label>
-            <input id="oa-caption" placeholder="Name beim Anbieter, muss Bilder verstehen" />
-            <label for="oa-embed">Modell für Text-Vektoren</label>
-            <input id="oa-embed" placeholder="Embedding-Modell beim Anbieter" />
           </div>
+          <div class="actions">
+            <button type="button" class="primary" id="oa-connect">Verbinden</button>
+            <span class="hint" id="oa-status"></span>
+          </div>
+        </div>
+        <div class="card" id="oa-models" hidden>
+          <div class="form">
+            <label for="oa-caption">Modell für Bilder</label>
+            <select id="oa-caption"></select>
+            <label for="oa-embed">Modell für Text-Vektoren</label>
+            <select id="oa-embed"></select>
+          </div>
+          <p class="msg" id="oa-models-hint"></p>
           <div class="actions">
             <button type="button" class="primary" id="btn-openai">Speichern und prüfen</button>
           </div>
@@ -603,7 +628,43 @@ $("back-3").addEventListener("click", () => {
   setMsg("msg-3", "");
 });
 
+/* Die Adresse ist vorbelegt -- mit dem Ollama aus dem Buendel, wenn die
+   Compose eines mitbringt, sonst mit dem auf diesem Rechner. Wer schon ein
+   eigenes hat, traegt es ein und verbindet; die Modelle dort erscheinen
+   dann in den Listen. */
+const HOST_OLLAMA = "http://host.docker.internal:11434";
+
+function prefillOllamaUrl() {
+  const llm = S.state.llm;
+  if (!$("ol-url").value) $("ol-url").value = llm.url || llm.url_in_use || "";
+  const bundled = /\/\/ollama:/.test($("ol-url").value);
+  $("ol-url-hint").textContent = bundled
+    ? "Das ist das Ollama, das PhotoVault mitbringt. Ein eigenes? Adresse ändern und verbinden."
+    : "";
+}
+
+async function connectOllama() {
+  const url = $("ol-url").value.trim().replace(/\/+$/, "");
+  if (url && !/^https?:\/\//.test(url)) { setMsg("msg-3", "Adresse mit http:// oder https:// beginnen.", "err"); return; }
+  $("ol-connect").disabled = true;
+  $("ol-status").textContent = "verbindet …";
+  try {
+    await post("/api/setup/llm", { mode: "ollama", url,
+      caption_model: S.state.llm.caption_model || "", embed_model: S.state.llm.embed_model || "" });
+    await loadState();
+    await checkOllama();
+  } catch (e) {
+    setMsg("msg-3", e.message, "err");
+  } finally {
+    $("ol-connect").disabled = false;
+    $("ol-status").textContent = "";
+  }
+}
+$("ol-connect").addEventListener("click", connectOllama);
+$("ol-own").addEventListener("click", () => { $("ol-url").value = HOST_OLLAMA; connectOllama(); });
+
 async function checkOllama() {
+  prefillOllamaUrl();
   $("ollama-missing").hidden = true;
   $("ollama-ok").hidden = true;
   setMsg("msg-3", "prüft, ob Ollama läuft …");
@@ -611,7 +672,7 @@ async function checkOllama() {
   try { d = await api("/api/setup/llm/models"); } catch (e) { setMsg("msg-3", e.message, "err"); return; }
   setMsg("msg-3", "");
   if (!d.reachable) {
-    $("ollama-url").textContent = d.url;
+    $("ollama-missing-text").textContent = `Gesucht unter ${d.url}${d.error ? ` — ${d.error}` : ""}.`;
     $("ollama-missing").hidden = false;
     return;
   }
@@ -639,7 +700,67 @@ async function checkOllama() {
     : "Noch kein Modell vorhanden — die beiden werden geladen.";
   $("pull-hint").textContent = "Lädt, was fehlt, und macht danach eine Probe an einem deiner Fotos.";
 }
-$("ollama-recheck").addEventListener("click", checkOllama);
+
+/* Anbieter: Vorlagen fuellen Adresse und Modellnamen vor; "Verbinden" holt
+   die Modelle des Anbieters in die Listen. Was der Anbieter nicht sagt --
+   welches Modell Bilder versteht -- steht in der Vorlage. */
+const PRESETS = [
+  { id: "openai", label: "OpenAI", url: "https://api.openai.com/v1",
+    caption: "gpt-4.1-mini", embed: "text-embedding-3-small" },
+  { id: "mistral", label: "Mistral", url: "https://api.mistral.ai/v1",
+    caption: "pixtral-12b-latest", embed: "mistral-embed" },
+  { id: "custom", label: "Eigene Adresse (OpenAI-kompatibel)", url: "", caption: "", embed: "" },
+];
+$("oa-preset").innerHTML = PRESETS.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join("");
+$("oa-preset").addEventListener("change", () => {
+  const p = PRESETS.find((x) => x.id === $("oa-preset").value);
+  $("oa-url").value = p.url;
+  $("oa-models").hidden = true;
+  S.presetModels = { caption: p.caption, embed: p.embed };
+});
+S.presetModels = { caption: PRESETS[0].caption, embed: PRESETS[0].embed };
+$("oa-url").value = PRESETS[0].url;
+
+function fillSelect(sel, names, preferred) {
+  const list = [...new Set([preferred, ...names].filter(Boolean))];
+  sel.innerHTML = list.map((n) => `<option value="${esc(n)}">${esc(n)}${n === preferred ? " · Vorschlag" : ""}</option>`).join("")
+    + `<option value="__other">anderer Name …</option>`;
+  sel.onchange = () => {
+    if (sel.value !== "__other") return;
+    const v = prompt("Modellname beim Anbieter:") || "";
+    if (v.trim()) {
+      const o = document.createElement("option"); o.value = o.textContent = v.trim();
+      sel.insertBefore(o, sel.lastElementChild); sel.value = v.trim();
+    } else sel.selectedIndex = 0;
+  };
+}
+
+$("oa-connect").addEventListener("click", async () => {
+  const url = $("oa-url").value.trim(), key = $("oa-key").value;
+  if (!url) { setMsg("msg-3", "Adresse fehlt.", "err"); return; }
+  $("oa-connect").disabled = true;
+  $("oa-status").textContent = "verbindet …";
+  setMsg("msg-3", "");
+  try {
+    await post("/api/setup/llm", { mode: "openai", url, key: key || null,
+      caption_model: S.state.llm.caption_model || "", embed_model: S.state.llm.embed_model || "" });
+    $("oa-key").value = "";
+    const d = await api("/api/setup/llm/models");
+    if (!d.reachable) throw new Error(`Anbieter nicht erreichbar: ${d.error || d.url}`);
+    const names = d.models.map((m) => m.name);
+    fillSelect($("oa-caption"), names, S.presetModels.caption);
+    fillSelect($("oa-embed"), names, S.presetModels.embed);
+    $("oa-models-hint").textContent = names.length
+      ? `${names.length} Modelle beim Anbieter. Das Bild-Modell muss Bilder verstehen — die Vorlage nennt eines, das es kann.`
+      : "Der Anbieter nennt keine Modelle — Namen aus seiner Dokumentation eintragen.";
+    $("oa-models").hidden = false;
+  } catch (e) {
+    setMsg("msg-3", `Nicht geklappt: ${e.message}`, "err");
+  } finally {
+    $("oa-connect").disabled = false;
+    $("oa-status").textContent = "";
+  }
+});
 
 /* Ziehen mit Fortschritt: der Server reicht die NDJSON-Zeilen von Ollama
    durch. Summiert wird ueber alle Schichten, die bis dahin genannt wurden. */
@@ -701,16 +822,15 @@ $("btn-pull").addEventListener("click", async () => {
 });
 
 $("btn-openai").addEventListener("click", async () => {
-  const url = $("oa-url").value.trim(), key = $("oa-key").value;
-  const caption = $("oa-caption").value.trim(), embed = $("oa-embed").value.trim();
-  if (!url || !caption || !embed) { setMsg("msg-3", "Adresse und beide Modellnamen sind nötig.", "err"); return; }
+  const url = $("oa-url").value.trim();
+  const caption = $("oa-caption").value, embed = $("oa-embed").value;
+  if (!caption || caption === "__other" || !embed || embed === "__other") {
+    setMsg("msg-3", "Beide Modelle wählen.", "err"); return;
+  }
   $("btn-openai").disabled = true;
   setMsg("msg-3", "");
   try {
-    await post("/api/setup/llm", { mode: "openai", url, key: key || null, caption_model: caption, embed_model: embed });
-    $("oa-key").value = "";
-    const d = await api("/api/setup/llm/models");
-    if (!d.reachable) throw new Error(`Anbieter nicht erreichbar: ${d.error || d.url}`);
+    await post("/api/setup/llm", { mode: "openai", url, caption_model: caption, embed_model: embed });
     await runProbe();
   } catch (e) {
     setMsg("msg-3", `Nicht geklappt: ${e.message}`, "err");

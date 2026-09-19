@@ -1,13 +1,26 @@
-# Startfertiges Bündel: Qdrant + PhotoVault-API samt Oberfläche.
+# Startfertiges Bündel: Qdrant + PhotoVault-API samt Oberfläche + Ollama.
 #
-# Was hier NICHT drin ist: Ollama. Es braucht GPU-Durchreichung und lädt
-# zweistellige Gigabyte an Modellen — das gehört in die Hand dessen, der die
-# Maschine kennt. PhotoVault läuft auch ohne: Gesichter, Szenen, Datum und
-# Suche funktionieren, nur die deutschen Bildbeschreibungen fehlen dann.
+# Ollama liegt mit im Bündel (Profil `ollama`, von start.bat eingeschaltet),
+# damit niemand etwas installieren muss; mit NVIDIA-Karte reicht start.bat
+# die GPU durch (Override), sonst rechnet der Prozessor. Wer schon ein
+# Ollama hat, laesst das Profil aus und traegt im Wizard die Adresse ein --
+# etwa http://host.docker.internal:11434 fuer eines auf diesem Rechner.
+# Unter macOS ist das die bessere Wahl: Docker Desktop reicht dort keine
+# GPU durch, ein natives Ollama nutzt Metal. PhotoVault laeuft auch ohne:
+# Gesichter, Szenen, Datum und Suche funktionieren, nur die deutschen
+# Bildbeschreibungen fehlen dann.
 #
-#   cp .env.example .env     # PHOTO_DIR eintragen
+# Der normale Weg ist start.bat / start.sh: die Skripte schreiben .env und
+# eine docker-compose.override.yml mit den Laufwerken des Rechners (lesend
+# unter /host/<laufwerk>, die gewählten Fotoordner zusätzlich beschreibbar
+# am selben Pfad) und öffnen den Browser auf /setup. Von Hand:
+#
+#   cp .env.example .env
 #   docker compose up -d
 #   → http://localhost:8000
+#
+# Die Fotos kommen dann aus der Override-Datei (siehe start.sh, Abschnitt
+# "Laufwerke"), nicht aus dieser Datei.
 
 services:
   qdrant:
@@ -26,30 +39,53 @@ services:
       retries: 12
 
   api:
+    # Fertiges Image, sobald die Action eines gebaut hat; bis dahin (und für
+    # Entwickler) baut compose selbst, wenn das Image lokal fehlt.
+    image: ghcr.io/crack666/photovault:latest
     build: .
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
       QDRANT_URL: http://qdrant:6333
-      # Ollama läuft auf dem Host, nicht im Verbund. Ohne bleibt es bei
-      # Metadaten, Gesichtern und CLIP -- die Captions entfallen.
-      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-      LITELLM_URL: ${LITELLM_URL:-http://host.docker.internal:4000}
+      # Quellenliste und Einstellungen liegen im gemounteten ./data, damit sie
+      # einen Neubau des Containers überleben -- der Wizard erstellt ihn nach
+      # der Ordnerwahl neu (beschreibbare Mounts), und start.bat liest die
+      # gewählten Ordner aus derselben Datei.
+      PHOTOVAULT_SOURCES: /app/data/sources.txt
+      PHOTOVAULT_SETTINGS: /app/data/settings.json
+      # Wo der Ordnerwähler anfängt: die Laufwerke, nichts vom Container.
+      PHOTOVAULT_BROWSE_ROOT: /host
+      # Nach der Ordnerwahl wartet die Seite auf den Neustart durch start.bat.
+      PHOTOVAULT_TWO_PHASE: "1"
+      # Aus nvidia-smi auf dem Host (start.bat); 0 = keine NVIDIA-Karte.
+      GPU_VRAM_MB: ${GPU_VRAM_MB:-0}
+      # Wo Ollama ohne weitere Angabe gesucht wird: das aus dem Buendel. Eine
+      # *Vorgabe*, keine Festlegung -- die Adresse im Wizard (data/settings.json)
+      # gewinnt darueber, damit ein eigenes Ollama eingetragen werden kann.
+      # OLLAMA_URL in der .env dagegen naegelt es fest (Umgebung > Datei).
+      PHOTOVAULT_OLLAMA_DEFAULT: http://ollama:11434
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      # Nur fuer einen LiteLLM-Pool (Entwicklungsmaschine); leer heisst: keiner.
+      LITELLM_URL: ${LITELLM_URL:-}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
-      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-local}
-      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-embedder}
+      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-}
+      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-}
       MODEL_DIR: /models
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # Die Fotos werden nur gelesen. Schreibend nötig ist der Mount erst,
-      # wenn `tools/exif_repair.py` Aufnahmezeiten zurückschreiben soll --
-      # dann das :ro entfernen.
+      # Die Fotos kommen aus docker-compose.override.yml (von start.bat /
+      # start.sh erzeugt): alle festen Laufwerke lesend unter /host, die
+      # gewählten Quellen zusätzlich beschreibbar am selben Pfad. Schreiben
+      # dürfen Papierkorb, Verschieben und exif_repair damit genau dort, wo
+      # die Fotos liegen -- und nirgends sonst.
       #
       # Lange Läufe startet die Jobs-Seite als Kind *in diesem Container*.
       # Beenden ist SIGTERM an deren Prozessgruppe, nicht `pkill` auf dem Host
       # und nicht `docker kill`.
-      - ${PHOTO_DIR:?PHOTO_DIR fehlt -- .env.example nach .env kopieren}:/photos:ro
+      #
+      # Quellenliste, Einstellungen, Protokolle: auf dem Host, neben dem Skript.
+      - ./data:/app/data
       # Modellgewichte (insightface, CLIP) überleben so einen Neubau des Images.
       - model_cache:/models
       # Vorschaubilder. Ohne dieses Volume liegen sie im Container und sind
@@ -64,7 +100,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  ollama:
+    # Modelle liegen im Volume `ollama_models` -- 5 bis 20 GB je nach Wahl,
+    # auf der Docker-Platte (unter Windows in der WSL-VHDX). Die GPU kommt
+    # aus docker-compose.override.yml, wenn start.bat eine NVIDIA-Karte
+    # gemessen hat; ohne Karte rechnet der Prozessor.
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   qdrant_data:
   model_cache:
   thumb_cache:
+  ollama_models:

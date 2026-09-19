@@ -93,12 +93,20 @@ Konsequenzen, ausgesprochen:
   Wizard.
 - `PHOTO_DIR` in der Compose wird optional (heute Pflicht mit `:?`).
 
-### E2 — Ollama auf dem Host, optional, geführt
+### E2 — Ollama im Bündel, eigenes erlaubt
 
-Unter Windows ist Ollama ein Installer, GPU inklusive, ohne Docker-Konfiguration;
-die Compose zeigt schon auf `host.docker.internal:11434`. Der Wizard erkennt
-es, und wenn es fehlt: Link, „später", alles andere läuft. Ollama *im*
-Verbund (CPU-Profil für Leute, die nichts installieren wollen) ist v2.
+*Geändert 19.09.2026 auf Wunsch des Nutzers* (vorher: nur auf dem Host).
+Die Compose bringt Ollama mit (Profil `ollama`, von `start.bat` in der `.env`
+eingeschaltet; mit gemessener NVIDIA-Karte schreibt das Skript die
+GPU-Reservierung in die Override, sonst rechnet der Prozessor). Die Compose
+setzt nur eine *Vorgabe* (`PHOTOVAULT_OLLAMA_DEFAULT=http://ollama:11434`);
+der Wizard zeigt die Adresse vorbelegt, und wer ein eigenes Ollama hat,
+trägt es ein und verbindet — die Modelle dort erscheinen in den Listen. Ein
+eigenes muss auf allen Adressen lauschen (`OLLAMA_HOST=0.0.0.0`), sonst
+erreicht der Container es nicht; die Seite sagt das. Unter macOS reicht
+Docker Desktop keine GPU durch — dort ist das native Ollama die bessere
+Wahl, das Skript sagt es. Wer es ganz weglassen will: `COMPOSE_PROFILES=`
+in der `.env`.
 
 ### E3 — Modellwahl aus gemessenem VRAM, nicht aus dem Kartennamen
 
@@ -211,11 +219,24 @@ Bekannte Grenze (v1): mit Quellen auf zwei Laufwerken ist die gemeinsame
 Wurzel `/host`, und die **Bereiche** (erste Ordnerebene darunter) heißen dann
 `c` und `d`. Für eine Sammlung auf einem Laufwerk ändert sich nichts.
 
-**A — `start.bat` / `start.sh`** — Docker-Prüfung mit Klartext (Virtualisierung
-im BIOS, WSL2-Update), Laufwerke → Override-Datei, zweite Phase nach der
-Ordnerwahl (rw-Mounts, Neustart), `GPU_VRAM_MB`, freie Ports wählen, `pull`
-statt `build`, Wartezeit gegen das Laden der Gewichte messen, Browser auf
-`/setup`, kein Einlesen mehr im Terminal.
+**A — `start.bat` / `start.sh`** — *gebaut 19.09.2026.* `start.bat` ist ein
+Fünfzeiler, die Arbeit steckt in `start.ps1` (Windows PowerShell, auf jedem
+Windows da); `start.sh` tut dasselbe für macOS/Linux. Docker-Prüfung mit
+Klartext (Virtualisierung im BIOS per `Win32_Processor.VirtualizationFirmwareEnabled`
+gemessen, WSL-Hinweis), freie Ports, `.env` mit `COMPOSE_PROFILES=ollama` und
+gemessenem `GPU_VRAM_MB`, Override mit den festen Laufwerken
+(`Win32_LogicalDisk DriveType=3`; macOS `/Users`, `/Volumes`; Linux `$HOME`,
+`/media`, `/mnt`, `/run/media`) lesend und den aktiven Quellen aus
+`data/sources.txt` beschreibbar (nur existierende, nur unterhalb der Orte,
+nie ein Ort selbst — Tests in `tests/test_start_scripts.py` führen beide
+Skripte wirklich aus), GPU-Reservierung für Ollama nur mit gemessener Karte,
+`compose pull` vor `up` (Bau als Rückfall), Wartezeit bis 15 Minuten mit
+Hinweis auf die Modell-Downloads, Browser auf `/`, zweite Phase: warten auf
+`setup.step == sources-done`, Override neu, `up -d`, warten, fertig. `./data`
+ist jetzt ein Bind-Mount (`PHOTOVAULT_SOURCES`, `PHOTOVAULT_SETTINGS`
+darunter), damit Quellen und Einstellungen den Neubau des Containers
+überleben und das Skript sie lesen kann. Dazu `.dockerignore` — vorher
+wanderten `.env`, `data/` und `logs/` ins Image.
 
 **D — Image und Doku** — Action, Compose, README „Der einfache Weg" nach dem
 Test neu, Windows-Klemmliste.

@@ -105,3 +105,14 @@ class TestDatei:
         assert out["llm"]["key"].endswith("1234") and "geheim" not in out["llm"]["key"]
         assert out["llm"]["has_key"] is True
         assert settings.load()["llm"]["key"] == "geheim-1234"   # das Original bleibt
+
+    def test_vorgabe_aus_dem_buendel_verliert_gegen_den_wizard(self, monkeypatch):
+        """Die Compose setzt PHOTOVAULT_OLLAMA_DEFAULT auf das Ollama im
+        Buendel -- eine Vorgabe. Wer ein eigenes hat, traegt es im Wizard
+        ein, und das gilt dann. OLLAMA_URL in der .env schlaegt beides."""
+        monkeypatch.setenv("PHOTOVAULT_OLLAMA_DEFAULT", "http://ollama:11434")
+        assert settings.ollama_base() == "http://ollama:11434"
+        settings.save({"llm": {"mode": "ollama", "url": "http://host.docker.internal:11434"}})
+        assert settings.ollama_base() == "http://host.docker.internal:11434"
+        monkeypatch.setenv("OLLAMA_URL", "http://fest:11434")
+        assert settings.ollama_base() == "http://fest:11434"
