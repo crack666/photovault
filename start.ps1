@@ -103,6 +103,21 @@ function Get-VramMb {
     return 0
 }
 
+#: Ab diesem Treiber gibt es CUDA 13 -- die cuda-Variante des Images ist
+#: dagegen gebaut (torch cu130, onnxruntime-gpu). Aelter: CPU-Variante.
+$MinDriver = 580
+
+function Get-DriverMajor {
+    $cmd = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if (-not $cmd) { return 0 }
+    try {
+        $raw = & $cmd.Source --query-gpu=driver_version --format=csv,noheader 2>$null | Select-Object -First 1
+        $n = 0
+        if ([int]::TryParse((("$raw").Trim() -split "\.")[0], [ref]$n)) { return $n }
+    } catch {}
+    return 0
+}
+
 # --------------------------------------------------------------------------
 # Laufwerke und Override
 # --------------------------------------------------------------------------
@@ -141,7 +156,7 @@ function Get-ChosenHostPaths([string]$File) {
     return $out
 }
 
-function New-OverrideText([string[]]$DriveLetters, $Chosen, [bool]$Gpu = $false) {
+function New-OverrideText([string[]]$DriveLetters, $Chosen, [bool]$Gpu = $false, [bool]$ApiGpu = $Gpu) {
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine("# Von start.ps1 erzeugt -- bei jedem Start neu. Nicht von Hand aendern.")
     [void]$sb.AppendLine("# Laufwerke lesend unter /host/<laufwerk>; die gewaehlten Fotoordner aus")
@@ -150,6 +165,8 @@ function New-OverrideText([string[]]$DriveLetters, $Chosen, [bool]$Gpu = $false)
     if ($Gpu) {
         # Nur mit gemessener NVIDIA-Karte: ohne sie liesse die Reservierung
         # den ganzen Verbund nicht starten ("could not select device driver").
+        # Beide bekommen sie: Ollama fuer die Beschreibungen, die API fuer
+        # Gesichter und CLIP (Image-Variante `cuda`, ~10x beim Einlesen).
         [void]$sb.AppendLine("  ollama:")
         [void]$sb.AppendLine("    deploy:")
         [void]$sb.AppendLine("      resources:")
@@ -160,6 +177,15 @@ function New-OverrideText([string[]]$DriveLetters, $Chosen, [bool]$Gpu = $false)
         [void]$sb.AppendLine("              capabilities: [gpu]")
     }
     [void]$sb.AppendLine("  api:")
+    if ($ApiGpu) {
+        [void]$sb.AppendLine("    deploy:")
+        [void]$sb.AppendLine("      resources:")
+        [void]$sb.AppendLine("        reservations:")
+        [void]$sb.AppendLine("          devices:")
+        [void]$sb.AppendLine("            - driver: nvidia")
+        [void]$sb.AppendLine("              count: all")
+        [void]$sb.AppendLine("              capabilities: [gpu]")
+    }
     [void]$sb.AppendLine("    volumes:")
     foreach ($d in $DriveLetters) {
         [void]$sb.AppendLine("      - type: bind")
@@ -176,10 +202,10 @@ function New-OverrideText([string[]]$DriveLetters, $Chosen, [bool]$Gpu = $false)
     return $sb.ToString()
 }
 
-function Write-Override([bool]$Gpu = $false) {
+function Write-Override([bool]$Gpu = $false, [bool]$ApiGpu = $Gpu) {
     $drives = Get-FixedDrives
     $chosen = @(Get-ChosenHostPaths $SourcesFile | Where-Object { Test-Path -LiteralPath $_.Host })
-    $text = New-OverrideText $drives $chosen $Gpu
+    $text = New-OverrideText $drives $chosen $Gpu $ApiGpu
     # UTF-8 ohne BOM: Ordnernamen mit Umlauten muessen so ankommen, wie sie
     # heissen, und ein BOM am Dateianfang mag nicht jeder YAML-Leser.
     [System.IO.File]::WriteAllText($OverrideFile, $text, [System.Text.UTF8Encoding]::new($false))
@@ -307,6 +333,8 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
         "# Ollama aus dem Buendel. Eigenes Ollama? Zeile leeren (COMPOSE_PROFILES=) und",
         "# im Wizard die Adresse eintragen, z.B. http://host.docker.internal:11434.",
         "COMPOSE_PROFILES=ollama",
+        "# 0 = NVIDIA-Karte nicht benutzen, auch wenn eine da ist (nur Prozessor).",
+        "PHOTOVAULT_GPU=1",
         "GPU_VRAM_MB=0"
     ) -Encoding ascii
     if ($ol -ne 11434) { Say "Port 11434 ist belegt -- laeuft hier schon ein Ollama? Das Buendel nimmt $ol; im Wizard laesst sich auch das eigene eintragen." }
@@ -315,13 +343,31 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
 }
 $vram = Get-VramMb
 Set-EnvValue "GPU_VRAM_MB" $vram
-if ($vram -gt 0) { Ok "Grafikkarte: $([math]::Round($vram / 1024)) GB Speicher" } else { Say "Keine NVIDIA-Grafikkarte gefunden -- Beschreibungen liefe der Prozessor." }
+# Die Karte benutzen, wenn eine da ist und der Treiber CUDA 13 kann -- es sei
+# denn, die .env sagt nein. Ollama bekommt sie in jedem Fall, das eigene
+# Image nur mit passendem Treiber.
+$driver = Get-DriverMajor
+$useGpu = ($vram -gt 0) -and ($envMap["PHOTOVAULT_GPU"] -ne "0") -and ($driver -ge $MinDriver)
+if ($useGpu) {
+    Set-EnvValue "PHOTOVAULT_IMAGE_TAG" "cuda"
+    Set-EnvValue "TORCH_INDEX" "https://download.pytorch.org/whl/cu130"
+    Set-EnvValue "ORT_PACKAGE" "onnxruntime-gpu"
+    Ok "Grafikkarte: $([math]::Round($vram / 1024)) GB Speicher, Treiber $driver -- Beschreibungen, Gesichter und CLIP rechnen darauf."
+} else {
+    Set-EnvValue "PHOTOVAULT_IMAGE_TAG" "latest"
+    Set-EnvValue "TORCH_INDEX" "https://download.pytorch.org/whl/cpu"
+    Set-EnvValue "ORT_PACKAGE" "onnxruntime"
+    if ($vram -gt 0 -and $envMap["PHOTOVAULT_GPU"] -eq "0") { Say "Grafikkarte gefunden, aber PHOTOVAULT_GPU=0 -- Gesichter und CLIP rechnet der Prozessor." }
+    elseif ($vram -gt 0) { Warn "Grafikkarte gefunden, aber Treiber $driver ist aelter als $MinDriver (CUDA 13) -- Gesichter und CLIP rechnet der Prozessor. NVIDIA-Treiber aktualisieren, dann start.bat erneut." }
+    else { Say "Keine NVIDIA-Grafikkarte gefunden -- alles rechnet der Prozessor." }
+}
 $port = if ($envMap["API_PORT"]) { [int]$envMap["API_PORT"] } else { 8000 }
 $url = "http://localhost:$port"
 
 # --- Laufwerke und gewaehlte Ordner -----------------------------------------
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-$chosen = Write-Override ($vram -gt 0)
+# Ollama darf die Karte auch mit aelterem Treiber nutzen; die API nur mit CUDA 13.
+$chosen = Write-Override ($vram -gt 0 -and $envMap["PHOTOVAULT_GPU"] -ne "0") $useGpu
 $drives = Get-FixedDrives
 Ok ("Laufwerke lesend: " + (($drives | ForEach-Object { "$($_):" }) -join " "))
 if ($chosen.Count) { Ok ("Beschreibbar: " + (($chosen | ForEach-Object { $_.Host }) -join ", ")) }
@@ -364,7 +410,7 @@ if ($step -notin @("sources-done", "done")) {
     Warn "Zwei Stunden ohne Ordnerwahl -- beim naechsten start.bat werden gewaehlte Ordner beschreibbar."
     exit 0
 }
-$chosen = Write-Override ($vram -gt 0)
+$chosen = Write-Override ($vram -gt 0 -and $envMap["PHOTOVAULT_GPU"] -ne "0") $useGpu
 if (-not $chosen.Count) {
     Warn "Keine Ordner in data/sources.txt gefunden, die auf ein Laufwerk zeigen -- nichts einzubinden."
     exit 0

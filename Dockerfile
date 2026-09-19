@@ -7,10 +7,9 @@
 #    ("No such file or directory: 'g++'"). Der Compiler gehoert in die
 #    Baustufe, nicht ins Image, das jeder laedt.
 # 2. `pip install torch` zieht unter Linux die CUDA-Fassung samt
-#    NVIDIA-Bibliotheken, rund 3 GB -- fuer einen Container, der in v1
-#    keine GPU bekommt. Die CPU-Fassung ist ein Zehntel davon; Gesichter
-#    und CLIP rechnen im Container ohnehin auf dem Prozessor (README:
-#    1,6-2,6 Fotos/s). Die GPU-Durchreichung (v2) bekommt ein eigenes Image.
+#    NVIDIA-Bibliotheken, rund 3 GB -- fuer die meisten Rechner Ballast.
+#    Deshalb zwei Varianten (unten): `cpu` als Vorgabe, `cuda` fuer Rechner
+#    mit NVIDIA-Karte, die start.bat waehlt, wenn es eine misst.
 #
 # Dazu, was der Code zur Laufzeit braucht und pyproject nicht nennt:
 # onnxruntime (insightface laedt es selbst, erklaert es aber nicht als
@@ -30,18 +29,40 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 WORKDIR /build
 COPY pyproject.toml README.md ./
 
-# Erst torch *und* torchvision aus dem CPU-Index -- zusammen, damit die
-# Versionen zueinander passen: open-clip zieht torchvision nach, und eines
-# von PyPI gegen das CPU-torch ergab beim ersten Rauchtest "operator
-# torchvision::nms does not exist". Dann der Rest gegen die Liste aus
-# pyproject; die Schicht bleibt im Cache, solange sich pyproject nicht
-# aendert, und ein spaeteres `pip install` zieht torch nicht als CUDA nach.
+# Zwei Varianten desselben Images, gewaehlt ueber Build-Argumente:
+#
+#   cpu  (Vorgabe, Tag `latest`)  torch aus dem CPU-Index, onnxruntime.
+#        Fuer Rechner ohne NVIDIA-Karte -- und ein Zehntel der Groesse.
+#   cuda (Tag `cuda`)             torch aus dem cu130-Index, onnxruntime-gpu.
+#        CUDA 13 fuer beide: onnxruntime-gpu von PyPI ist gegen CUDA 13
+#        gebaut ("Require cuDNN 9.* and CUDA 13.*" mit den 12.8er-Bibliotheken
+#        von torch cu128 -- gemessen), und Blackwell (RTX 50xx, sm_120)
+#        kennen beide. Die nvidia-*-Pakete kommen mit torch,
+#        ingest/face_embedder.py laedt sie fuer onnxruntime vor. Braucht auf
+#        dem Host einen Treiber ab 580; start.bat prueft das und nimmt sonst
+#        die CPU-Variante.
+#
+# torch *und* torchvision zusammen aus demselben Index -- getrennt passten
+# sie nicht zueinander (open-clip zieht torchvision nach; eines von PyPI
+# gegen das CPU-torch ergab "operator torchvision::nms does not exist").
+# Dann der Rest gegen die Liste aus pyproject; die Schicht bleibt im Cache,
+# solange sich pyproject nicht aendert.
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
+ARG ORT=onnxruntime
+ARG ORT_INDEX=https://pypi.org/simple
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir torch torchvision --index-url "$TORCH_INDEX" \
     && python -c "import tomllib; d = tomllib.load(open('pyproject.toml', 'rb')); \
         print('\n'.join(d['project']['dependencies'] + d['project']['optional-dependencies']['atlas']))" \
         > /tmp/requirements.txt \
-    && pip install --no-cache-dir -r /tmp/requirements.txt onnxruntime
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && pip uninstall -y onnxruntime onnxruntime-gpu \
+    && pip install --no-cache-dir "$ORT" --index-url "$ORT_INDEX" --extra-index-url https://pypi.org/simple
+# onnxruntime kommt zuletzt und allein: eine Abhaengigkeit zieht die
+# CPU-Fassung mit, und beide Pakete teilen sich ein Verzeichnis -- gemessen
+# hatte das cuda-Image danach keinen CUDAExecutionProvider. ORT_INDEX bleibt
+# als Schalter fuer eine andere CUDA-Generation (ORT fuehrt dafuer eigene
+# Indizes), die Vorgabe ist PyPI.
 
 # Das Projekt selbst wird nicht als Paket installiert: es laeuft aus /app
 # (`uvicorn api.main:app`, Jobs als `python -m ingest...` mit /app als

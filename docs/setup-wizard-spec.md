@@ -257,8 +257,34 @@ GHCR öffentlich stellen. Bis dahin baut `start.bat` lokal — mit demselben
 Dockerfile, gemessen funktionsfähig. README „Der einfache Weg" ist auf den
 neuen Ablauf umgeschrieben; Feinschliff und Klemmliste nach dem Test.
 
-**v2, nicht jetzt:** GPU-Overlay für den Container (CLIP/Gesichter), Ollama-
-Profil im Verbund, Netzlaufwerke, Ordnerdialog als Rückfall.
+**v2, nicht jetzt:** Netzlaufwerke, Ordnerdialog als Rückfall. *(GPU für den
+Container und Ollama im Verbund waren als v2 geplant und sind auf Wunsch des
+Nutzers am 19.09.2026 in v1 gewandert — siehe E2 und E7.)*
+
+### E7 — Die Karte auch für PhotoVault selbst, als Wahl
+
+*Nachgezogen 19.09.2026.* Ein Nutzer mit starker Karte soll sie nicht nur
+für Ollama nutzen dürfen: Gesichter und CLIP sind auf der GPU ~10× schneller
+(README: 26 gegen 1,6–2,6 Fotos/s). Deshalb zwei Varianten desselben Images
+(`Dockerfile`, Build-Argumente): `latest` = CPU-torch, `cuda` = torch cu130 +
+`onnxruntime-gpu`. `start.bat`/`start.sh` wählen `cuda`, wenn sie eine
+NVIDIA-Karte **und** einen Treiber ab 580 messen (CUDA 13; älter → CPU-Image,
+Ollama bekommt die Karte trotzdem, das Skript sagt es), schreiben
+`PHOTOVAULT_IMAGE_TAG`, `TORCH_INDEX`, `ORT_PACKAGE` in die `.env` und die
+GPU-Reservierung für `ollama` **und** `api` in die Override. Abschalten:
+`PHOTOVAULT_GPU=0`. macOS: keine GPU im Container, natives Ollama empfohlen.
+
+Gemessen im cuda-Image auf der RTX 5090 (Blackwell, sm 12.0, gleiche
+Generation wie die 5060 Ti): torch 2.14.0+cu130 rechnet auf der Karte,
+onnxruntime 1.30 mit `CUDAExecutionProvider`; **Gesichter 42 ms, CLIP 32 ms
+je Foto** im Container. Drei Fehler dabei gefunden, alle mit Test oder
+Dockerfile-Kommentar festgehalten: cu128-torch gegen PyPI-onnxruntime-gpu
+(„Require cuDNN 9.* and CUDA 13.*" → beide auf CUDA 13); eine Abhängigkeit
+zog das CPU-onnxruntime mit und verdrängte den CUDA-Provider (jetzt zuletzt
+und allein installiert); und `ingest/face_embedder.py` stürzte an
+`nvidia.__file__ is None` — die CUDA-13-Pakete sind ein Namensraum, die
+Bibliotheken liegen unter `nvidia/cu13/lib` (Vorladen über `__path__`,
+beide Layouts, zwei Durchgänge).
 
 ## Testliste Ryzen-Maschine (Windows 11, APU, keine NVIDIA)
 

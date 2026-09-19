@@ -59,10 +59,14 @@ class TestStartSh:
         assert rw == [f'source: "{home}"', f'source: "{media}"', f'source: "{home}/x/Bilder"']
         assert "nvidia" not in yaml
 
-    def test_gpu_reservierung_nur_auf_wunsch(self, tmp_path):
+    def test_gpu_reservierung_nur_auf_wunsch_und_dann_fuer_beide(self, tmp_path):
+        """Ollama fuer die Beschreibungen, die API fuer Gesichter und CLIP --
+        wer eine Karte hat, soll sie fuer beides nutzen koennen."""
         src = tmp_path / "sources.txt"
         src.write_text("", encoding="utf-8")
-        assert "driver: nvidia" in self._emit(src, "1", [tmp_path])
+        mit = self._emit(src, "1", [tmp_path])
+        assert mit.count("driver: nvidia") == 2
+        assert mit.index("  ollama:") < mit.index("  api:") < mit.index("    volumes:")
         assert "driver: nvidia" not in self._emit(src, "0", [tmp_path])
 
 
@@ -101,10 +105,12 @@ class TestStartPs1:
         assert "Screenshots" not in yaml and "still" not in yaml and "E:/" not in yaml
         assert "nvidia" not in yaml
 
-    def test_gpu_reservierung_nur_mit_gemessener_karte(self, tmp_path):
+    def test_gpu_reservierung_nur_mit_gemessener_karte_und_dann_fuer_beide(self, tmp_path):
         src = tmp_path / "sources.txt"
         src.write_text("", encoding="utf-8")
-        assert "driver: nvidia" in self._emit(src, tmp_path / "a.yml", "C", gpu=True)
+        mit = self._emit(src, tmp_path / "a.yml", "C", gpu=True)
+        assert mit.count("driver: nvidia") == 2
+        assert mit.index("  ollama:") < mit.index("  api:") < mit.index("    volumes:")
         assert "driver: nvidia" not in self._emit(src, tmp_path / "b.yml", "C", gpu=False)
 
 

@@ -56,6 +56,16 @@ vram_mb() {
     case "$n" in ''|*[!0-9]*) echo 0 ;; *) echo "$n" ;; esac
 }
 
+# Ab diesem Treiber gibt es CUDA 13 -- die cuda-Variante des Images ist
+# dagegen gebaut (torch cu130, onnxruntime-gpu). Aelter: CPU-Variante.
+MIN_DRIVER=580
+driver_major() {
+    has_nvidia || { echo 0; return; }
+    local d
+    d="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1 | tr -d '[:space:]')"
+    case "$d" in ''|*[!0-9]*) echo 0 ;; *) echo "$d" ;; esac
+}
+
 # Aktive Quellen aus data/sources.txt als Host-Pfade: /host/home/x/Bilder -> /home/x/Bilder.
 # Ausschluesse (fuehrendes -) und stillgelegte Zeilen (#) zaehlen nicht.
 chosen_paths() {
@@ -74,13 +84,18 @@ chosen_paths() {
 
 # Override-Text: Wurzeln lesend, gewaehlte Ordner beschreibbar, GPU wenn gemessen.
 #   emit_override <sources-datei> <gpu 0|1> <wurzel...>
+# API_GPU=0 in der Umgebung: die Karte nur an Ollama, nicht an die API
+# (Treiber zu alt fuer die cuda-Variante).
 emit_override() {
     local sources="$1" gpu="$2"; shift 2
     local roots=("$@") r p inside
+    local api_gpu="${API_GPU:-$gpu}"
     echo "# Von start.sh erzeugt -- bei jedem Start neu. Nicht von Hand aendern."
     echo "# Orte lesend unter /host/...; die gewaehlten Fotoordner aus data/sources.txt"
     echo "# zusaetzlich beschreibbar am selben Pfad."
     echo "services:"
+    # Beide bekommen die Karte: Ollama fuer die Beschreibungen, die API fuer
+    # Gesichter und CLIP (Image-Variante `cuda`, ~10x beim Einlesen).
     if [ "$gpu" = "1" ]; then
         echo "  ollama:"
         echo "    deploy:"
@@ -92,6 +107,15 @@ emit_override() {
         echo "              capabilities: [gpu]"
     fi
     echo "  api:"
+    if [ "$api_gpu" = "1" ]; then
+        echo "    deploy:"
+        echo "      resources:"
+        echo "        reservations:"
+        echo "          devices:"
+        echo "            - driver: nvidia"
+        echo "              count: all"
+        echo "              capabilities: [gpu]"
+    fi
     echo "    volumes:"
     for r in "${roots[@]}"; do
         echo "      - type: bind"
@@ -115,9 +139,9 @@ emit_override() {
 }
 
 write_override() {
-    local gpu="$1" roots
+    local gpu="$1" api_gpu="${2:-$1}" roots
     mapfile -t roots < <(photo_roots)
-    emit_override "$SOURCES_FILE" "$gpu" "${roots[@]}" > "$OVERRIDE_FILE"
+    API_GPU="$api_gpu" emit_override "$SOURCES_FILE" "$gpu" "${roots[@]}" > "$OVERRIDE_FILE"
 }
 
 # --- Testmodus --------------------------------------------------------------
@@ -191,31 +215,51 @@ if [ ! -f "$ENV_FILE" ]; then
         echo "# Ollama aus dem Buendel. Eigenes Ollama? Zeile leeren (COMPOSE_PROFILES=) und"
         echo "# im Wizard die Adresse eintragen, z.B. http://host.docker.internal:11434."
         echo "COMPOSE_PROFILES=ollama"
+        echo "# 0 = NVIDIA-Karte nicht benutzen, auch wenn eine da ist (nur Prozessor)."
+        echo "PHOTOVAULT_GPU=1"
         echo "GPU_VRAM_MB=0"
     } > "$ENV_FILE"
     [ "$api" != 8000 ] || [ "$qd" != 6333 ] && warn "Port 8000 oder 6333 war belegt -- PhotoVault nimmt $api / $qd."
     [ "$ol" != 11434 ] && say "Port 11434 ist belegt -- laeuft hier schon ein Ollama? Das Buendel nimmt $ol; im Wizard laesst sich auch das eigene eintragen."
 fi
+set_env() {  # set_env KEY WERT -- Zeile ersetzen oder anhaengen
+    if grep -q "^$1=" "$ENV_FILE"; then
+        sed -i.bak "s|^$1=.*|$1=$2|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+    else
+        echo "$1=$2" >> "$ENV_FILE"
+    fi
+}
 vram="$(vram_mb)"
-if grep -q '^GPU_VRAM_MB=' "$ENV_FILE"; then
-    sed -i.bak "s/^GPU_VRAM_MB=.*/GPU_VRAM_MB=$vram/" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
-else
-    echo "GPU_VRAM_MB=$vram" >> "$ENV_FILE"
+set_env GPU_VRAM_MB "$vram"
+# Die Karte benutzen, wenn eine da ist -- es sei denn, die .env sagt nein.
+# Unter macOS reicht Docker Desktop keine GPU durch; dort bleibt es beim Prozessor.
+gpu=0; api_gpu=0
+driver="$(driver_major)"
+if [ "$vram" -gt 0 ] && [ "$(uname -s)" = "Linux" ] && ! grep -q '^PHOTOVAULT_GPU=0' "$ENV_FILE"; then
+    gpu=1
+    [ "$driver" -ge "$MIN_DRIVER" ] && api_gpu=1
 fi
-if [ "$vram" -gt 0 ]; then
-    ok "Grafikkarte: $((vram / 1024)) GB Speicher"
-    [ "$(uname -s)" = "Linux" ] && say "Fuer die GPU im Container braucht Docker das NVIDIA Container Toolkit."
+if [ "$api_gpu" = "1" ]; then
+    set_env PHOTOVAULT_IMAGE_TAG cuda
+    set_env TORCH_INDEX "https://download.pytorch.org/whl/cu130"
+    set_env ORT_PACKAGE onnxruntime-gpu
+    ok "Grafikkarte: $((vram / 1024)) GB Speicher, Treiber $driver -- Beschreibungen, Gesichter und CLIP rechnen darauf."
+    say "Dafuer braucht Docker das NVIDIA Container Toolkit (nvidia-ctk)."
 else
-    say "Keine NVIDIA-Grafikkarte gefunden -- Beschreibungen liefe der Prozessor."
+    set_env PHOTOVAULT_IMAGE_TAG latest
+    set_env TORCH_INDEX "https://download.pytorch.org/whl/cpu"
+    set_env ORT_PACKAGE onnxruntime
+    if [ "$gpu" = "1" ]; then warn "Grafikkarte gefunden, aber Treiber $driver ist aelter als $MIN_DRIVER (CUDA 13) -- Gesichter und CLIP rechnet der Prozessor, Ollama nutzt die Karte. Treiber aktualisieren, dann neu starten."
+    elif [ "$vram" -gt 0 ]; then say "Grafikkarte gefunden, aber nicht benutzt (PHOTOVAULT_GPU=0 oder macOS) -- alles rechnet der Prozessor."
+    else say "Keine NVIDIA-Grafikkarte gefunden -- alles rechnet der Prozessor."; fi
     [ "$(uname -s)" = "Darwin" ] && say "macOS: ein natives Ollama (ollama.com) nutzt die GPU; im Wizard die Adresse http://host.docker.internal:11434 eintragen."
 fi
-gpu=0; [ "$vram" -gt 0 ] && [ "$(uname -s)" = "Linux" ] && gpu=1
 port="$(grep '^API_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2)"; port="${port:-8000}"
 url="http://localhost:$port"
 
 # --- 3. Orte und gewaehlte Ordner --------------------------------------------
 mkdir -p "$DATA_DIR"
-write_override "$gpu"
+write_override "$gpu" "$api_gpu"
 ok "Lesend eingebunden: $(photo_roots | tr '\n' ' ')"
 chosen="$(chosen_paths "$SOURCES_FILE" | tr '\n' ' ')"
 [ -n "$chosen" ] && ok "Beschreibbar: $chosen"
@@ -268,7 +312,7 @@ case "$step" in
     sources-done|done) ;;
     *) warn "Zwei Stunden ohne Ordnerwahl -- beim naechsten Start werden gewaehlte Ordner beschreibbar."; exit 0 ;;
 esac
-write_override "$gpu"
+write_override "$gpu" "$api_gpu"
 chosen="$(chosen_paths "$SOURCES_FILE" | tr '\n' ' ')"
 if [ -z "$chosen" ]; then
     warn "Keine Ordner in data/sources.txt gefunden, die unter /host liegen -- nichts einzubinden."

@@ -50,7 +50,12 @@ Gesichtserkennung, Szenenerkennung, Datum, Ereignisse und die Suche brauchen
 keine GPU und kein Sprachmodell.
 
 **Optional — Grafikkarte.** Nicht nötig. Der Unterschied ist deutlich, aber
-kleiner als man denkt. Gemessen an derselben Maschine, je Foto:
+kleiner als man denkt. Im Docker-Verbund wählt `start.bat` bei einer
+NVIDIA-Karte (Treiber ab 580) von selbst die Image-Variante `cuda` und
+reicht die Karte an Ollama *und* an PhotoVault durch — gemessen 19.09.2026
+im Container auf einer RTX 5090: Gesichter 42 ms, CLIP 32 ms je Foto. Wer
+das nicht will: `PHOTOVAULT_GPU=0` in der `.env`. Gemessen an derselben
+Maschine, je Foto:
 
 | | GPU | CPU, 4 Kerne | CPU, 8 | CPU, 24 |
 |---|---|---|---|---|

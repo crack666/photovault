@@ -41,8 +41,19 @@ services:
   api:
     # Fertiges Image, sobald die Action eines gebaut hat; bis dahin (und für
     # Entwickler) baut compose selbst, wenn das Image lokal fehlt.
-    image: ghcr.io/crack666/photovault:latest
-    build: .
+    #
+    # Zwei Varianten: `latest` rechnet Gesichter und CLIP auf dem Prozessor,
+    # `cuda` auf einer NVIDIA-Karte (~10x schneller beim Einlesen; CUDA 13,
+    # Treiber ab 580). start.bat wählt `cuda`, wenn es Karte und Treiber
+    # misst, und reicht sie in der Override auch an diesen Container durch;
+    # wer das nicht will, setzt in der .env PHOTOVAULT_GPU=0. Die
+    # Build-Argumente gelten nur für den lokalen Bau.
+    image: ghcr.io/crack666/photovault:${PHOTOVAULT_IMAGE_TAG:-latest}
+    build:
+      context: .
+      args:
+        TORCH_INDEX: ${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}
+        ORT: ${ORT_PACKAGE:-onnxruntime}
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
