@@ -46,16 +46,45 @@ läuft. Drei Wege:
 |---|---|---|
 | Pfad tippen | heute | unzumutbar, und `D:\Fotos` gegen `D:/Fotos` gegen Umlaute |
 | Ordnerdialog aus `start.bat` (PowerShell `FolderBrowserDialog`) | vor dem Start | funktioniert, aber je Ordner ein Dialog, und jeder spätere Ordner heißt: Skript neu, Container neu |
-| **Feste Laufwerke read-only mounten, Baum im Browser** | `start.bat` erzeugt `docker-compose.override.yml` mit allen festen Laufwerken (`C:/` → `/host/c`, `D:/` → `/host/d`, …, `read_only: true`, lange Syntax wegen der Doppelpunkte); der Wizard zeigt den Baum lazy, der Nutzer hakt Ordner an | **gewählt.** Kein Tippen, kein Dialog, Ordner später ergänzen ohne Neustart |
+| **Feste Laufwerke read-only mounten, Baum im Browser, gewählte Ordner rw** | `start.bat` erzeugt `docker-compose.override.yml` mit allen festen Laufwerken (`C:/` → `/host/c`, `D:/` → `/host/d`, …, `read_only: true`, lange Syntax wegen der Doppelpunkte); der Wizard zeigt den Baum lazy, der Nutzer hakt Ordner an; die gewählten Ordner werden **am selben Pfad** noch einmal beschreibbar eingehängt | **gewählt.** Kein Tippen, kein Dialog, Schreibrechte genau dort, wo die Fotos liegen |
+
+Warum nicht einfach alles beschreibbar: Papierkorb (`unlink`), Verschieben
+(`/relocate`), `exif_repair` und die Zeitkorrektur schreiben in den Fotobaum —
+mit read-only ist das Archiv nur ein Index, und genau die Kuratierung ist das
+Produkt. Aber „alles rw" hieße: ein Fehler im Löschpfad trifft `C:\`. Der
+Code-Zaun (`photo_root()` = gemeinsames Elternverzeichnis der Quellen) hilft
+bei mehreren Laufwerken nicht, er fällt dann auf `/host` zurück. Die Grenze
+muss der Kernel ziehen, nicht der Code: **rw nur die gewählten Ordner.**
+
+Wie das ohne Konsole geht — `start.bat` in zwei Phasen, der Nutzer merkt es
+nicht:
+
+1. Laufwerke ro, Verbund hoch, Browser auf `/setup`. Das Konsolenfenster
+   bleibt offen: „Warte auf deine Ordnerwahl im Browser …" und fragt die API
+   alle paar Sekunden.
+2. Sobald `sources.txt` geschrieben ist: Override neu erzeugen — je gewählter
+   Quelle ein zweiter Mount, `D:/Fotos` → `/host/d/Fotos`, **rw, derselbe
+   Pfad** (Docker ordnet verschachtelte Mounts nach Zieltiefe, der tiefere
+   deckt den flacheren ab) — und `docker compose up -d`; der Container wird
+   in ~10 s neu erstellt, der Wizard wartet und macht mit dem Einlesen weiter.
 
 Konsequenzen, ausgesprochen:
 
-- Der Container sieht die Platten **lesend**. Es bleibt lokal, nichts verlässt
-  den Rechner — der Kern des Projekts bleibt. Wer das nicht will, hat den
-  Dialog als dokumentierten Rückfall (`start.bat setup --dialog`), v2.
-- `sources.txt` bleibt die eine Wahrheit für die Pipeline, nur mit
-  `/host/d/Fotos` statt `/photos`. Der Baum-Endpunkt schluckt
-  Berechtigungsfehler (Systemordner, Junctions) statt zu sterben.
+- **Ein** Pfadraum: `/host/<laufwerk>/…` überall — im Baum, in `sources.txt`,
+  im Index. Kein `/photos` mehr, kein Umrechnen.
+- Ordner später ergänzen: sofort einlesbar (dafür reicht ro), beschreibbar
+  nach dem nächsten `start.bat` — der Wizard sagt das dazu. Die Override-Datei
+  ist eine reine Funktion aus Laufwerken und `sources.txt`, bei jedem Start
+  neu erzeugt, nicht getrackt.
+- Der Container sieht die übrigen Platten **lesend**. Es bleibt lokal, nichts
+  verlässt den Rechner. Wer auch das nicht will, hat den Dialog als
+  dokumentierten Rückfall (`start.bat setup --dialog`), v2.
+- Der Baum-Endpunkt schluckt Berechtigungsfehler (Systemordner, Junctions)
+  statt zu sterben.
+- **Zu messen, nicht zu glauben** (Testliste 3a): verschachtelte Bind-Mounts
+  ro/rw am selben Pfad unter Docker Desktop mit WSL2-Backend — auf einer
+  Linux-Engine ist das dokumentiertes Verhalten, auf dem 9p/grpc-fuse-Share
+  von Docker Desktop muss es einer gesehen haben.
 - Netzlaufwerke und UNC sind **nicht** v1. Docker Desktop mountet gemappte
   Laufwerke nicht zuverlässig; die Zeile „Netzlaufwerk geht, wenn es im
   Explorer sichtbar ist" fliegt aus `start.bat`. Wer Fotos auf der NAS hat,
@@ -141,9 +170,10 @@ Trockenlauf) → Einlesen als Job mit Fortschritt (vorhanden) → LLM (E2–E4) 
 Fertig-Seite: was geht, was fehlt, wo man klickt.
 
 **A — `start.bat` / `start.sh`** — Docker-Prüfung mit Klartext (Virtualisierung
-im BIOS, WSL2-Update), Laufwerke → Override-Datei, `GPU_VRAM_MB`, freie Ports
-wählen, `pull` statt `build`, Wartezeit gegen das Laden der Gewichte messen,
-Browser auf `/setup`, kein Einlesen mehr im Terminal.
+im BIOS, WSL2-Update), Laufwerke → Override-Datei, zweite Phase nach der
+Ordnerwahl (rw-Mounts, Neustart), `GPU_VRAM_MB`, freie Ports wählen, `pull`
+statt `build`, Wartezeit gegen das Laden der Gewichte messen, Browser auf
+`/setup`, kein Einlesen mehr im Terminal.
 
 **D — Image und Doku** — Action, Compose, README „Der einfache Weg" nach dem
 Test neu, Windows-Klemmliste.
@@ -163,6 +193,9 @@ Nicht eingreifen, mitschreiben.
    Alarm nach 2 Minuten, weil Gewichte laden?
 3. Browser öffnet `/setup`. Ordner anhaken, Ausschlüsse, Trockenlauf-Zahlen
    stimmen mit dem Explorer überein?
+   3a. Nach der Ordnerwahl: Konsole meldet den Neustart, Wizard läuft weiter.
+   *Messen:* ist `/host/d/Fotos` danach beschreibbar (Papierkorb an einem
+   Testfoto), der Rest von `D:/` weiterhin nicht? Dauer des Neustarts.
 4. Einlesen: Fortschritt sichtbar, Abbruch und Fortsetzen funktionieren.
    *Messen:* Fotos/s auf dieser CPU (README nennt 1,6–2,6).
 5. Ollama fehlt → Wizard erklärt, „später" führt zu einer benutzbaren
