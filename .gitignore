@@ -74,3 +74,6 @@ data/
 # deshalb weiter in der Historie. Selbst erzeugen: tools/clock_report.py,
 # Einordnung in docs/dates.md.
 docs/exif-pruefbericht.md
+
+# Von start.bat / start.sh bei jedem Start erzeugt: Laufwerke und gewaehlte Ordner.
+docker-compose.override.yml

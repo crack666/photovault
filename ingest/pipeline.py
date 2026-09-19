@@ -816,12 +816,16 @@ class IngestPipeline:
         selben Prozess auf derselben Karte liegen.
         """
         from ingest.ollama_client import (
-            CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, litellm_headers,
+            CAPTION_NUM_CTX, caption_model, embed_model, litellm_headers,
             litellm_url, ollama_url, post_json,
         )
 
         from ingest.captioner import caption_options
 
+        CAPTION_MODEL, EMBED_MODEL = caption_model(), embed_model()
+        if not CAPTION_MODEL:
+            logger.info("Kein Caption-Modell gewaehlt -- nichts vorzuwaermen.")
+            return
         started = time.time()
         pool = litellm_url()
         try:

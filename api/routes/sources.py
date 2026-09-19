@@ -57,11 +57,16 @@ def _in_der_bibliothek(pfad: str) -> str:
     Loeschen waere fail-closed hier der Einrichtungstod: ohne Quellen gibt
     es keine Wurzel, und ohne Waehler kaeme man nie zur ersten Quelle.
     Wer eine zweite Bibliothek woanders hat, setzt `PHOTOVAULT_PHOTO_ROOT`
-    -- die Variable gibt es schon.
+    -- die Variable gibt es schon. Im Docker-Verbund gilt
+    `PHOTOVAULT_BROWSE_ROOT` (`/host`, die Laufwerke, nichts vom Container
+    selbst) -- und zwar *vor* der Bibliothekswurzel: die ist das gemeinsame
+    Elternverzeichnis der Quellen, und nach der ersten Quelle auf `D:` liesse
+    sie keine zweite auf `C:` mehr zu. Der Waehler darf ueberall auf den
+    Laufwerken hin; was geloescht werden darf, entscheidet weiter die Wurzel.
     """
-    from ingest.spaces import photo_root, under_root
+    from ingest.spaces import browse_root, photo_root, under_root
 
-    root = photo_root()
+    root = browse_root() or photo_root()
     if not root:
         return pfad
     if not under_root(pfad, root):
@@ -148,12 +153,29 @@ def toggle_source(req: ToggleRequest) -> dict:
     return {"ok": True, "line": req.line, "enabled": req.enabled}
 
 
+#: Was in einer frisch angelegten Datei ueber den Eintraegen steht. Der
+#: Setup-Wizard legt sie mit dem ersten Haken an -- vorher gab es die Datei
+#: nur, wenn jemand sie im Editor geschrieben hatte.
+NEW_FILE_HEAD = [
+    "# Welche Verzeichnisse eingelesen werden. Eine Zeile je Ordner,",
+    "# ein '-' davor schliesst aus, ein '#' davor legt still.",
+    "",
+]
+
+
+def _read_or_new() -> src.SourcesFile:
+    """Die Datei, oder eine leere mit Kopfzeilen, wenn es sie noch nicht gibt."""
+    if Path(FILE).exists():
+        return src.read(FILE)
+    return src.SourcesFile(path=FILE, lines=list(NEW_FILE_HEAD))
+
+
 @router.post("/add")
 def add_source(req: AddRequest) -> dict:
     p = _in_der_bibliothek(req.path.rstrip("/"))
     if not Path(p).is_dir():
         raise HTTPException(400, f"Kein Verzeichnis: {p}")
-    s = src.read(FILE)
+    s = _read_or_new()
     if any(e.path.rstrip("/") == p and e.exclude == req.exclude for e in s.entries):
         raise HTTPException(409, f"Steht schon drin: {p}")
     try:
@@ -216,12 +238,13 @@ def browse(path: str = "") -> dict:
     Je Ordner steht dabei, wieviele Bilder direkt darin liegen und ob es
     Unterordner gibt -- sonst klickt man sich blind durch einen Baum.
     """
-    from ingest.spaces import photo_root
+    from ingest.spaces import browse_root, photo_root
 
     # Ohne Pfad nicht `/`, sondern die Bibliothekswurzel: das ist der Ort,
     # an dem der Waehler anfangen soll, und `/` war nie eine sinnvolle
-    # Antwort auf "welchen Fotoordner meinst du".
-    p = Path(_in_der_bibliothek(path) if path else (photo_root() or "/"))
+    # Antwort auf "welchen Fotoordner meinst du". Im Verbund: die Laufwerke
+    # unter /host -- auch mit Quellen, sonst kaeme man nie auf die zweite Platte.
+    p = Path(_in_der_bibliothek(path) if path else (browse_root() or photo_root() or "/"))
     if not p.is_absolute():
         raise HTTPException(400, "Absoluter Pfad erwartet")
     if not p.is_dir():
@@ -256,7 +279,7 @@ def browse(path: str = "") -> dict:
     except OSError as e:
         raise HTTPException(502, f"Nicht lesbar: {e}") from e
 
-    s = src.read(FILE)
+    s = _read_or_new()
     drin = {e.path.rstrip("/"): e for e in s.entries}
     for d in dirs:
         e = drin.get(d["path"].rstrip("/"))
@@ -267,7 +290,7 @@ def browse(path: str = "") -> dict:
     # die Oberflaeche einen Weg nach oben, den die Schranke gleich mit 403
     # beantwortet. Ein Knopf, der zuverlaessig scheitert, ist schlimmer als
     # keiner.
-    root = photo_root()
+    root = browse_root() or photo_root()
     oben = None if p.parent == p else str(p.parent)
     if root and str(p).rstrip("/") == root.rstrip("/"):
         oben = None
@@ -293,7 +316,7 @@ def preview() -> dict:
 
     from ingest.scanner import NASScanner
 
-    s = src.read(FILE)
+    s = _read_or_new()
     include = [e.path for e in s.active if not e.exclude]
     exclude = [e.path for e in s.active if e.exclude]
     if not include:

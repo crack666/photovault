@@ -31,7 +31,9 @@ from ingest.reembed import rebuild_text_vectors
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+#: Nur ein ausdruecklicher Wert ist ein Override; ohne gilt, was Umgebung
+#: und Setup sagen (ingest.settings.ollama_base) -- nicht fest 127.0.0.1.
+OLLAMA_URL = os.environ.get("OLLAMA_URL") or None
 
 #: Gemessen an diesem Bestand, je Foto.
 SECONDS_PER_PHOTO = 0.13
