@@ -248,10 +248,13 @@ außen kommt ohne Portproxy nichts in die WSL-VM hinein.
 
 | | |
 |---|---|
-| „Docker laeuft nicht" | Docker Desktop öffnen und warten, bis das Symbol ruhig steht |
-| Port 8000 belegt | in `.env` `API_PORT=8080` setzen, neu starten |
-| Nichts wird gefunden | `sources.txt` prüfen — die Pfade beginnen mit `/photos`, nicht mit `D:\` |
+| „Docker laeuft nicht" | Docker Desktop öffnen und warten, bis das Symbol ruhig steht. Startet Docker Desktop selbst nicht: Virtualisierung im BIOS („SVM Mode" / „VT-x"), dann `wsl --update` |
+| Port 8000 belegt | `start.bat` nimmt selbst den nächsten freien; sonst in `.env` `API_PORT=8080` setzen |
+| „Docker sieht die Grafikkarte nicht" | Docker Desktop → Settings → General → „Use the WSL 2 based engine"; NVIDIA-Treiber ab 580, `wsl --update`, Neustart. Eine `.wslconfig` braucht es **nicht** — die Durchreichung kommt vom Windows-Treiber (gemessen 20.09.2026: `docker run --gpus all … nvidia-smi -L` ohne jeden Eintrag) |
+| Nichts wird gefunden | im Wizard oder unter Jobs die Ordner anhaken — die Pfade beginnen mit `/host/…`, nicht mit `D:\` |
 | Seite lädt nicht | `docker compose logs api` zeigt, woran es liegt |
+| NAS erscheint nicht im Baum | `docker compose logs api` — meist Benutzer/Passwort; `data/nas-volumes.yml` enthält die Definition |
+| Ein zweiter Lauf fängt „von vorn" an | Er überspringt, was im Index ist, und sagt es. Wirklich von vorn heißt es nur, wenn der Ordner umbenannt wurde (Compose-Projekt) oder der Mount-Pfad ein anderer ist |
 | Von vorn anfangen | `docker compose down -v` löscht den Index. Die Fotos bleiben unberührt. |
 
 

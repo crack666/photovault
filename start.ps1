@@ -247,6 +247,24 @@ function Test-Docker {
 
 function Compose { & docker compose @args }
 
+function Test-DockerGpu {
+    <#
+    Sieht Docker die Karte? Unter Docker Desktop kommt sie ueber die
+    WSL2-GPU-Durchreichung des NVIDIA-Treibers -- ohne Eintrag in einer
+    .wslconfig, ohne Toolkit. Wenn das fehlschlaegt (Hyper-V-Backend statt
+    WSL 2, alter Treiber, altes WSL), scheiterte sonst erst `compose up` mit
+    "could not select device driver nvidia" -- fuer den Nutzer ein Raetsel.
+    Deshalb vorher messen, mit dem Basis-Image, das ohnehin gebraucht wird.
+    #>
+    $out = & docker run --rm --gpus all python:3.11-slim nvidia-smi -L 2>&1
+    if ($LASTEXITCODE -eq 0 -and "$out" -match "GPU 0") { return $true }
+    Warn "Docker sieht die Grafikkarte nicht -- alles rechnet der Prozessor. Meist hilft:"
+    Say "  - Docker Desktop -> Settings -> General: 'Use the WSL 2 based engine' an"
+    Say "  - NVIDIA-Treiber aktualisieren (ab 580), dann 'wsl --update' und Neustart"
+    Say ("  Docker sagte: " + (("$out" -split "`n")[-1]).Trim())
+    return $false
+}
+
 function Wait-Api([string]$Url, [int]$Seconds, [string]$Note) {
     $t0 = Get-Date
     $shown = $false
@@ -350,7 +368,10 @@ Set-EnvValue "GPU_VRAM_MB" $vram
 # denn, die .env sagt nein. Ollama bekommt sie in jedem Fall, das eigene
 # Image nur mit passendem Treiber.
 $driver = Get-DriverMajor
-$useGpu = ($vram -gt 0) -and ($envMap["PHOTOVAULT_GPU"] -ne "0") -and ($driver -ge $MinDriver)
+$wantGpu = ($vram -gt 0) -and ($envMap["PHOTOVAULT_GPU"] -ne "0")
+# Die Karte muss auch in Docker ankommen -- gemessen, nicht angenommen.
+if ($wantGpu -and -not (Test-DockerGpu)) { $wantGpu = $false; $vram = 0 }
+$useGpu = $wantGpu -and ($driver -ge $MinDriver)
 if ($useGpu) {
     Set-EnvValue "PHOTOVAULT_IMAGE_TAG" "cuda"
     Set-EnvValue "TORCH_INDEX" "https://download.pytorch.org/whl/cu130"
@@ -379,7 +400,7 @@ function Set-ComposeFiles {
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 Set-ComposeFiles
 # Ollama darf die Karte auch mit aelterem Treiber nutzen; die API nur mit CUDA 13.
-$chosen = Write-Override ($vram -gt 0 -and $envMap["PHOTOVAULT_GPU"] -ne "0") $useGpu
+$chosen = Write-Override $wantGpu $useGpu
 $drives = Get-FixedDrives
 Ok ("Laufwerke lesend: " + (($drives | ForEach-Object { "$($_):" }) -join " "))
 if ($chosen.Count) { Ok ("Beschreibbar: " + (($chosen | ForEach-Object { $_.Host }) -join ", ")) }
@@ -434,7 +455,7 @@ if ($step -notin @("sources-done", "done")) {
     Warn "Zwei Stunden ohne Ordnerwahl -- beim naechsten start.bat werden gewaehlte Ordner beschreibbar."
     exit 0
 }
-$chosen = Write-Override ($vram -gt 0 -and $envMap["PHOTOVAULT_GPU"] -ne "0") $useGpu
+$chosen = Write-Override $wantGpu $useGpu
 Set-ComposeFiles
 if ($chosen.Count) { Ok ("Beschreibbar einbinden: " + (($chosen | ForEach-Object { $_.Host }) -join ", ")) }
 elseif (Test-Path -LiteralPath $NasFile) { Ok "Beschreibbar einbinden: gewaehlte Ordner auf Freigaben (data/nas-volumes.yml)" }

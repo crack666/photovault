@@ -236,11 +236,27 @@ vram="$(vram_mb)"
 set_env GPU_VRAM_MB "$vram"
 # Die Karte benutzen, wenn eine da ist -- es sei denn, die .env sagt nein.
 # Unter macOS reicht Docker Desktop keine GPU durch; dort bleibt es beim Prozessor.
+docker_sees_gpu() {
+    # Unter Linux braucht Docker dafuer das NVIDIA Container Toolkit; ohne
+    # scheiterte sonst erst `compose up` mit "could not select device driver".
+    local out
+    out="$(docker run --rm --gpus all python:3.11-slim nvidia-smi -L 2>&1)" && case "$out" in *"GPU 0"*) return 0 ;; esac
+    warn "Docker sieht die Grafikkarte nicht -- alles rechnet der Prozessor."
+    say "  NVIDIA Container Toolkit installieren: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
+    say "  dann: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+    say "  Docker sagte: $(printf '%s' "$out" | tail -1)"
+    return 1
+}
+
 gpu=0; api_gpu=0
 driver="$(driver_major)"
 if [ "$vram" -gt 0 ] && [ "$(uname -s)" = "Linux" ] && ! grep -q '^PHOTOVAULT_GPU=0' "$ENV_FILE"; then
-    gpu=1
-    [ "$driver" -ge "$MIN_DRIVER" ] && api_gpu=1
+    if docker_sees_gpu; then
+        gpu=1
+        [ "$driver" -ge "$MIN_DRIVER" ] && api_gpu=1
+    else
+        vram=0
+    fi
 fi
 if [ "$api_gpu" = "1" ]; then
     set_env PHOTOVAULT_IMAGE_TAG cuda
