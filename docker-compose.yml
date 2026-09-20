@@ -22,6 +22,12 @@
 # Die Fotos kommen dann aus der Override-Datei (siehe start.sh, Abschnitt
 # "Laufwerke"), nicht aus dieser Datei.
 
+# Fester Projektname: Compose leitet ihn sonst vom Ordnernamen ab, und ein
+# neu entpacktes ZIP heisst "photovault-master" statt "photovault" -- dann
+# entstuende ein zweiter Verbund mit leerem Index, und alles Eingelesene
+# saehe verloren aus. Volumes haengen am Projektnamen, nicht am Ordner.
+name: photovault
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.18.3
@@ -99,6 +105,10 @@ services:
       - ./data:/app/data
       # Modellgewichte (insightface, CLIP) überleben so einen Neubau des Images.
       - model_cache:/models
+      # Das Container-Verzeichnis, unter dem die Fotos liegen, bestimmt die
+      # Kennung eines Fotos (uuid5 aus dem Pfad). Bleibt es gleich, setzt ein
+      # zweiter Lauf dort fort, wo der erste aufhoerte; ein anderer Mount-Pfad
+      # heisst "alles neu".
       # Vorschaubilder. Ohne dieses Volume liegen sie im Container und sind
       # nach jedem `--build` weg -- 14.593 Originale müssten dann wieder
       # über die Leitung. Benanntes Volume und kein Bind-Mount auf den

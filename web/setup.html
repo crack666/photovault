@@ -96,8 +96,8 @@
       <p>
         PhotoVault liest jetzt alle Fotos einmal: Gesichter, Szenen, Aufnahmedatum.
         Das dauert je nach Menge und Rechner Minuten bis Stunden; beim ersten Mal
-        lädt es vorher rund 1,5 GB Modelle. Ein Abbruch ist unkritisch — es geht
-        danach an derselben Stelle weiter.
+        lädt es vorher rund 1,5 GB Modelle. Ein Abbruch ist unkritisch — der
+        nächste Lauf überspringt, was schon im Index ist, und sagt das auch.
       </p>
       <div class="card" id="ingest-card">
         <div id="ingest-idle">
@@ -635,6 +635,7 @@ async function pollIngest() {
     <span><b>${(Number(j.rate_per_s) || 0).toFixed(2)}</b> Fotos/s</span>
     <span>Laufzeit ${fmtDur(j.elapsed_s)}</span>
     ${j.status === "running" && j.eta_s ? `<span>noch etwa ${fmtDur(j.eta_s)}</span>` : ""}
+    ${j.skipped ? `<span><b>${num(j.skipped)}</b> schon im Index, übersprungen</span>` : ""}
     ${j.errors ? `<span><b>${num(j.errors)}</b> Fehler</span>` : ""}`;
   $("ingest-phase").textContent = j.phase || "";
   $("btn-abort").dataset.job = j.job_id;
@@ -644,7 +645,7 @@ async function pollIngest() {
     $("ingest-run").hidden = true;
     $("ingest-done").hidden = false;
     setMsg("ingest-summary", j.status === "done"
-      ? `Fertig: ${num(j.processed)} Fotos eingelesen${j.errors ? `, ${num(j.errors)} mit Fehler` : ""}.`
+      ? `Fertig: ${num(j.processed)} Fotos eingelesen${j.skipped ? `, ${num(j.skipped)} waren schon im Index` : ""}${j.errors ? `, ${num(j.errors)} mit Fehler` : ""}.`
       : `Lauf ${j.status}: ${num(j.processed)} von ${num(j.total)} — der Rest folgt beim nächsten Lauf.`,
       j.status === "done" ? "ok" : "");
     $("next-2").textContent = "Weiter";
