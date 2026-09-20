@@ -407,11 +407,20 @@ if ($chosen.Count) { Ok ("Beschreibbar: " + (($chosen | ForEach-Object { $_.Host
 
 # --- Hochfahren -------------------------------------------------------------
 if ($Action -eq "restart") { Compose down }
+# Erst holen, sonst bauen -- und zwar *vor* `up`: mit `image:` und `build:`
+# zugleich versucht `compose up` ein fehlendes Image zu ziehen und bricht
+# ab, wenn die Registry "denied" sagt (gemessen beim ersten Fremden, als
+# das Paket auf GHCR noch nicht oeffentlich war). Ist das Image nach dem Bau
+# lokal da, zieht `up` nichts mehr.
 Say "Hole das fertige Image (falls vorhanden) ..."
 Compose pull api *> $null
-if ($LASTEXITCODE -ne 0) { Say "Kein fertiges Image erreichbar -- baue selbst. Beim ersten Mal einige Minuten." }
+if ($LASTEXITCODE -ne 0) {
+    Say "Kein fertiges Image erreichbar -- baue selbst. Beim ersten Mal 5-15 Minuten, je nach Leitung."
+    Compose build api
+    if ($LASTEXITCODE -ne 0) { Bad "Bau fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1 }
+}
 Say "Starte ..."
-Compose up -d
+Compose up -d --no-build
 if ($LASTEXITCODE -ne 0) {
     Bad "Start fehlgeschlagen. Die Meldung oben sagt meist, warum."
     exit 1

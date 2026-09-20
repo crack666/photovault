@@ -292,10 +292,17 @@ chosen="$(chosen_paths "$SOURCES_FILE" | tr '\n' ' ')"
 
 # --- 4. Hochfahren ----------------------------------------------------------
 [ "$ACTION" = "restart" ] && compose down
+# Erst holen, sonst bauen -- und zwar *vor* `up`: mit `image:` und `build:`
+# zugleich versucht `compose up` ein fehlendes Image zu ziehen und bricht ab,
+# wenn die Registry "denied" sagt (gemessen, solange das Paket auf GHCR nicht
+# oeffentlich war). Ist das Image nach dem Bau lokal da, zieht `up` nichts.
 say "Hole das fertige Image (falls vorhanden) ..."
-compose pull api >/dev/null 2>&1 || say "Kein fertiges Image erreichbar -- baue selbst. Beim ersten Mal einige Minuten."
+if ! compose pull api >/dev/null 2>&1; then
+    say "Kein fertiges Image erreichbar -- baue selbst. Beim ersten Mal 5-15 Minuten, je nach Leitung."
+    compose build api || { bad "Bau fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1; }
+fi
 say "Starte ..."
-compose up -d || { bad "Start fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1; }
+compose up -d --no-build || { bad "Start fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1; }
 
 wait_api() {
     local seconds="$1" note="$2" t0 shown=0
