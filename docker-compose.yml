@@ -95,7 +95,10 @@ services:
       # start.sh erzeugt): alle festen Laufwerke lesend unter /host, die
       # gewählten Quellen zusätzlich beschreibbar am selben Pfad. Schreiben
       # dürfen Papierkorb, Verschieben und exif_repair damit genau dort, wo
-      # die Fotos liegen -- und nirgends sonst.
+      # die Fotos liegen -- und nirgends sonst. Der Container-Pfad eines
+      # Fotos ist zugleich seine Kennung (uuid5 aus dem Pfad): bleibt er
+      # gleich, setzt ein zweiter Lauf fort, wo der erste aufhörte; ein
+      # anderer Mount-Pfad hieße "alles neu".
       #
       # Lange Läufe startet die Jobs-Seite als Kind *in diesem Container*.
       # Beenden ist SIGTERM an deren Prozessgruppe, nicht `pkill` auf dem Host
@@ -105,10 +108,6 @@ services:
       - ./data:/app/data
       # Modellgewichte (insightface, CLIP) überleben so einen Neubau des Images.
       - model_cache:/models
-      # Das Container-Verzeichnis, unter dem die Fotos liegen, bestimmt die
-      # Kennung eines Fotos (uuid5 aus dem Pfad). Bleibt es gleich, setzt ein
-      # zweiter Lauf dort fort, wo der erste aufhoerte; ein anderer Mount-Pfad
-      # heisst "alles neu".
       # Vorschaubilder. Ohne dieses Volume liegen sie im Container und sind
       # nach jedem `--build` weg -- 14.593 Originale müssten dann wieder
       # über die Leitung. Benanntes Volume und kein Bind-Mount auf den
