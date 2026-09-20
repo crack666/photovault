@@ -298,21 +298,35 @@ class TestMissingRequirements:
         assert "gibtesnicht_xyz" in msg
         assert "pip install irgendwas" in msg
 
-    def test_unreachable_ollama_is_said_plainly(self):
+    def test_unreachable_ollama_is_said_plainly(self, monkeypatch):
         from api.routes.jobs import Runnable, missing_requirements
 
-        spec = Runnable(module="x", label="X", note="", kind="x",
-                        needs_models=("irgendein-modell",))
+        monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "irgendein-modell")
+        spec = Runnable(module="x", label="X", note="", kind="x", needs_kinds=("caption",))
         assert "nicht erreichbar" in missing_requirements(spec, models=None)
 
-    def test_reachable_but_model_not_pulled(self):
+    def test_reachable_but_model_not_pulled(self, monkeypatch):
+        """Der Name kommt zur Laufzeit aus Umgebung oder Setup -- die Abhilfe
+        aus dem Modus: ohne Pool ist es ein `ollama pull`."""
         from api.routes.jobs import Runnable, missing_requirements
 
-        spec = Runnable(module="x", label="X", note="", kind="x",
-                        needs_models=("fehlt:1b",), hint="ollama pull fehlt:1b")
+        monkeypatch.delenv("LITELLM_URL", raising=False)
+        monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "fehlt:1b")
+        spec = Runnable(module="x", label="X", note="", kind="x", needs_kinds=("caption",))
         msg = missing_requirements(spec, models={"anderes:7b"})
         assert "fehlt:1b" in msg
-        assert "ollama pull" in msg
+        assert "ollama pull fehlt:1b" in msg
+
+    def test_no_model_chosen_points_to_the_setup(self, monkeypatch):
+        """Ohne gewaehltes Modell ist "gestartet" eine Luege -- und die
+        Abhilfe ist der Wizard, nicht ein Pull von nichts."""
+        from api.routes.jobs import Runnable, missing_requirements
+
+        monkeypatch.delenv("LITELLM_URL", raising=False)
+        monkeypatch.delenv("PHOTOVAULT_CAPTION_MODEL", raising=False)
+        spec = Runnable(module="x", label="X", note="", kind="x", needs_kinds=("caption",))
+        msg = missing_requirements(spec, models={"anderes:7b"})
+        assert "Kein Modell" in msg and "Setup" in msg
 
     def test_a_present_model_passes(self):
         from api.routes.jobs import Runnable, missing_requirements

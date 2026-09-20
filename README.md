@@ -50,7 +50,12 @@ Gesichtserkennung, Szenenerkennung, Datum, Ereignisse und die Suche brauchen
 keine GPU und kein Sprachmodell.
 
 **Optional — Grafikkarte.** Nicht nötig. Der Unterschied ist deutlich, aber
-kleiner als man denkt. Gemessen an derselben Maschine, je Foto:
+kleiner als man denkt. Im Docker-Verbund wählt `start.bat` bei einer
+NVIDIA-Karte (Treiber ab 580) von selbst die Image-Variante `cuda` und
+reicht die Karte an Ollama *und* an PhotoVault durch — gemessen 19.09.2026
+im Container auf einer RTX 5090: Gesichter 42 ms, CLIP 32 ms je Foto. Wer
+das nicht will: `PHOTOVAULT_GPU=0` in der `.env`. Gemessen an derselben
+Maschine, je Foto:
 
 | | GPU | CPU, 4 Kerne | CPU, 8 | CPU, 24 |
 |---|---|---|---|---|
@@ -82,9 +87,13 @@ Jobs-Seite: Läufe, deren Voraussetzung nicht da ist, sind dort gesperrt und
 nennen den Grund, statt „gestartet" zu melden und still zu sterben.
 
 **Optional — [Ollama](https://ollama.com) für deutsche Bildbeschreibungen.**
-Läuft auf dem Host, nicht im Compose-Verbund: es braucht GPU-Durchreichung und
-lädt zweistellige Gigabyte. Ohne Ollama fehlen nur die Captions; alles andere
-funktioniert.
+Der Docker-Verbund bringt eines mit (Profil `ollama`, `start.bat` schaltet es
+ein; mit NVIDIA-Karte reicht das Skript die GPU durch, sonst rechnet der
+Prozessor). Wer schon ein Ollama hat, trägt im Wizard dessen Adresse ein —
+es muss dann auf allen Adressen lauschen (`OLLAMA_HOST=0.0.0.0`), sonst
+erreicht der Container es nicht. Unter macOS ist ein natives Ollama die
+bessere Wahl: Docker Desktop reicht dort keine GPU durch. Ohne Ollama fehlen
+nur die Captions; alles andere funktioniert.
 
 | Zweck | Empfehlung | VRAM | gemessen |
 |---|---|---|---|
@@ -92,11 +101,16 @@ funktioniert.
 | Alternative | `gemma4:26b` | ~18 GB | 1,3 s/Foto · kürzere Ergebnisse, Namensregeln ungeprüft |
 | Textvektor | `qwen3-embedding:4b` | ~4 GB | 20 ms je Foto im Stapel |
 
-Beide Vision-Modelle brauchen viel VRAM. Mit weniger als 16 GB wird es eng —
-dann lohnt ein kleineres Modell, das PhotoVault über
-`PHOTOVAULT_CAPTION_MODEL` akzeptiert. Getestet haben wir nur die beiden oben;
-die Prompt-Regeln gegen erfundene Namen sind auf `qwen3.8` abgestimmt und
-sollten mit einem anderen Modell an einer Stichprobe nachgeprüft werden.
+Beide Vision-Modelle brauchen viel VRAM. Mit weniger als 24 GB passt keines
+davon — `qwen3.8` gibt es nur als 27B. Der Setup-Wizard schlägt deshalb nach
+gemessenem Speicher vor (Stand der Ollama-Bibliothek 19.09.2026): ab 12 GB
+`gemma4:12b` (7,6 GB), ab 8 GB `gemma4:e4b-it-qat` (6,1 GB) mit dem kleinen
+Embedder `qwen3-embedding:0.6b`, darunter oder ohne Grafikkarte
+`gemma4:e2b-it-qat` (4,3 GB) auf dem Prozessor — mit einer Test-Caption und
+Stoppuhr, bevor ein Lauf über Tage startet. Getestet an diesem Archiv sind
+nur die beiden oben; die Prompt-Regeln gegen erfundene Namen sind auf
+`qwen3.8` abgestimmt und sollten mit einem anderen Modell an einer Stichprobe
+nachgeprüft werden.
 
 Modelle für Gesichter (insightface) und Szenen (CLIP) lädt PhotoVault beim
 ersten Lauf selbst, rund 1,5 GB.
@@ -125,12 +139,37 @@ und irgendwohin entpacken — auf den Desktop reicht.
 | | |
 |---|---|
 | Windows | Doppelklick auf **`start.bat`** |
-| macOS / Linux | Terminal im Ordner öffnen, `./start.sh` eingeben |
+| macOS / Linux | Terminal im Ordner öffnen, `bash start.sh` eingeben |
 
-Auf einer **frischen Maschine** fragt das Skript einmal nach dem Fotoordner,
-lädt rund 2 GB herunter und öffnet den Browser. Die Antworten stehen in `.env`
-(nicht im Git). Anschließend fragt es, ob es die Fotos einlesen soll — und
-zeigt vorher, was es gefunden hat.
+Das Skript fragt nichts. Es prüft Docker (und sagt im Klartext, was fehlt —
+etwa Virtualisierung im BIOS), wählt freie Ports, misst den Grafikspeicher,
+bindet die Laufwerke des Rechners **lesend** in den Verbund ein, lädt beim
+ersten Mal einige Gigabyte und öffnet den Browser. Was es festhält, steht in
+`.env` und `docker-compose.override.yml` (beides nicht im Git).
+
+Der Rest passiert im Browser, unter `/setup` — und dorthin führt `/` von
+selbst, solange noch keine Quelle eingetragen ist: Ordner anhaken (Baum,
+keine Pfade tippen), zählen lassen, einlesen mit Fortschritt, dann das
+Sprachmodell: das mitgelieferte Ollama oder ein eigenes, das Modell nach
+gemessenem Grafikspeicher vorgeschlagen und mit Balken geladen, und eine
+Test-Caption mit Stoppuhr sagt vorher, wie lange der ganze Bestand dauern
+würde. Wer lieber einen Anbieter im Netz nimmt, wählt ihn dort aus der
+Liste — mit dem Satz, der dazugehört: die Fotos verlassen dann den Rechner.
+Die Seite bleibt erreichbar; was sie festlegt, steht in `data/settings.json`.
+
+Das Fenster von `start.bat` bleibt während der Einrichtung offen: sobald die
+Ordner gewählt sind, bindet es genau diese **beschreibbar** ein und erstellt
+den Container einmal neu — nur dort darf PhotoVault Dateien anfassen
+(Papierkorb, Verschieben, EXIF-Reparatur), nirgends sonst. Die Seite wartet
+das ab. Ordner, die später dazukommen, werden beim nächsten Start
+beschreibbar; einlesen geht sofort.
+
+**Fotos auf einem NAS?** Kein Netzlaufwerk nötig — Docker Desktop könnte es
+ohnehin nicht durchreichen. Im Wizard die Freigabe eintragen
+(`\\nas\fotos`, Benutzer, Passwort); PhotoVault bindet sie selbst als
+CIFS-Volume ein und zeigt sie im Baum unter `nas`. Die Zugangsdaten liegen in
+`data/settings.json` und `data/nas-volumes.yml` (beides nicht im Git, nur für
+dich lesbar) — im Klartext, anders kennt der Mount sie nicht.
 
 Beim nächsten Mal genügt derselbe Doppelklick.
 
@@ -209,10 +248,13 @@ außen kommt ohne Portproxy nichts in die WSL-VM hinein.
 
 | | |
 |---|---|
-| „Docker laeuft nicht" | Docker Desktop öffnen und warten, bis das Symbol ruhig steht |
-| Port 8000 belegt | in `.env` `API_PORT=8080` setzen, neu starten |
-| Nichts wird gefunden | `sources.txt` prüfen — die Pfade beginnen mit `/photos`, nicht mit `D:\` |
+| „Docker laeuft nicht" | Docker Desktop öffnen und warten, bis das Symbol ruhig steht. Startet Docker Desktop selbst nicht: Virtualisierung im BIOS („SVM Mode" / „VT-x"), dann `wsl --update` |
+| Port 8000 belegt | `start.bat` nimmt selbst den nächsten freien; sonst in `.env` `API_PORT=8080` setzen |
+| „Docker sieht die Grafikkarte nicht" | Docker Desktop → Settings → General → „Use the WSL 2 based engine"; NVIDIA-Treiber ab 580, `wsl --update`, Neustart. Eine `.wslconfig` braucht es **nicht** — die Durchreichung kommt vom Windows-Treiber (gemessen 20.09.2026: `docker run --gpus all … nvidia-smi -L` ohne jeden Eintrag) |
+| Nichts wird gefunden | im Wizard oder unter Jobs die Ordner anhaken — die Pfade beginnen mit `/host/…`, nicht mit `D:\` |
 | Seite lädt nicht | `docker compose logs api` zeigt, woran es liegt |
+| NAS erscheint nicht im Baum | `docker compose logs api` — meist Benutzer/Passwort; `data/nas-volumes.yml` enthält die Definition |
+| Ein zweiter Lauf fängt „von vorn" an | Er überspringt, was im Index ist, und sagt es. Wirklich von vorn heißt es nur, wenn der Ordner umbenannt wurde (Compose-Projekt) oder der Mount-Pfad ein anderer ist |
 | Von vorn anfangen | `docker compose down -v` löscht den Index. Die Fotos bleiben unberührt. |
 
 
@@ -685,6 +727,15 @@ sudo mkdir -p /mnt/photo && sudo mount -t drvfs '\\192.0.2.10\photo' /mnt/photo
 ```
 
 Env: `OLLAMA_URL`, `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
+
+**Einstellungen zur Laufzeit.** Was der Setup-Wizard festlegt — Modus
+(`ollama`, `openai`-kompatibler Anbieter, `off`), Adresse, Schlüssel,
+Modellnamen, gemessene Embedding-Dimension — steht in `data/settings.json`
+(`PHOTOVAULT_SETTINGS`), nicht im Repo. Vorrang ist **Umgebung > Datei >
+Vorgabe**: eine gesetzte Variable gewinnt immer, eine Installation mit `.env`
+oder `start-local` merkt von der Datei nichts. Ohne Pool spricht PhotoVault
+Ollama-Tags, mit `LITELLM_URL` die Pool-Aliasse `local`/`embedder`. Der
+Schlüssel wird nie zurückgegeben und nie protokolliert.
 
 ### Was einen Re-Ingest überlebt
 

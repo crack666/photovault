@@ -24,12 +24,20 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import os
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, litellm_headers, litellm_url, ollama_url
+from ingest.ollama_client import (
+    caption_model,
+    embed_model,
+    litellm_headers,
+    litellm_url,
+    ollama_url,
+)
+from ingest.settings import llm_mode
 
 logger = logging.getLogger(__name__)
 
@@ -75,28 +83,68 @@ def llm_models() -> Optional[set[str]]:
     return {str(m.get("id") or "") for m in data.get("data", [])}
 
 
+#: Die zwei Rollen, die ein Sprachmodell hier hat. Welcher Name dahinter
+#: steht, entscheidet die Umgebung oder der Setup-Wizard -- zur Laufzeit,
+#: nicht beim Import (`ingest.settings`).
+KINDS = ("caption", "embed")
+KIND_LABEL = {"caption": "Bildbeschreibungen", "embed": "Text-Embeddings"}
+
+
+def model_for(kind: str) -> str:
+    """Der Modellname, wie er jetzt gilt; leer = nichts gewaehlt."""
+    return caption_model() if kind == "caption" else embed_model()
+
+
+def hint_for(kind: str, model: str = "") -> str:
+    """Die Abhilfe haengt am Modus, nicht am Merkmal.
+
+    Mit Pool ist es die LiteLLM-Config, mit Ollama ein `pull`, in der Cloud
+    die Zugangsdaten -- und ohne gewaehltes Modell der Wizard. Ein fester
+    Satz "LiteLLM starten" war fuer den Fremden mit Ollama schlicht falsch.
+    """
+    mode = llm_mode()
+    if mode == "off":
+        return "Im Setup ist das Sprachmodell ausgeschaltet."
+    if not model:
+        return "Im Setup ein Modell waehlen."
+    if os.environ.get("LITELLM_URL"):
+        return f"LiteLLM starten; Pool `{model}` muss in der Config stehen."
+    if mode == "openai":
+        return "Cloud-Zugang im Setup pruefen: Adresse, Schluessel, Modellname."
+    return f"Ollama starten und `ollama pull {model}` -- oder im Setup ziehen."
+
+
 def missing(
     modules: tuple[str, ...] = (),
     models: tuple[str, ...] = (),
     hint: str = "",
     have_models: Any = UNCHECKED,
+    kinds: tuple[str, ...] = (),
 ) -> str:
     """Was fehlt? Leerer Text heisst: nichts.
 
     Pakete zuerst, denn das ist ohne Netz feststellbar -- sonst wartet die
-    Antwort auf einen Zeitablauf, obwohl sie schon feststeht.
+    Antwort auf einen Zeitablauf, obwohl sie schon feststeht. `kinds` sind
+    Modellrollen, die erst hier zu Namen werden; `models` sind fertige Namen
+    (Aufrufer, die es genau wissen).
     """
     gone = [m for m in modules if importlib.util.find_spec(m) is None]
     if gone:
         return f"{', '.join(gone)} nicht installiert. {hint}".strip()
-    if models:
+    wanted: list[tuple[str, str]] = [(m, hint) for m in models]
+    for kind in kinds:
+        name = model_for(kind)
+        if not name:
+            return f"Kein Modell fuer {KIND_LABEL.get(kind, kind)} gewaehlt. {hint_for(kind)}".strip()
+        wanted.append((name, hint or hint_for(kind, name)))
+    if wanted:
         pool = llm_models() if have_models is UNCHECKED else have_models
         if pool is None:
             target = litellm_url() or ollama_url()
-            return f"LLM-Pool nicht erreichbar ({target}). {hint}".strip()
-        absent = [m for m in models if m not in pool]
+            return f"LLM-Pool nicht erreichbar ({target}). {wanted[0][1]}".strip()
+        absent = [(m, h) for m, h in wanted if m not in pool]
         if absent:
-            return f"Modell fehlt: {', '.join(absent)}. {hint}".strip()
+            return f"Modell fehlt: {', '.join(m for m, _ in absent)}. {absent[0][1]}".strip()
     return ""
 
 
@@ -105,22 +153,19 @@ def missing(
 FEATURES: dict[str, dict] = {
     "freetext": {
         "label": "Freitextsuche",
-        "models": (EMBED_MODEL,),
-        "hint": f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
+        "kinds": ("embed",),
         "lost": "Suche nach Personen, Jahr, Ort, Album und Tags funktioniert weiter — "
                 "nur das Sortieren nach einem getippten Satz nicht.",
     },
     "captions": {
         "label": "Bildbeschreibungen",
-        "models": (CAPTION_MODEL,),
-        "hint": f"LiteLLM starten; Pool `{CAPTION_MODEL}` muss in der Config stehen.",
+        "kinds": ("caption",),
         "lost": "Die Kontinente der Karte tragen dann ihre Szenen-Tags als Namen "
                 "statt der Beschreibungen.",
     },
     "reembed": {
         "label": "Text-Vektoren neu rechnen",
-        "models": (EMBED_MODEL,),
-        "hint": f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
+        "kinds": ("embed",),
         "lost": "Notizen und Beschreibungen greifen trotzdem als Filter — nur in der "
                 "Rangfolge der Freitextsuche nicht.",
     },
@@ -140,12 +185,12 @@ def snapshot() -> dict:
     if cached and now - stamp < TTL_SECONDS:
         return cached
 
-    pool = llm_models()
+    pool = llm_models() if any(spec.get("kinds") for spec in FEATURES.values()) else None
     features = {}
     for key, spec in FEATURES.items():
         why = missing(
             modules=tuple(spec.get("modules", ())),
-            models=tuple(spec.get("models", ())),
+            kinds=tuple(spec.get("kinds", ())),
             hint=spec.get("hint", ""),
             have_models=pool,
         )
@@ -179,6 +224,8 @@ def snapshot() -> dict:
     state = {
         "ollama": {"url": litellm_url() or ollama_url(), "reachable": pool is not None,
                    "models": sorted(pool) if pool else []},
+        "llm": {"mode": llm_mode(), "caption_model": caption_model(),
+                "embed_model": embed_model()},
         "accelerator": _accelerator(),
         "features": features,
     }
@@ -189,6 +236,11 @@ def snapshot() -> dict:
 def _cache_set(stamp: float, state: dict) -> None:
     global _cache
     _cache = (stamp, state)
+
+
+def forget() -> None:
+    """Nach einer Aenderung im Setup: beim naechsten Blick neu nachsehen."""
+    _cache_set(0.0, {})
 
 
 _accel: Optional[dict] = None

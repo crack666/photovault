@@ -13,8 +13,8 @@ import re
 from typing import Any
 
 from ingest.ollama_client import (
-    CAPTION_MODEL,
     CAPTION_NUM_CTX,
+    caption_model,
     litellm_headers,
     litellm_url,
     ollama_url,
@@ -248,12 +248,16 @@ class Captioner:
     def __init__(
         self,
         ollama: str | None = None,
-        model: str = CAPTION_MODEL,
+        model: str | None = None,
         num_ctx: int | None = None,
     ):
-        """`num_ctx=0` schickt gar keine Kontextgroesse mit (kein Reload)."""
+        """`num_ctx=0` schickt gar keine Kontextgroesse mit (kein Reload).
+
+        Ohne `model` gilt, was Umgebung oder Setup jetzt sagen -- nicht der
+        Stand beim Import.
+        """
         self._url = ollama_url(ollama)
-        self._model = model
+        self._model = model or caption_model()
         self._num_ctx = num_ctx
         pool = litellm_url()
         if pool:

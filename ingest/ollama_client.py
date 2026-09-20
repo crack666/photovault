@@ -11,10 +11,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-#: LiteLLM-Aliase, nicht Ollama-Tags. Welches Gewicht dahinter liegt,
-#: steht nur in der LiteLLM-Config -- PhotoVault kennt `local` / `embedder`.
+#: Stand beim Import -- fuer alte Aufrufer. Wer wissen will, was *jetzt*
+#: gilt, fragt `caption_model()` / `embed_model()`: die lesen die Umgebung
+#: und darunter `data/settings.json`, das der Setup-Wizard schreibt. Ein
+#: Modellwechsel im Wizard darf keinen Neustart kosten.
+#:
+#: Mit Pool sind das LiteLLM-Aliasse (`local`, `embedder`), nicht Ollama-
+#: Tags; welches Gewicht dahinter liegt, steht nur in der LiteLLM-Config.
 CAPTION_MODEL = os.environ.get("PHOTOVAULT_CAPTION_MODEL", "local")
 EMBED_MODEL = os.environ.get("PHOTOVAULT_EMBED_MODEL", "embedder")
+#: Ebenso: Stand beim Import. Die Collection fragt `text_vector_size()`.
 TEXT_VECTOR_SIZE = 2560
 DEFAULT_LITELLM_URL = "http://127.0.0.1:4000"
 #: Kontextgroesse fuer Caption-Anfragen. ``0`` bedeutet: gar kein ``num_ctx``
@@ -33,21 +39,47 @@ CAPTION_NUM_CTX = int(os.environ.get("PHOTOVAULT_CAPTION_NUM_CTX", "8192"))
 
 
 def ollama_url(override: str | None = None) -> str:
-    return (override or DEFAULT_OLLAMA_URL).rstrip("/")
+    if override:
+        return override.rstrip("/")
+    from ingest.settings import ollama_base
+
+    return ollama_base()
 
 
 def litellm_url() -> str:
-    """Leer, wenn der Pool nicht konfiguriert ist -- dann bleibt Ollama der Fallback."""
-    return (
-        os.environ.get("LITELLM_URL") or os.environ.get("PHOTOVAULT_EMBED_URL") or ""
-    ).rstrip("/")
+    """OpenAI-kompatible Basis (LiteLLM-Pool oder Cloud-Anbieter), sonst leer
+    -- dann bleibt Ollama der Weg."""
+    from ingest.settings import pool_url
+
+    return pool_url()
 
 
 def litellm_headers() -> dict[str, str]:
-    key = os.environ.get("LITELLM_MASTER_KEY") or ""
+    from ingest.settings import pool_key
+
+    key = pool_key()
     if not key:
         return {}
     return {"Authorization": f"Bearer {key}"}
+
+
+def caption_model() -> str:
+    """Das Caption-Modell, wie es jetzt gilt; leer = Beschreibungen aus."""
+    from ingest.settings import caption_model as _resolve
+
+    return _resolve()
+
+
+def embed_model() -> str:
+    from ingest.settings import embed_model as _resolve
+
+    return _resolve()
+
+
+def text_vector_size() -> int:
+    from ingest.settings import text_vector_size as _resolve
+
+    return _resolve()
 
 
 def apply_llm_env() -> None:
