@@ -392,6 +392,30 @@ class TestBildfehler:
         assert archiv["lost"]
 
 
+class TestOriginal:
+    """Die Grossansicht laedt das Original unter `/media/<dateiname>`.
+
+    Anlass: Ziehen aus der Grossansicht in den Explorer legte jede Kopie als
+    `thumb.jpg` ab, und das zweite Bild ueberschrieb das erste. Der Name am
+    Ende der Adresse ist nur fuer den Browser da -- welche Datei kommt, sagt
+    allein die Kennung.
+    """
+
+    def test_name_in_der_adresse_waehlt_nichts_aus(self, client, fake, tmp_path):
+        from PIL import Image
+
+        foto = tmp_path / "IMG_0001.png"
+        Image.new("RGB", (8, 8), (20, 80, 140)).save(foto, format="PNG")
+        fake.punkte = [_Point("a", {"file_path": str(foto)})]
+        r = client.get("/api/photos/a/media/irgendwas.jpg")
+        assert r.status_code == 200
+        assert r.content == foto.read_bytes()
+        # Kein pauschales JPEG mehr, und angezeigt statt heruntergeladen.
+        assert r.headers["content-type"] == "image/png"
+        assert r.headers["content-disposition"].startswith("inline")
+        assert "IMG_0001.png" in r.headers["content-disposition"]
+
+
 class TestBildtextSuche:
     """Der Suchsatz muss im Foto stehen, nicht nur irgendwie ähnlich sein."""
 

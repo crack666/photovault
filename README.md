@@ -711,8 +711,10 @@ python -m tools.thumbs --warm                         # fehlende erzeugen
 Er ist der Grund, warum der Atlas schnell ist: nach dem ersten Ansehen werden
 die Originale nicht mehr geholt. Gemessen an diesem Bestand — 14.593 Fotos,
 17,5 GB Originale — belegen die beiden Größen, die Karte und Listen brauchen,
-**295 MB**. Faktor 61. Die Großansicht (1280 px) entsteht bei Bedarf; für alle
-wären das weitere 2,4 GB.
+**295 MB**. Faktor 61. Die Großansicht zeigt zuerst die 1280-px-Kachel, die bei
+Bedarf entsteht (für alle wären das weitere 2,4 GB), und lädt danach das
+Original nach — nicht gecacht, es kommt jedes Mal vom Archiv. Ziehen aus der
+Großansicht in den Explorer legt die Originaldatei unter ihrem Namen ab.
 
 Wo er liegt, hängt am Betriebsmodus, und das ist gemessen und nicht geraten:
 
