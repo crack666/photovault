@@ -53,6 +53,20 @@ export function rememberTab(id) {
   const url = new URL(location.href);
   if (id === TABS[0].id) url.searchParams.delete("tab");
   else url.searchParams.set("tab", id);
+  // Die geöffnete Person gehört zum Personen-Tab, nicht zu den anderen.
+  if (id !== "people") url.searchParams.delete("person");
+  history.replaceState(null, "", url);
+}
+
+/** Welche Person ist geöffnet? Ihre Kennung, nicht ihr Name: der ändert sich beim Umbenennen. */
+export function personFromUrl() {
+  return (new URLSearchParams(location.search).get("person") || "").trim();
+}
+
+export function rememberPerson(id) {
+  const url = new URL(location.href);
+  if (id) url.searchParams.set("person", id);
+  else url.searchParams.delete("person");
   history.replaceState(null, "", url);
 }
 

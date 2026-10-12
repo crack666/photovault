@@ -56,7 +56,7 @@ function showMedia(ph, d) {
   $("lb-img").classList.toggle("hidden", video);
   const player = $("lb-video");
   if (!player) {
-    $("lb-img").src = thumb;
+    showPhoto(id, thumb, d && d.file_name);
     return;
   }
   player.classList.toggle("hidden", !video);
@@ -72,8 +72,53 @@ function showMedia(ph, d) {
     player.pause();
     player.removeAttribute("src");
     player.dataset.for = "";
-    $("lb-img").src = thumb;
+    showPhoto(id, thumb, d && d.file_name);
   }
+}
+
+/* Erst die Vorschau, dann das Original.
+
+   Die Grossansicht zeigte nur die 1280-px-Kachel -- scharf genug zum
+   Blaettern, aber nicht zum Ansehen, und wer das Bild in den Explorer zog,
+   bekam diese Kachel als `thumb.jpg`. Jetzt steht die Kachel sofort da (sie
+   liegt im Cache), und das Original ersetzt sie, sobald es geladen ist. Die
+   Adresse endet auf den echten Dateinamen, also legt Ziehen die
+   Originaldatei unter ihrem Namen ab.
+
+   Nur Formate, die ein Browser zeichnet; ein HEIC oder RAW bleibt Kachel. */
+const SHOWN_AS_IS = /\.(jpe?g|png|gif|webp|avif|bmp)$/i;
+
+function originalUrl(id, name) {
+  return `/api/photos/${encodeURIComponent(id)}/media/${encodeURIComponent(name)}`;
+}
+
+function showPhoto(id, thumb, name) {
+  const img = $("lb-img");
+  if (img.dataset.for !== id) {
+    img.dataset.for = id;
+    img.dataset.name = "";
+    img.src = thumb;
+  }
+  if (!name || img.dataset.name === name) return;
+  img.dataset.name = name;
+  if (!SHOWN_AS_IS.test(name)) return;
+  const url = originalUrl(id, name);
+  const full = new Image();
+  full.onload = () => {
+    // Inzwischen weitergeblaettert? Dann gehoert das Original nicht mehr hierher.
+    if (img.dataset.for === id) img.src = url;
+  };
+  full.src = url;
+}
+
+/* Ziehen in den Explorer: in Chrome und Edge die Originaldatei unter ihrem
+   Namen -- auch solange noch die Kachel zu sehen ist, und auch bei HEIC. */
+function onDragImage(e) {
+  const img = e.currentTarget;
+  const { for: id, name } = img.dataset;
+  if (!id || !name || !e.dataTransfer) return;
+  const url = new URL(originalUrl(id, name), location.origin).href;
+  e.dataTransfer.setData("DownloadURL", `application/octet-stream:${name}:${url}`);
 }
 
 function openLightbox(i) {
@@ -305,6 +350,7 @@ export function bindLightbox() {
   bound = true;
 
   bindFaceStrip($("lb-faces"));
+  $("lb-img").addEventListener("dragstart", onDragImage);
   $("lb-toggle").addEventListener("click", () => setLbInfoOpen(false));
   $("lb-reveal").addEventListener("click", () => setLbInfoOpen(true));
   $("lb-info").addEventListener("click", async (e) => {

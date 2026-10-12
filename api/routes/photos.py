@@ -7,6 +7,7 @@ und verknuepft gleichartige Abschnitte ueber Events hinweg.
 from __future__ import annotations
 
 import logging
+import mimetypes
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -390,8 +391,16 @@ def photo_thumb(point_id: str, size: int = 320):
 
 
 @router.get("/{point_id}/media")
-def photo_media(point_id: str):
-    """Originaldatei — bei Videos mit Range, damit der Player spulen kann."""
+@router.get("/{point_id}/media/{name}")
+def photo_media(point_id: str, name: str = ""):
+    """Originaldatei — bei Videos mit Range, damit der Player spulen kann.
+
+    Der Dateiname am Ende der Adresse wird nicht gelesen, er steht nur fuer
+    den Browser da: wer das Bild aus der Grossansicht in den Explorer zieht,
+    bekommt die Datei unter dem Namen, den die Adresse traegt. Ohne ihn hiess
+    jede Kopie `media` (vorher `thumb.jpg`, und das zweite Bild ueberschrieb
+    das erste).
+    """
     q = client()
     try:
         points = q.retrieve(
@@ -415,11 +424,18 @@ def photo_media(point_id: str):
         raise err
     from ingest.media import kind_of, video_mime
 
-    mime = video_mime(path) if kind_of(path) == "video" else "image/jpeg"
+    if kind_of(path) == "video":
+        mime = video_mime(path)
+    else:
+        # Nicht pauschal JPEG: ein PNG oder HEIC unter falschem Typ zeigt der
+        # Browser nicht an, und ein gezogenes HEIC bekaeme die falsche Endung.
+        mime = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
     return FileResponse(
         path,
         media_type=mime,
         filename=src.name,
+        # inline: im neuen Tab angezeigt statt heruntergeladen.
+        content_disposition_type="inline",
         headers={"Cache-Control": "private, max-age=3600"},
     )
 

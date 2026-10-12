@@ -11,6 +11,7 @@
 import { api, cropUrl } from "../core/api.js";
 import { $, escapeHtml } from "../core/dom.js";
 import { askConfirm, askText, notify } from "../core/modal.js";
+import { personFromUrl, rememberPerson } from "../core/nav.js";
 import { forgetPeopleList, setPeopleList } from "../core/people.js";
 import { fillGallery } from "../gallery/index.js";
 
@@ -62,6 +63,9 @@ function appendSection(box, title, people) {
 }
 
 export async function loadPeople() {
+  // Zurueck aus einem anderen Tab: steht die Person noch offen, gehoert sie
+  // wieder in die Adresse (der Tab-Wechsel hat sie dort entfernt).
+  if (openPersonId && $("people-overview").classList.contains("hidden")) rememberPerson(openPersonId);
   const people = await api("/api/persons");
   setPeopleList(people);
   const box = $("people-list");
@@ -86,6 +90,8 @@ export async function loadPeople() {
 
 async function openPersonPhotos(p) {
   showPane("person-photos");
+  openPersonId = p.id;
+  rememberPerson(p.id);
   $("pp-name").textContent = p.name;
   $("pp-face").src = `${cropUrl(p.cover_face_id)}?size=160`;
   $("pp-meta").textContent = "Lade Fotos …";
@@ -191,6 +197,20 @@ function showPane(id) {
   ["people-overview", "person-photos", "person-detail"].forEach((p) => {
     $(p).classList.toggle("hidden", p !== id);
   });
+  if (id === "people-overview") { openPersonId = ""; rememberPerson(""); }
+}
+
+let openPersonId = "";
+
+/* `?tab=people&person=<id>`: nach dem Neuladen oder aus einem Link wieder
+   bei derselben Person statt in der Übersicht. */
+export async function openPersonFromUrl() {
+  const id = personFromUrl();
+  if (!id) return;
+  const people = await api("/api/persons");
+  const p = people.find((x) => x.id === id);
+  if (p) openPersonPhotos(p);
+  else rememberPerson("");
 }
 
 
@@ -201,6 +221,8 @@ const selectedFaces = new Set();
 async function openPersonFaces(p) {
   selectedFaces.clear();
   showPane("person-detail");
+  openPersonId = p.id;
+  rememberPerson(p.id);
   $("detail-name").textContent = p.name;
   $("detail-faces").innerHTML = "<p class='muted'>Lade Gesichter …</p>";
   const data = await api(`/api/persons/${encodeURIComponent(p.id)}/faces`);

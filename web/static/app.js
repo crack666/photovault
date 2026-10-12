@@ -7,7 +7,7 @@ import { rememberTab, renderNav, tabFromUrl, photoFromUrl } from "./core/nav.js"
 import { forgetPeopleList } from "./core/people.js";
 import { bindEvents, loadEventTab } from "./events/index.js";
 import { bindLightbox, showLightbox } from "./lightbox/index.js";
-import { bindPeople, loadPeople } from "./people/index.js";
+import { bindPeople, loadPeople, openPersonFromUrl } from "./people/index.js";
 import { bindSearch, loadPersonPicker } from "./search/index.js";
 import { bindUnknown, loadCandidates, loadUnknown } from "./unknown/index.js";
 
@@ -241,6 +241,8 @@ watchMedia();
    vor dem ersten Aufruf. Die Zeile bleibt trotzdem hier unten, denn sie ist
    jetzt aus einem zweiten Grund richtig -- am Ende ist gebunden, was gebunden
    gehoert, bevor der erste Tab aufgeht. */
-showTab(tabFromUrl());
+const startTab = tabFromUrl();
+showTab(startTab);
+if (startTab === "people") openPersonFromUrl();
 const photo = photoFromUrl();
 if (photo) showLightbox([{ id: photo }], 0);
