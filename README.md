@@ -678,11 +678,22 @@ Nützliche Flags: `--limit N`, `--include TEXT` (nur passende Pfade), `--no-resu
 (auch bereits Indiziertes neu verarbeiten), `--progress-every N`. Jeder Lauf gibt am
 Ende eine Zeitverteilung pro Pipeline-Stufe aus.
 
-Läuft die Pipeline in WSL, muss der Share dort gemountet sein:
+Läuft die Pipeline in WSL, muss der Share dort gemountet sein, am besten
+nativ per `cifs` statt über den Windows-Durchreicher `drvfs`: `cifs` wartet bei
+einem kurzen NAS-Aussetzer, `drvfs` scheitert
+([docs/performance.md](docs/performance.md)).
 
 ```bash
-sudo mkdir -p /mnt/photo && sudo mount -t drvfs '\\192.0.2.10\photo' /mnt/photo
+# /etc/fstab -- die Zugangsdaten nicht hier, fstab ist fuer alle lesbar
+//192.0.2.10/photo /mnt/photo cifs credentials=/etc/smbcred-photo,vers=3.1.1,hard,uid=1000,gid=1000,iocharset=utf8,noatime,nofail 0 0
+# /etc/smbcred-photo (root, 0600): je eine Zeile username=... und password=...
+sudo mkdir -p /mnt/photo && sudo mount /mnt/photo
 ```
+
+Für den Mount ein **eigenes SMB-Konto** nehmen, das nur den Foto-Share
+erreicht, und kein Konto, das auch Fernseher, Handys oder Gäste kennen. Es
+braucht Lesen, Anlegen und Löschen (der Papierkorb löscht Originale auf dem
+Share), aber keine Admin-Rechte auf der NAS.
 
 Env: `OLLAMA_URL`, `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
 
