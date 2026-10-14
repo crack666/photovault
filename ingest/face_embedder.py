@@ -9,7 +9,12 @@ logger = logging.getLogger(__name__)
 
 _CUDA_LIBS_LOADED = False
 #: Reihenfolge zaehlt -- cublas braucht cublasLt, cudnn braucht das CUDA-Runtime.
+#: CUDA 12 legt je Bibliothek ein Paket an (``nvidia/cublas/lib``), CUDA 13
+#: alle Laufzeitbibliotheken zusammen unter ``nvidia/cu13/lib`` -- gemessen
+#: im cuda-Image (torch cu130): dort gibt es ``cu13``, ``cudnn``, ``nccl``.
 _CUDA_LIB_ORDER = (
+    "cu13",
+    "cu12",
     "cuda_runtime",
     "nvjitlink",
     "cublas",
@@ -21,6 +26,32 @@ _CUDA_LIB_ORDER = (
 )
 
 
+def _cuda_lib_candidates() -> list[str]:
+    """Alle ``*.so*`` unter den nvidia-Paketen, in Ladereihenfolge.
+
+    ``nvidia`` ist seit den CUDA-13-Paketen ein Namensraum ohne
+    ``__init__.py``: ``nvidia.__file__`` ist dann ``None``, und
+    ``os.path.dirname`` darauf warf einen TypeError -- gemessen im
+    cuda-Image, die Gesichtserkennung waere gar nicht erst gestartet.
+    ``__path__`` gibt es in beiden Faellen.
+    """
+    import glob
+    import os
+
+    try:
+        import nvidia
+    except ImportError:
+        return []
+    bases = list(getattr(nvidia, "__path__", None) or [])
+    if not bases and getattr(nvidia, "__file__", None):
+        bases = [os.path.dirname(nvidia.__file__)]
+    out: list[str] = []
+    for base in bases:
+        for package in _CUDA_LIB_ORDER:
+            out.extend(sorted(glob.glob(os.path.join(base, package, "lib", "*.so*")), reverse=True))
+    return out
+
+
 def _preload_cuda_libs() -> None:
     """CUDA-Bibliotheken vorab in den Prozess laden.
 
@@ -29,29 +60,30 @@ def _preload_cuda_libs() -> None:
     scheitert der CUDAExecutionProvider mit "libcublasLt.so.12 not found"
     und faellt still auf die CPU zurueck -- was die Gesichtserkennung von
     ~30 ms auf ~860 ms pro Foto bremst, ohne einen Fehler zu melden.
+
+    Zwei Durchgaenge: was im ersten an einer noch nicht geladenen
+    Abhaengigkeit scheitert, klappt im zweiten.
     """
     global _CUDA_LIBS_LOADED
     if _CUDA_LIBS_LOADED:
         return
     _CUDA_LIBS_LOADED = True
     import ctypes
-    import glob
-    import os
 
-    try:
-        import nvidia
-    except ImportError:
-        return
-    base = os.path.dirname(nvidia.__file__)
+    pending = _cuda_lib_candidates()
     loaded = 0
-    for package in _CUDA_LIB_ORDER:
-        for so in sorted(glob.glob(os.path.join(base, package, "lib", "*.so*")), reverse=True):
+    for _ in range(2):
+        failed = []
+        for so in pending:
             try:
                 ctypes.CDLL(so, mode=ctypes.RTLD_GLOBAL)
                 loaded += 1
             except OSError:
-                continue
-    logger.debug("Preloaded %d CUDA libraries from %s", loaded, base)
+                failed.append(so)
+        pending = failed
+        if not pending:
+            break
+    logger.debug("Preloaded %d CUDA libraries (%d not loadable)", loaded, len(pending))
 
 
 class FaceEmbedder:

@@ -54,6 +54,22 @@ class _Q:
 
 
 @pytest.fixture(autouse=True)
+def _gewaehlte_modelle(monkeypatch):
+    """Diese Tests beschreiben eine Installation, die ihre Modelle kennt --
+    ueber Ollama direkt, mit festen Namen. Seit die Namen zur Laufzeit aus
+    Umgebung oder Setup kommen, muss der Test sie setzen, sonst hiesse der
+    Grund ueberall "kein Modell gewaehlt"."""
+    monkeypatch.delenv("LITELLM_URL", raising=False)
+    monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
+    monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "bild:27b")
+    monkeypatch.setenv("PHOTOVAULT_EMBED_MODEL", "text:4b")
+
+
+def _alle():
+    return (cap.model_for("embed"), cap.model_for("caption"))
+
+
+@pytest.fixture(autouse=True)
 def _kein_netz(monkeypatch, tmp_path):
     """Riegel gegen echte Dienste, dazu zwei Zwischenspeicher zurueckgesetzt.
 
@@ -112,7 +128,6 @@ def _ollama(monkeypatch, modelle):
     return box
 
 
-ALLE_MODELLE = (cap.EMBED_MODEL, cap.CAPTION_MODEL)
 
 
 # --- POST /api/ingest/start ----------------------------------------------
@@ -335,7 +350,7 @@ class TestMerkmalsrechnung:
     """Welches Modell fehlt, welches Merkmal faellt dadurch weg."""
 
     def test_alles_da_alles_verfuegbar(self, monkeypatch):
-        _ollama(monkeypatch, ALLE_MODELLE)
+        _ollama(monkeypatch, _alle())
         merkmale = capabilities_route()["features"]
         for key in ("freetext", "captions", "reembed"):
             assert merkmale[key]["ok"] is True, key
@@ -344,12 +359,12 @@ class TestMerkmalsrechnung:
     def test_verfuegbares_merkmal_traegt_keinen_verlust(self, monkeypatch):
         """`lost` nur, wenn tatsaechlich etwas fehlt -- sonst warnt die
         Oberflaeche vor einem Verlust, den es nicht gibt."""
-        _ollama(monkeypatch, ALLE_MODELLE)
+        _ollama(monkeypatch, _alle())
         assert capabilities_route()["features"]["freetext"]["lost"] == ""
 
     def test_fehlendes_embed_modell_nimmt_zwei_merkmale(self, monkeypatch):
         """Freitextsuche und Neu-Rechnen haengen am selben Modell."""
-        _ollama(monkeypatch, (cap.CAPTION_MODEL,))
+        _ollama(monkeypatch, (cap.model_for("caption"),))
         merkmale = capabilities_route()["features"]
         assert merkmale["freetext"]["ok"] is False
         assert merkmale["reembed"]["ok"] is False
@@ -358,16 +373,16 @@ class TestMerkmalsrechnung:
     def test_fehlendes_caption_modell_laesst_die_suche_in_ruhe(self, monkeypatch):
         """Die Merkmale muessen einzeln fallen. Eine Sammelantwort „Ollama
         unvollstaendig" wuerde die Suche grundlos sperren."""
-        _ollama(monkeypatch, (cap.EMBED_MODEL,))
+        _ollama(monkeypatch, (cap.model_for("embed"),))
         merkmale = capabilities_route()["features"]
         assert merkmale["captions"]["ok"] is False
         assert merkmale["freetext"]["ok"] is True
 
     def test_der_grund_nennt_das_fehlende_modell_und_die_abhilfe(self, monkeypatch):
-        _ollama(monkeypatch, (cap.CAPTION_MODEL,))
+        _ollama(monkeypatch, (cap.model_for("caption"),))
         why = capabilities_route()["features"]["freetext"]["why"]
-        assert cap.EMBED_MODEL in why
-        assert "LiteLLM" in why
+        assert cap.model_for("embed") in why
+        assert "ollama pull" in why          # Ollama direkt: die Abhilfe ist ein pull
 
     def test_ausgefallenes_merkmal_sagt_label_grund_und_verlust(self, monkeypatch):
         """Die drei zusammen sind die Auskunft: wie es heisst, warum es fehlt,
@@ -381,14 +396,14 @@ class TestMerkmalsrechnung:
             assert merkmal["lost"], key
 
     def test_jedes_merkmal_hat_immer_dieselben_felder(self, monkeypatch):
-        _ollama(monkeypatch, ALLE_MODELLE)
+        _ollama(monkeypatch, _alle())
         for key, merkmal in capabilities_route()["features"].items():
             assert set(merkmal) == {"label", "ok", "why", "lost"}, key
 
     def test_die_karte_ist_eine_datei_kein_modell(self, monkeypatch, tmp_path):
         """`atlas_map` haengt an einer gerechneten Datei -- deshalb steht sie
         neben den anderen Merkmalen und nicht in FEATURES."""
-        _ollama(monkeypatch, ALLE_MODELLE)
+        _ollama(monkeypatch, _alle())
         assert capabilities_route()["features"]["atlas_map"]["ok"] is False
 
         datei = tmp_path / "gerechnet.json"
@@ -429,7 +444,7 @@ class TestOllamaNichtErreichbar:
         """`atlas_build` haengt an umap/sklearn, nicht an Ollama. Ein toter
         Dienst darf die Karte nicht mit sperren -- und ob die Pakete hier
         liegen, entscheidet die Maschine, nicht dieser Test."""
-        _ollama(monkeypatch, ALLE_MODELLE)
+        _ollama(monkeypatch, _alle())
         mit = capabilities_route()["features"]["atlas_build"]
 
         monkeypatch.setattr(cap, "_cache", (0.0, {}))
@@ -450,7 +465,7 @@ class TestZwischenspeicher:
     def test_die_zweite_frage_geht_nicht_erneut_ans_netz(self, monkeypatch):
         """Die Oberflaeche fragt beim Laden; ein HTTP-Rundlauf pro Seitenaufruf
         waere zu viel."""
-        box = _ollama(monkeypatch, ALLE_MODELLE)
+        box = _ollama(monkeypatch, _alle())
         erste = capabilities_route()
         zweite = capabilities_route()
         assert box["aufrufe"] == 1
@@ -464,7 +479,7 @@ class TestZwischenspeicher:
 
         veraltet = time.time() - cap.TTL_SECONDS - 1
         monkeypatch.setattr(cap, "_cache", (veraltet, cap._cache[1]))
-        _ollama(monkeypatch, ALLE_MODELLE)
+        _ollama(monkeypatch, _alle())
         assert capabilities_route()["ollama"]["reachable"] is True
         assert tot["aufrufe"] == 1
 

@@ -4,7 +4,7 @@ Der Sinn dieser Tabelle ist, dass die Oberfläche nichts anbietet, was hier
 nicht steht. Ein Merkmal ohne `lost` wäre deshalb ein halbes Merkmal: der
 Nutzer erfährt, dass etwas fehlt, aber nicht, was ihm dadurch fehlt.
 """
-from api.capabilities import FEATURES, missing
+from api.capabilities import FEATURES, hint_for, missing
 
 
 class TestFeatureTable:
@@ -13,15 +13,22 @@ class TestFeatureTable:
             assert spec.get("lost"), f"{key} sagt nicht, was ohne es fehlt"
 
     def test_every_feature_has_a_label_and_a_remedy(self):
+        """Pakete nennen ihre Abhilfe selbst; Modellrollen bekommen sie aus
+        dem Modus (`hint_for`), denn "LiteLLM starten" ist fuer den Fremden
+        mit Ollama schlicht falsch."""
         for key, spec in FEATURES.items():
             assert spec.get("label"), f"{key} hat keine Bezeichnung"
-            assert spec.get("hint"), f"{key} sagt nicht, wie man es behebt"
+            if spec.get("modules"):
+                assert spec.get("hint"), f"{key} sagt nicht, wie man es behebt"
+            for kind in spec.get("kinds", ()):
+                assert hint_for(kind, "x:1b"), f"{key}: keine Abhilfe fuer {kind}"
+                assert hint_for(kind, ""), f"{key}: keine Abhilfe ohne Modell"
 
     def test_every_feature_actually_requires_something(self):
         """Ein Merkmal ohne Voraussetzung ist immer verfügbar und gehört
         nicht in diese Tabelle — es würde nur Prüfaufwand kosten."""
         for key, spec in FEATURES.items():
-            assert spec.get("modules") or spec.get("models"), f"{key} braucht nichts"
+            assert spec.get("modules") or spec.get("kinds"), f"{key} braucht nichts"
 
 
 class TestMissing:

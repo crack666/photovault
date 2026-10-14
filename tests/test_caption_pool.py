@@ -10,9 +10,13 @@ from ingest.captioner import Captioner, jpeg_b64, run_captions
 
 @pytest.fixture(autouse=True)
 def _ohne_litellm(monkeypatch):
-    """Bestehende Tests beschreiben den Ollama-Fallback, nicht den Pool."""
+    """Bestehende Tests beschreiben den Ollama-Fallback, nicht den Pool --
+    mit benannten Modellen: seit die Namen zur Laufzeit aufgeloest werden,
+    hiesse "nichts gesetzt" sonst "nichts vorzuwaermen"."""
     monkeypatch.delenv("LITELLM_URL", raising=False)
     monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
+    monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "local")
+    monkeypatch.setenv("PHOTOVAULT_EMBED_MODEL", "embedder")
 
 
 class _Rec:

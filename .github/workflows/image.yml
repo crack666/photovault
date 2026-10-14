@@ -1,0 +1,170 @@
+# Das fertige Image: einmal hier gebaut und geprueft, statt auf jeder
+# fremden Maschine. Der Bau auf der Maschine des Nutzers war der fragilste
+# Schritt der ganzen Kette -- und mit dem alten Dockerfile schlug er sicher
+# fehl (insightface kompiliert, python:3.11-slim hat keinen Compiler).
+#
+# Zwei Varianten, drei Builds:
+#   cpu   amd64 + arm64, jede nativ gebaut (GitHub stellt oeffentlichen
+#         Repos arm64-Runner bereit; QEMU fuer torch und insightface waere
+#         eine Stunde und Glueckssache), zu einem Manifest `latest` (= `cpu`).
+#   cuda  amd64, Tag `cuda`: torch aus dem cu130-Index, onnxruntime-gpu --
+#         fuer Rechner mit NVIDIA-Karte (Treiber ab 580), Gesichter und
+#         CLIP ~10x schneller. Gemessen auf einer RTX 5090 (Blackwell).
+# Vor dem Push importiert ein Rauchtest im frischen Image alles, was die
+# Pipeline braucht -- ein Image, das erst beim Nutzer "ModuleNotFoundError"
+# sagt, hilft niemandem.
+#
+# Damit `docker compose pull` ohne Anmeldung geht, muss das Paket auf GHCR
+# einmal auf "public" gestellt werden (Repo -> Packages -> photovault ->
+# Package settings). Das kann nur der Besitzer.
+name: image
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    paths: [Dockerfile, pyproject.toml, .dockerignore, .github/workflows/image.yml]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/photovault
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: amd64
+            torch_index: https://download.pytorch.org/whl/cpu
+            ort: onnxruntime
+          - variant: cpu
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+            torch_index: https://download.pytorch.org/whl/cpu
+            ort: onnxruntime
+          - variant: cuda
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: amd64
+            torch_index: https://download.pytorch.org/whl/cu130
+            ort: onnxruntime-gpu
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Bauen (lokal, fuer den Rauchtest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            TORCH_INDEX=${{ matrix.torch_index }}
+            ORT=${{ matrix.ort }}
+          load: true
+          tags: photovault:smoke
+          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}-${{ matrix.arch }}
+
+      - name: Rauchtest im frischen Image
+        # Ohne Karte auf dem Runner: bei `cuda` zaehlt, dass die CUDA-Fassung
+        # drin ist (torch.version.cuda gesetzt) und onnxruntime den
+        # CUDA-Provider kennt -- ob Kernel laufen, misst nur echte Hardware.
+        run: |
+          docker run --rm photovault:smoke python -c "
+          import insightface, open_clip, onnxruntime, umap, sklearn, torch, torchvision, fastapi
+          import api.main, ingest.pipeline, ingest.settings
+          print('torch', torch.__version__, 'torchvision', torchvision.__version__, 'cuda-build', torch.version.cuda)
+          print('onnxruntime', onnxruntime.__version__, onnxruntime.get_available_providers())
+          variant = '${{ matrix.variant }}'
+          assert (torch.version.cuda is not None) == (variant == 'cuda'), 'falsche torch-Fassung fuer ' + variant
+          assert ('CUDAExecutionProvider' in onnxruntime.get_available_providers()) == (variant == 'cuda')
+          "
+          docker run --rm photovault:smoke ffmpeg -version | head -1
+
+      - name: Anmelden bei GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bauen und nach Digest schieben
+        if: github.event_name != 'pull_request'
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            TORCH_INDEX=${{ matrix.torch_index }}
+            ORT=${{ matrix.ort }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
+
+      - name: Digest merken
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.push.outputs.digest }}" > "/tmp/digests/${{ matrix.variant }}-${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: digest-${{ matrix.variant }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Manifeste aus den Digests
+        run: |
+          short="${GITHUB_SHA::7}"
+          release=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then release="${GITHUB_REF#refs/tags/}"; fi
+
+          cpu=""
+          for f in /tmp/digests/cpu-*; do cpu="$cpu $IMAGE@$(cat "$f")"; done
+          tags="-t $IMAGE:latest -t $IMAGE:cpu -t $IMAGE:sha-$short"
+          [ -n "$release" ] && tags="$tags -t $IMAGE:$release"
+          docker buildx imagetools create $tags $cpu
+
+          cuda="$IMAGE@$(cat /tmp/digests/cuda-amd64)"
+          tags="-t $IMAGE:cuda -t $IMAGE:cuda-sha-$short"
+          [ -n "$release" ] && tags="$tags -t $IMAGE:cuda-$release"
+          docker buildx imagetools create $tags $cuda
+
+          docker buildx imagetools inspect "$IMAGE:latest"
+          docker buildx imagetools inspect "$IMAGE:cuda"

@@ -34,7 +34,6 @@ from ingest.jobs import (
     proc_cmdline,
     terminate_group,
 )
-from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -66,9 +65,12 @@ class Runnable(BaseModel):
     #: Zusatzpaket; ohne es startet der Lauf, läuft fünf Sekunden und stirbt
     #: mit einer klaren Meldung — im Protokoll, das niemand ansieht.
     needs_modules: tuple[str, ...] = ()
-    #: Ollama-Modelle, die gezogen sein müssen. Ohne Grafikkarte hat mancher
-    #: gar kein Ollama, und dann ist „gestartet" eine Lüge.
-    needs_models: tuple[str, ...] = ()
+    #: Modellrollen (`caption`, `embed`), die ein gezogenes Modell brauchen.
+    #: Welcher Name dahinter steht, entscheidet sich zur Laufzeit -- der
+    #: Setup-Wizard kann ihn aendern, ohne dass die API neu startet. Ohne
+    #: Grafikkarte hat mancher gar kein Ollama, und dann ist „gestartet"
+    #: eine Lüge.
+    needs_kinds: tuple[str, ...] = ()
     #: Was zu tun ist, wenn etwas fehlt.
     hint: str = ""
     #: Der Lauf liest `sources.txt` (PHOTOVAULT_SOURCES). Ohne aktive Quelle
@@ -124,9 +126,7 @@ RUNNABLE: dict[str, Runnable] = {
     "caption": Runnable(
         module="ingest.caption_pass", kind="caption", gpu=True,
         flags=("dry_run", "limit"),
-        needs_models=(CAPTION_MODEL,),
-        hint=f"LiteLLM starten; Pool `{CAPTION_MODEL}` muss in der Config stehen. "
-             "Ohne den Pool funktionieren alle anderen Funktionen weiter.",
+        needs_kinds=("caption",),
         label="Bildbeschreibungen erzeugen",
         note="Erst wenn die Namen sitzen. Vision-Modell über Medien ohne "
              "Beschreibung. Stunden, nicht Minuten.",
@@ -134,8 +134,7 @@ RUNNABLE: dict[str, Runnable] = {
     "reembed": Runnable(
         module="tools.reembed_all", kind="reembed", gpu=True,
         flags=("dry_run", "limit"),
-        needs_models=(EMBED_MODEL,),
-        hint=f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
+        needs_kinds=("embed",),
         label="Text-Vektoren neu bauen",
         note="Nach neuen Captions, Namen, Notizen — oder wenn sich die Regel geändert hat.",
     ),
@@ -175,7 +174,7 @@ def missing_requirements(spec: Runnable, models: Any = UNCHECKED) -> str:
     wären eine zu viel.
     """
     blocked = missing(
-        modules=spec.needs_modules, models=spec.needs_models,
+        modules=spec.needs_modules, kinds=spec.needs_kinds,
         hint=spec.hint, have_models=models,
     )
     if blocked:
@@ -213,7 +212,7 @@ def all_jobs(limit: int = 20, offset: int = 0, kind: Optional[str] = None) -> di
 
 
 def _runnable_state(running: list[dict]) -> list[dict]:
-    models = llm_models() if any(r.needs_models for r in RUNNABLE.values()) else None
+    models = llm_models() if any(r.needs_kinds for r in RUNNABLE.values()) else None
     out = []
     for key, r in RUNNABLE.items():
         blocked = missing_requirements(r, models)
