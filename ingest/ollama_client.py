@@ -1,9 +1,19 @@
-"""Schmaler HTTP-Client fuer LiteLLM (stdlib).
+"""Schmaler HTTP-Client fuer LiteLLM, wahlweise Ollama direkt (stdlib).
 
-Der Modulname stammt aus der Zeit, als PhotoVault Ollama direkt ansprach. Seit
-photovault#19 geht jede Modellanfrage ueber LiteLLM: nur dort sitzt das
-GPU-Tor, und wer an LiteLLM vorbei zu Ollama geht, belastet die Karte auch
-waehrend eines Spiels oder eines Renders (siehe ``ingest/gpu_tor.py``).
+Zwei Wege zu den Modellen, und welcher gilt, entscheidet allein der Schalter
+``PHOTOVAULT_LLM``:
+
+- ``litellm`` (Vorgabe): LiteLLM, Pools ``local`` / ``embedder``. Nur dort sitzt
+  das GPU-Tor (photovault#19, ``ingest/gpu_tor.py``); auf crackdesk ist das
+  der Weg.
+- ``ollama``: Ollama direkt unter ``OLLAMA_URL``, fuer Installationen ohne
+  LiteLLM (photovault#26). Kennt kein GPU-Tor.
+
+Es gibt keinen stillen Rueckfall: ein gesetztes ``OLLAMA_URL`` allein schaltet
+nicht um (alte ``.env``-Dateien tragen es), und ein leeres ``LITELLM_URL``
+heisst "der lokale Proxy", nicht "Ollama". Bis photovault#19 war genau dieser
+Rueckfall der Weg am Tor vorbei. Alle Ollama-Endpunkte stehen in diesem Modul
+(``ollama_post``, ``ollama_models``); ein Test laesst sie nirgends sonst zu.
 """
 from __future__ import annotations
 
@@ -18,12 +28,26 @@ from ingest.gpu_tor import from_http_error
 
 logger = logging.getLogger(__name__)
 
-#: LiteLLM-Aliase, nicht Ollama-Tags. Welches Gewicht dahinter liegt,
-#: steht nur in der LiteLLM-Config -- PhotoVault kennt `local` / `embedder`.
-CAPTION_MODEL = os.environ.get("PHOTOVAULT_CAPTION_MODEL", "local")
-EMBED_MODEL = os.environ.get("PHOTOVAULT_EMBED_MODEL", "embedder")
-TEXT_VECTOR_SIZE = 2560
 DEFAULT_LITELLM_URL = "http://127.0.0.1:4000"
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+
+
+def llm_mode() -> str:
+    """``litellm`` (Vorgabe) oder ``ollama`` -- Ollama nur ausdruecklich gewaehlt."""
+    mode = (os.environ.get("PHOTOVAULT_LLM") or "").strip().lower()
+    return "ollama" if mode == "ollama" else "litellm"
+
+
+#: Mit LiteLLM Pool-Aliase (`local` / `embedder`): welches Gewicht dahinter
+#: liegt, steht nur in der LiteLLM-Config. Mit Ollama direkt Ollama-Tags; die
+#: Vorgaben sind die Modelle aus dem README, 2560 Dimensionen wie der Pool.
+_OLLAMA_AT_IMPORT = llm_mode() == "ollama"
+#: Ein leerer Wert (Compose reicht `${X:-}` durch) heisst: Vorgabe des Modus.
+CAPTION_MODEL = os.environ.get("PHOTOVAULT_CAPTION_MODEL") or (
+    "qwen3.8:27b" if _OLLAMA_AT_IMPORT else "local")
+EMBED_MODEL = os.environ.get("PHOTOVAULT_EMBED_MODEL") or (
+    "qwen3-embedding:4b" if _OLLAMA_AT_IMPORT else "embedder")
+TEXT_VECTOR_SIZE = 2560
 #: Kontextgroesse fuer Caption-Anfragen. ``0`` bedeutet: gar kein ``num_ctx``
 #: mitschicken -- dann gilt, was das Modellprofil selbst festlegt.
 #:
@@ -42,14 +66,44 @@ CAPTION_NUM_CTX = int(os.environ.get("PHOTOVAULT_CAPTION_NUM_CTX", "8192"))
 def litellm_url() -> str:
     """Adresse von LiteLLM; ohne Angabe der lokale Proxy auf crackdesk.
 
-    Bis photovault#19 hiess ein leerer Wert „Ollama direkt“. Diesen Rueckfall
-    gibt es nicht mehr: er ging am GPU-Tor vorbei.
+    Bis photovault#19 hiess ein leerer Wert „Ollama direkt“. Diesen stillen
+    Rueckfall gibt es nicht mehr: er ging am GPU-Tor vorbei. Ollama direkt
+    gibt es nur noch per ``PHOTOVAULT_LLM=ollama``.
     """
     return (
         os.environ.get("LITELLM_URL")
         or os.environ.get("PHOTOVAULT_EMBED_URL")
         or DEFAULT_LITELLM_URL
     ).rstrip("/")
+
+
+def ollama_url() -> str:
+    """Adresse von Ollama, nur im Modus ``ollama`` benutzt."""
+    return (os.environ.get("OLLAMA_URL") or DEFAULT_OLLAMA_URL).rstrip("/")
+
+
+def llm_target() -> str:
+    """Wohin Modellanfragen gerade gehen -- fuer Meldungen und die Jobs-Seite."""
+    return ollama_url() if llm_mode() == "ollama" else litellm_url()
+
+
+def ollama_post(endpoint: str, payload: dict[str, Any], timeout: int = 180) -> dict[str, Any]:
+    """Ollama direkt (``/api/<endpoint>``) -- nur im ausdruecklich gewaehlten Modus.
+
+    Kein GPU-Tor: wer das auf crackdesk einschaltet, belastet die Karte auch
+    waehrend eines Spiels oder Renders.
+    """
+    return post_json(f"{ollama_url()}/api/{endpoint}", payload, timeout=timeout)
+
+
+def ollama_models() -> set[str] | None:
+    """Installierte Ollama-Tags; ``None``, wenn Ollama nicht antwortet."""
+    try:
+        with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=3) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        return None
+    return {str(m.get("name") or "") for m in data.get("models", [])}
 
 
 def litellm_headers() -> dict[str, str]:
@@ -65,7 +119,12 @@ def apply_llm_env() -> None:
     Ohne das fehlt `python -m ingest.caption_pass` der Schluessel, weil keine
     `.env` geladen wird -- und LiteLLM lehnt jede Anfrage ab.
     Der Key kommt aus dem ai-stack-Hub, nicht aus diesem Repo.
+
+    Mit ``PHOTOVAULT_LLM=ollama`` gibt es nichts zu setzen: Modellnamen und
+    Kontextgroesse behalten ihre Ollama-Vorgaben.
     """
+    if llm_mode() == "ollama":
+        return
     os.environ.setdefault("LITELLM_URL", DEFAULT_LITELLM_URL)
     os.environ.setdefault("PHOTOVAULT_CAPTION_MODEL", "local")
     os.environ.setdefault("PHOTOVAULT_EMBED_MODEL", "embedder")

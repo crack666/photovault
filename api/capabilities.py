@@ -29,7 +29,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, litellm_headers, litellm_url
+from ingest.ollama_client import (
+    CAPTION_MODEL, EMBED_MODEL, litellm_headers, litellm_url, llm_mode, llm_target, ollama_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +50,15 @@ UNCHECKED: Any = object()
 
 
 def llm_models() -> Optional[set[str]]:
-    """Pool-Aliase bei LiteLLM. `None` heisst: LiteLLM antwortet nicht.
+    """Pool-Aliase bei LiteLLM, mit ``PHOTOVAULT_LLM=ollama`` Ollama-Tags.
 
-    PhotoVault kennt `local` und `embedder`. Ob dahinter ctx8k oder ein
-    anderes Gewicht haengt, sieht nur der Proxy. Ollama selbst fragt
-    PhotoVault nicht mehr (photovault#19, GPU-Tor).
+    `None` heisst: der gewaehlte Dienst antwortet nicht. PhotoVault kennt
+    `local` und `embedder`; ob dahinter ctx8k oder ein anderes Gewicht haengt,
+    sieht nur der Proxy. Ollama wird nur gefragt, wenn es ausdruecklich
+    gewaehlt ist (photovault#26), nie als stiller Rueckfall (photovault#19).
     """
+    if llm_mode() == "ollama":
+        return ollama_models()
     pool = litellm_url()
     try:
         req = urllib.request.Request(f"{pool}/v1/models", headers=litellm_headers())
@@ -81,7 +86,7 @@ def missing(
     if models:
         pool = llm_models() if have_models is UNCHECKED else have_models
         if pool is None:
-            target = litellm_url()
+            target = llm_target()
             return f"LLM-Pool nicht erreichbar ({target}). {hint}".strip()
         absent = [m for m in models if m not in pool]
         if absent:
@@ -166,7 +171,7 @@ def snapshot() -> dict:
     }
 
     state = {
-        "ollama": {"url": litellm_url(), "reachable": pool is not None,
+        "ollama": {"url": llm_target(), "mode": llm_mode(), "reachable": pool is not None,
                    "models": sorted(pool) if pool else []},
         "accelerator": _accelerator(),
         "features": features,

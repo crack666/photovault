@@ -81,14 +81,22 @@ LiteLLM; ohne es tragen die Kontinente ihre Szenen-Tags als Namen statt der Capt
 Jobs-Seite: Läufe, deren Voraussetzung nicht da ist, sind dort gesperrt und
 nennen den Grund, statt „gestartet" zu melden und still zu sterben.
 
-**Optional — [Ollama](https://ollama.com) hinter
-[LiteLLM](https://docs.litellm.ai) für deutsche Bildbeschreibungen.** Läuft auf
-dem Host, nicht im Compose-Verbund: es braucht GPU-Durchreichung und lädt
-zweistellige Gigabyte. PhotoVault spricht die Modelle **nur über LiteLLM** an
-(Pool `local` für Captions, `embedder` für Textvektoren), nie Ollama direkt:
-in LiteLLM sitzt das GPU-Tor, das lokale Modelle während eines Spiels oder
-eines Renders sperrt (siehe [Fortschritt](#fortschritt)). Ohne LiteLLM fehlen
-nur Captions und Freitextsuche; alles andere funktioniert.
+**Optional — [Ollama](https://ollama.com) für deutsche Bildbeschreibungen**,
+hinter [LiteLLM](https://docs.litellm.ai) oder direkt. Läuft auf dem Host,
+nicht im Compose-Verbund: es braucht GPU-Durchreichung und lädt zweistellige
+Gigabyte. Zwei Wege, und welcher gilt, entscheidet allein `PHOTOVAULT_LLM`:
+
+- **LiteLLM** (Vorgabe): Pool `local` für Captions, `embedder` für Textvektoren,
+  Adresse `LITELLM_URL`. In LiteLLM sitzt das GPU-Tor, das lokale Modelle während
+  eines Spiels oder eines Renders sperrt (siehe [Fortschritt](#fortschritt)).
+- **Ollama direkt** (`PHOTOVAULT_LLM=ollama`, Adresse `OLLAMA_URL`, Vorgabe
+  `http://127.0.0.1:11434`): für Rechner ohne LiteLLM. Modelle sind dann
+  Ollama-Tags (Vorgabe `qwen3.8:27b` und `qwen3-embedding:4b`). Ein GPU-Tor gibt es
+  auf diesem Weg nicht.
+
+Es gibt keinen stillen Rückfall: ein gesetztes `OLLAMA_URL` allein schaltet nicht
+um ([photovault#26](https://github.com/crack666/photovault/issues/26)). Ohne beides
+fehlen nur Captions und Freitextsuche; alles andere funktioniert.
 
 | Zweck | Empfehlung | VRAM | gemessen |
 |---|---|---|---|
@@ -701,7 +709,8 @@ Share), aber keine Admin-Rechte auf der NAS.
 
 Env: `LITELLM_URL` (Vorgabe `http://127.0.0.1:4000`), `LITELLM_MASTER_KEY` (sonst aus
 `D:/ai/ai-stack/.env`), `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
-`OLLAMA_URL` und `--ollama-url` gibt es seit photovault#19 nicht mehr.
+`PHOTOVAULT_LLM=ollama` mit `OLLAMA_URL` für Ollama direkt (photovault#26); `--ollama-url`
+gibt es seit photovault#19 nicht mehr.
 
 ### Was einen Re-Ingest überlebt
 

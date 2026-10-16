@@ -18,6 +18,9 @@ from ingest.ollama_client import (
     CAPTION_NUM_CTX,
     litellm_headers,
     litellm_url,
+    llm_mode,
+    llm_target,
+    ollama_post,
     post_json,
 )
 
@@ -274,7 +277,10 @@ class Captioner:
         """`num_ctx=0` schickt gar keine Kontextgroesse mit (kein Reload)."""
         self._model = model
         self._num_ctx = num_ctx
-        logger.info("Captions via LiteLLM %s model=%s", litellm_url(), self._model)
+        if llm_mode() == "ollama":
+            logger.info("Captions via Ollama direkt %s model=%s (kein GPU-Tor)", llm_target(), self._model)
+        else:
+            logger.info("Captions via LiteLLM %s model=%s", llm_target(), self._model)
 
     def caption(self, file_path: str, context: dict[str, Any] | None = None) -> str | None:
         result = self.caption_structured(file_path, context)
@@ -355,11 +361,14 @@ class Captioner:
         return _parse_json(raw)
 
     def _complete(self, prompt: str, images: list[str]) -> str:
-        """LiteLLM `/v1/chat/completions` -- nie Ollama direkt (GPU-Tor).
+        """LiteLLM `/v1/chat/completions`, mit ``PHOTOVAULT_LLM=ollama`` Ollama `chat`.
 
-        Das Modell ist ein Pool-Alias (`local`). Welches Gewicht haengt, steht
-        nur in der LiteLLM-Config -- PhotoVault schickt keinen Ollama-Tag.
+        Mit LiteLLM ist das Modell ein Pool-Alias (`local`); welches Gewicht
+        haengt, steht nur in der LiteLLM-Config. Ollama direkt nur, wenn
+        ausdruecklich gewaehlt (photovault#26) -- dort gibt es kein GPU-Tor.
         """
+        if llm_mode() == "ollama":
+            return _content_from_ollama(self._via_ollama(prompt, images))
         return _content_from_openai(self._via_litellm(litellm_url(), prompt, images))
 
     def _via_litellm(self, pool: str, prompt: str, images: list[str]) -> dict[str, Any]:
@@ -383,6 +392,25 @@ class Captioner:
             payload,
             timeout=180,
             headers=litellm_headers(),
+        )
+
+
+    def _via_ollama(self, prompt: str, images: list[str]) -> dict[str, Any]:
+        return ollama_post(
+            "chat",
+            {
+                "model": self._model,
+                "stream": False,
+                "think": False,
+                "format": "json",
+                "options": caption_options(self._num_ctx),
+                "messages": [{
+                    "role": "user",
+                    "content": prompt,
+                    "images": images,
+                }],
+            },
+            timeout=180,
         )
 
 
@@ -414,6 +442,10 @@ def _content_from_openai(resp: dict[str, Any]) -> str:
     if not choices:
         return ""
     return str(((choices[0].get("message") or {}).get("content") or "")).strip()
+
+
+def _content_from_ollama(resp: dict[str, Any]) -> str:
+    return str(((resp.get("message") or {}).get("content") or "")).strip()
 
 
 def _parse_json(raw: str) -> dict[str, Any] | None:

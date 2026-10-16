@@ -31,13 +31,16 @@ services:
       - "${API_PORT:-8000}:8000"
     environment:
       QDRANT_URL: http://qdrant:6333
-      # Modelle nur ueber LiteLLM auf dem Host (dort sitzt das GPU-Tor), nicht
-      # Ollama direkt. Ohne LiteLLM bleibt es bei Metadaten, Gesichtern und
-      # CLIP -- Captions und Freitextsuche entfallen.
+      # Modelle ueber LiteLLM auf dem Host (Vorgabe; dort sitzt das GPU-Tor) oder,
+      # mit PHOTOVAULT_LLM=ollama, Ollama direkt (ohne Tor, photovault#26).
+      # Ohne beides bleibt es bei Metadaten, Gesichtern und CLIP -- Captions
+      # und Freitextsuche entfallen. Leere Modellnamen = Vorgabe des Modus.
+      PHOTOVAULT_LLM: ${PHOTOVAULT_LLM:-litellm}
       LITELLM_URL: ${LITELLM_URL:-http://host.docker.internal:4000}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
-      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-local}
-      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-embedder}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-}
+      PHOTOVAULT_EMBED_MODEL: ${PHOTOVAULT_EMBED_MODEL:-}
       MODEL_DIR: /models
     extra_hosts:
       - "host.docker.internal:host-gateway"

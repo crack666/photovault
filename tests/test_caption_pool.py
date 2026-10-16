@@ -225,10 +225,13 @@ def test_warmup_via_litellm_pins_caption_and_embedder(monkeypatch):
 
 
 def test_no_path_talks_to_ollama_directly():
-    """photovault#19: jede Modellanfrage geht ueber LiteLLM, nur dort sitzt das GPU-Tor.
+    """photovault#19/#26: Ollama-Adressen und -Endpunkte stehen nur in
+    ``ingest/ollama_client.py``, hinter dem Schalter ``PHOTOVAULT_LLM=ollama``.
 
-    Gesucht wird im Code, nicht in der Doku: eine Ollama-Adresse oder ein
-    Ollama-Endpunkt in einem Modul hiesse, dass ein Pfad am Tor vorbeigeht.
+    Gesucht wird im Code, nicht in der Doku: eine Ollama-Adresse in einem
+    anderen Modul hiesse, dass ein Pfad am Schalter -- und damit auf crackdesk
+    am GPU-Tor -- vorbeigeht. Dass ohne Schalter nichts zu Ollama geht, haelt
+    ``tests/test_ollama_wahl.py`` fest.
     """
     import re
     from pathlib import Path
@@ -238,6 +241,8 @@ def test_no_path_talks_to_ollama_directly():
     hits = []
     for folder in ("ingest", "api", "tools", "scripts"):
         for path in sorted((root / folder).rglob("*.py")):
+            if path == root / "ingest" / "ollama_client.py":
+                continue
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if pattern.search(line):
                     hits.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
