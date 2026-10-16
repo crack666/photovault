@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from typing import Optional
 
@@ -21,7 +20,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 SKIP_ID = "_skipped"
 IGNORED_ID = "_ignored"
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 
 class PersonCreate(BaseModel):
@@ -716,7 +714,7 @@ def unassign_faces(req: AssignRequest) -> dict:
     invalidate_clusters()
     invalidate_people()
     stats = (
-        rebuild_text_vectors(q, touched, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        rebuild_text_vectors(q, touched, collection=PHOTOS)
         if touched
         else {}
     )
@@ -754,7 +752,7 @@ def move_faces(req: MoveFacesRequest) -> dict:
     invalidate_clusters()
     invalidate_people()
     stats = (
-        rebuild_text_vectors(q, touched, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        rebuild_text_vectors(q, touched, collection=PHOTOS)
         if touched
         else {}
     )
@@ -805,7 +803,7 @@ def rename_person(person_id: str, req: RenameRequest) -> dict:
         person_meta.rename(q, person_id, new_id)
     invalidate_clusters()
     invalidate_people()
-    stats = rebuild_text_vectors(q, touched, collection=PHOTOS, ollama_url=OLLAMA_URL) if touched else {}
+    stats = rebuild_text_vectors(q, touched, collection=PHOTOS) if touched else {}
     return {
         "id": new_id, "name": name, "previous": {"id": person_id, "name": old_name},
         "faces": len(faces), "photos": len(touched), "reembedded": stats.get("updated", 0),
@@ -838,7 +836,7 @@ def unassign_person(person_id: str) -> dict:
     person_meta.drop(q, person_id)
     invalidate_clusters()
     invalidate_people()
-    stats = rebuild_text_vectors(q, touched, collection=PHOTOS, ollama_url=OLLAMA_URL) if touched else {}
+    stats = rebuild_text_vectors(q, touched, collection=PHOTOS) if touched else {}
     return {
         "removed": person_id, "name": name, "faces_freed": len(faces),
         "photos": len(touched), "reembedded": stats.get("updated", 0),
@@ -872,7 +870,7 @@ def _assign(person_id: str, person_name: str, face_ids: list[str]) -> int:
     # mitbekommen. Kostet ~130 ms pro Foto, kein neuer Vision-Durchlauf.
     if touched:
         try:
-            stats = rebuild_text_vectors(q, touched, collection=PHOTOS, ollama_url=OLLAMA_URL)
+            stats = rebuild_text_vectors(q, touched, collection=PHOTOS)
             logger.info("Re-embedded %d photos after labeling %s", stats["updated"], person_id)
         except Exception:
             logger.exception("Re-embed after labeling failed for %s", person_id)

@@ -46,7 +46,7 @@ _load_runtime() {
             key="${line%%=*}"
             val="${line#*=}"
             case "${key}" in
-                PHOTO_DIR|API_PORT|API_HOST|QDRANT_URL|OLLAMA_URL|VENV)
+                PHOTO_DIR|API_PORT|API_HOST|QDRANT_URL|LITELLM_URL|VENV)
                     eval "if [ -z \"\${${key}:-}\" ]; then ${key}=\"\${val}\"; fi"
                     ;;
             esac
@@ -61,7 +61,6 @@ PHOTO_DIR="${PHOTO_DIR:-/mnt/photo}"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8000}"
 QDRANT_URL="${QDRANT_URL:-http://127.0.0.1:6333}"
-OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 VENV="${VENV:-$HOME/.venvs/photovault}"
 LOG="logs/uvicorn.log"
 
@@ -76,8 +75,9 @@ LOG="logs/uvicorn.log"
 # Wer es anders will, setzt PHOTOVAULT_THUMB_CACHE selbst.
 export PHOTOVAULT_THUMB_CACHE="${PHOTOVAULT_THUMB_CACHE:-$HOME/.cache/photovault-thumbs}"
 
-# LiteLLM ist der Chokepoint: Captions = Pool `local`, Embeddings = `embedder`.
-# Welches Gewicht dahinter liegt, steht nur in der LiteLLM-Config.
+# LiteLLM ist der einzige Weg zu den Modellen: Captions = Pool `local`,
+# Embeddings = `embedder`. Welches Gewicht dahinter liegt, steht nur in der
+# LiteLLM-Config. Ollama direkt ginge am GPU-Tor vorbei (photovault#19).
 export LITELLM_URL="${LITELLM_URL:-http://127.0.0.1:4000}"
 export PHOTOVAULT_CAPTION_MODEL="${PHOTOVAULT_CAPTION_MODEL:-local}"
 export PHOTOVAULT_EMBED_MODEL="${PHOTOVAULT_EMBED_MODEL:-embedder}"
@@ -185,14 +185,14 @@ pruefe_cache() {
     fi
 }
 
-pruefe_ollama() {
-    if curl -sf -m 3 -o /dev/null "${OLLAMA_URL}/api/tags"; then
-        ok "Ollama: ${OLLAMA_URL}"
+pruefe_litellm() {
+    if curl -sf -m 3 -o /dev/null "${LITELLM_URL}/health/liveliness"; then
+        ok "LiteLLM: ${LITELLM_URL}"
     else
         # Kein Fehler: alles ausser Bildbeschreibungen und Freitextsuche
         # funktioniert ohne. Die Oberflaeche sperrt die betroffenen Felder
         # selbst und sagt warum.
-        warn "Ollama antwortet nicht -- Bildbeschreibungen und Freitextsuche bleiben gesperrt"
+        warn "LiteLLM antwortet nicht -- Bildbeschreibungen und Freitextsuche bleiben gesperrt"
     fi
 }
 
@@ -239,7 +239,7 @@ tu_start() {
     pruefe_fotos
     pruefe_qdrant || return 1
     pruefe_cache
-    pruefe_ollama
+    pruefe_litellm
     echo
     mkdir -p logs
     nohup "${VENV}/bin/python" -m uvicorn api.main:app \

@@ -79,7 +79,6 @@ if not exist ".env" (
     > .env echo PHOTO_DIR=!PHOTODIR!
     >> .env echo API_PORT=8000
     >> .env echo QDRANT_PORT=6333
-    >> .env echo OLLAMA_URL=http://host.docker.internal:11434
     echo.
     echo   Gemerkt in .env -- beim naechsten Mal geht es ohne Nachfrage.
 )

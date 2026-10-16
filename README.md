@@ -76,15 +76,19 @@ entwickeln](#ohne-docker-entwickeln).
 **Was ohne Grafikkarte alles funktioniert:** Datum und Herkunft, Gesichter
 finden und benennen, Serien, die Suche nach Personen, Jahr, Ort, Album und
 Tags — und der **Atlas**, denn UMAP rechnet ohnehin auf der CPU. Nur die
-Bildbeschreibungen und die *Freitextsuche* brauchen Ollama; ohne es tragen die
-Kontinente ihre Szenen-Tags als Namen statt der Captions. Was fehlt, sagt die
+Bildbeschreibungen und die *Freitextsuche* brauchen ein Sprachmodell hinter
+LiteLLM; ohne es tragen die Kontinente ihre Szenen-Tags als Namen statt der Captions. Was fehlt, sagt die
 Jobs-Seite: Läufe, deren Voraussetzung nicht da ist, sind dort gesperrt und
 nennen den Grund, statt „gestartet" zu melden und still zu sterben.
 
-**Optional — [Ollama](https://ollama.com) für deutsche Bildbeschreibungen.**
-Läuft auf dem Host, nicht im Compose-Verbund: es braucht GPU-Durchreichung und
-lädt zweistellige Gigabyte. Ohne Ollama fehlen nur die Captions; alles andere
-funktioniert.
+**Optional — [Ollama](https://ollama.com) hinter
+[LiteLLM](https://docs.litellm.ai) für deutsche Bildbeschreibungen.** Läuft auf
+dem Host, nicht im Compose-Verbund: es braucht GPU-Durchreichung und lädt
+zweistellige Gigabyte. PhotoVault spricht die Modelle **nur über LiteLLM** an
+(Pool `local` für Captions, `embedder` für Textvektoren), nie Ollama direkt:
+in LiteLLM sitzt das GPU-Tor, das lokale Modelle während eines Spiels oder
+eines Renders sperrt (siehe [Fortschritt](#fortschritt)). Ohne LiteLLM fehlen
+nur Captions und Freitextsuche; alles andere funktioniert.
 
 | Zweck | Empfehlung | VRAM | gemessen |
 |---|---|---|---|
@@ -593,8 +597,8 @@ Beschreibungen erzeugt.
 
 ## Ohne Docker entwickeln
 
-Wer am Code arbeitet, will die Pipeline direkt starten. Qdrant und Ollama
-laufen dann als eigene Dienste (oder aus dem Compose-Verbund oben).
+Wer am Code arbeitet, will die Pipeline direkt starten. Qdrant und LiteLLM
+(mit Ollama dahinter) laufen dann als eigene Dienste (oder aus dem Compose-Verbund oben).
 
 Eigene venv (`~/.venvs/photovault`), **nicht** die globale: PhotoVault braucht
 `onnxruntime-gpu`, das `onnxruntime` ersetzt und andere Projekte still auf die GPU
@@ -649,17 +653,17 @@ Von Windows aus reicht **`start.bat`** (erkennt die venv) oder direkt
 **`start-local.bat`**. Beenden: `stop.bat` bzw. `./start-local.sh stop`.
 
 Geprüft wird der Reihe nach: venv, der Foto-Mount, optional der Windows-SMB-
-Share, Qdrant, Ollama. Fehlt der Mount (`nofail` in `/etc/fstab`, nach einem
+Share, Qdrant, LiteLLM. Fehlt der Mount (`nofail` in `/etc/fstab`, nach einem
 WSL-Neustart ohne NAS also weg), holt das Skript ihn mit `sudo -n mount` nach
 — ohne Passwortabfrage, sofern `/etc/sudoers.d/` das erlaubt. Fehlt Qdrant,
 versucht es `docker start qdrant` — der Container gehört zum ai-stack, nicht
-zu PhotoVault. Fehlt Ollama, läuft alles außer Bildbeschreibungen und
+zu PhotoVault. Fehlt LiteLLM, läuft alles außer Bildbeschreibungen und
 Freitextsuche weiter, und das steht dann dabei.
 
 Lokale Pfade (Foto-Mount, UNC des Shares) gehören nach
 `~/.config/photovault/runtime`, Vorlage `runtime.example` — nicht ins
 Repository. Abweichende Werte sonst über Umgebungsvariablen: `PHOTO_DIR`,
-`API_PORT`, `QDRANT_URL`, `OLLAMA_URL`, `VENV`.
+`API_PORT`, `QDRANT_URL`, `LITELLM_URL`, `VENV`.
 
 Von Hand geht es weiterhin:
 
@@ -695,7 +699,9 @@ erreicht, und kein Konto, das auch Fernseher, Handys oder Gäste kennen. Es
 braucht Lesen, Anlegen und Löschen (der Papierkorb löscht Originale auf dem
 Share), aber keine Admin-Rechte auf der NAS.
 
-Env: `OLLAMA_URL`, `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
+Env: `LITELLM_URL` (Vorgabe `http://127.0.0.1:4000`), `LITELLM_MASTER_KEY` (sonst aus
+`D:/ai/ai-stack/.env`), `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
+`OLLAMA_URL` und `--ollama-url` gibt es seit photovault#19 nicht mehr.
 
 ### Was einen Re-Ingest überlebt
 
@@ -863,6 +869,21 @@ Zustandsnamen: im Bestand stehen `done`, `succeeded`, `partial` und
 `ingest_jobs` in Qdrant und ist über das Feld `kind` generisch — Caption-Nachläufe
 oder Re-Embeds können dieselbe Anzeige benutzen. Ein Lauf, dessen Prozess stirbt,
 erscheint nach 2 Minuten ohne Aktualisierung als `stale` statt ewig als `running`.
+
+**GPU-Tor: Pause statt Fehler** ([photovault#19](https://github.com/crack666/photovault/issues/19)).
+LiteLLM fragt vor jeder Anfrage an ein lokales Modell das GPU-Tor (ai-stack
+`docs/LITELLM_GPU_TOR.md`). Läuft ein Spiel, rendert ComfyUI oder gilt eine fremde
+Reservierung, antwortet es sofort mit HTTP 503, einem Text ab „GPU belegt“ und
+`Retry-After`. Captions (Einlesen und Bildbeschreibungen) **pausieren** dann: der Job
+bleibt `running`, die Jobs-Seite zeigt „⏸ pausiert: GPU belegt: …“ samt Zeitpunkt des
+nächsten Versuchs, und nach `Retry-After` fragt der Lauf erneut — eine Anfrage je
+Pause, kein Wiederholsturm, keine Obergrenze. Kein Foto zählt dabei als
+fehlgeschlagen. Während einer langen Pause meldet sich der Job jede Minute, damit er
+nicht als `stale` erscheint. Eine 503 ohne „GPU belegt“ bleibt ein echter Fehler.
+Embeddings (Suche, Text-Vektoren, Re-Embed) lässt das Tor immer durch; die
+Atlas-Titel fallen bei belegter Karte auf ihre Szenen-Tags zurück. Code:
+`ingest/gpu_tor.py`, Tests `tests/test_gpu_tor.py` (mit einer LiteLLM-Attrappe, kein
+echtes Tor).
 
 ### Wenn eine Änderung nicht ankommt
 

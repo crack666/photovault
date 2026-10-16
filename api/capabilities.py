@@ -3,11 +3,11 @@
 Ein `pip install` beantwortet die Frage nicht, und zwar aus drei Gruenden,
 die alle in diesem Projekt zutreffen:
 
-1. **Ollama ist kein Python-Paket.** Es ist ein eigener Dienst auf dem Host,
-   der laufen muss und dessen Modelle gezogen sein muessen. Kein Paketmanager
-   kann das zusagen -- und `docker compose` auch nicht, denn Ollama laeuft
-   absichtlich ausserhalb des Verbunds (GPU-Durchreichung, zweistellige
-   Gigabyte).
+1. **Die Modelle sind kein Python-Paket.** Sie liegen hinter LiteLLM (ai-stack),
+   einem eigenen Dienst auf dem Host, der laufen und die Pools `local` und
+   `embedder` kennen muss. Kein Paketmanager kann das zusagen -- und
+   `docker compose` auch nicht, denn LiteLLM und Ollama laufen absichtlich
+   ausserhalb des Verbunds (GPU-Durchreichung, zweistellige Gigabyte).
 2. **Manches ist absichtlich optional.** `umap-learn` zieht numba und llvmlite
    fuer einen einzigen Befehl. Verpflichtend gemacht, zahlt das jeder mit, der
    die Karte nie rechnet.
@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, litellm_headers, litellm_url, ollama_url
+from ingest.ollama_client import CAPTION_MODEL, EMBED_MODEL, litellm_headers, litellm_url
 
 logger = logging.getLogger(__name__)
 
@@ -42,30 +42,19 @@ TTL_SECONDS = 15.0
 
 _cache: tuple[float, dict] = (0.0, {})
 
-#: „noch nicht nachgesehen" -- unterscheidbar von `None`, das „Ollama
+#: „noch nicht nachgesehen" -- unterscheidbar von `None`, das „LiteLLM
 #: antwortet nicht" bedeutet.
 UNCHECKED: Any = object()
 
 
-def ollama_models() -> Optional[set[str]]:
-    """Welche Modelle liegen bereit? `None` heisst: Ollama antwortet nicht."""
-    try:
-        with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=3) as resp:
-            data = json.loads(resp.read())
-    except Exception:
-        return None
-    return {str(m.get("name") or "") for m in data.get("models", [])}
-
-
 def llm_models() -> Optional[set[str]]:
-    """Pool-Aliase bei LiteLLM, sonst Ollama-Tags.
+    """Pool-Aliase bei LiteLLM. `None` heisst: LiteLLM antwortet nicht.
 
     PhotoVault kennt `local` und `embedder`. Ob dahinter ctx8k oder ein
-    anderes Gewicht haengt, sieht nur der Proxy.
+    anderes Gewicht haengt, sieht nur der Proxy. Ollama selbst fragt
+    PhotoVault nicht mehr (photovault#19, GPU-Tor).
     """
     pool = litellm_url()
-    if not pool:
-        return ollama_models()
     try:
         req = urllib.request.Request(f"{pool}/v1/models", headers=litellm_headers())
         with urllib.request.urlopen(req, timeout=3) as resp:
@@ -92,7 +81,7 @@ def missing(
     if models:
         pool = llm_models() if have_models is UNCHECKED else have_models
         if pool is None:
-            target = litellm_url() or ollama_url()
+            target = litellm_url()
             return f"LLM-Pool nicht erreichbar ({target}). {hint}".strip()
         absent = [m for m in models if m not in pool]
         if absent:
@@ -177,7 +166,7 @@ def snapshot() -> dict:
     }
 
     state = {
-        "ollama": {"url": litellm_url() or ollama_url(), "reachable": pool is not None,
+        "ollama": {"url": litellm_url(), "reachable": pool is not None,
                    "models": sorted(pool) if pool else []},
         "accelerator": _accelerator(),
         "features": features,
