@@ -1,7 +1,8 @@
 """Text Embedding via LiteLLM pool `embedder` (qwen3-embedding:4b-ctx2k, 2560d).
 
-Nur ueber LiteLLM, nie Ollama direkt (photovault#19). Embeddings laesst das
-GPU-Tor immer durch; die Suche funktioniert also auch waehrend eines Spiels.
+Vorgabe ist LiteLLM (photovault#19); Embeddings laesst das GPU-Tor immer
+durch, die Suche funktioniert also auch waehrend eines Spiels. Mit
+``PHOTOVAULT_LLM=ollama`` geht es an Ollama direkt (photovault#26).
 """
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ from ingest.ollama_client import (
     TEXT_VECTOR_SIZE,
     litellm_headers,
     litellm_url,
+    llm_mode,
+    ollama_post,
     post_json,
 )
 
@@ -30,6 +33,8 @@ class TextEmbedder:
         if not texts:
             return []
         try:
+            if llm_mode() == "ollama":
+                return self._via_ollama(texts)
             resp = post_json(
                 f"{litellm_url()}/v1/embeddings",
                 {"model": self._model, "input": texts},
@@ -47,3 +52,12 @@ class TextEmbedder:
         except Exception as e:
             logger.warning("Text embedding failed: %s", e)
             return [None] * len(texts)
+
+    def _via_ollama(self, texts: list[str]) -> list[list[float] | None]:
+        resp = ollama_post("embed", {"model": self._model, "input": texts}, timeout=60)
+        embeddings = resp.get("embeddings") or []
+        out: list[list[float] | None] = []
+        for i, _ in enumerate(texts):
+            vec = embeddings[i] if i < len(embeddings) else None
+            out.append(list(vec) if vec and len(vec) == TEXT_VECTOR_SIZE else None)
+        return out

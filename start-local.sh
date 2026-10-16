@@ -46,7 +46,7 @@ _load_runtime() {
             key="${line%%=*}"
             val="${line#*=}"
             case "${key}" in
-                PHOTO_DIR|API_PORT|API_HOST|QDRANT_URL|LITELLM_URL|VENV)
+                PHOTO_DIR|API_PORT|API_HOST|QDRANT_URL|LITELLM_URL|PHOTOVAULT_LLM|OLLAMA_URL|VENV)
                     eval "if [ -z \"\${${key}:-}\" ]; then ${key}=\"\${val}\"; fi"
                     ;;
             esac
@@ -186,6 +186,16 @@ pruefe_cache() {
 }
 
 pruefe_litellm() {
+    if [ "${PHOTOVAULT_LLM:-}" = "ollama" ]; then
+        # Ausdruecklich gewaehlt (photovault#26): Ollama direkt, ohne GPU-Tor.
+        local url="${OLLAMA_URL:-http://127.0.0.1:11434}"
+        if curl -sf -m 3 -o /dev/null "${url}/api/tags"; then
+            ok "Ollama direkt: ${url} (PHOTOVAULT_LLM=ollama, kein GPU-Tor)"
+        else
+            warn "Ollama antwortet nicht (${url}) -- Bildbeschreibungen und Freitextsuche bleiben gesperrt"
+        fi
+        return
+    fi
     if curl -sf -m 3 -o /dev/null "${LITELLM_URL}/health/liveliness"; then
         ok "LiteLLM: ${LITELLM_URL}"
     else

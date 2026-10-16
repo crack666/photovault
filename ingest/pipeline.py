@@ -826,8 +826,12 @@ class IngestPipeline:
         from ingest.gpu_tor import GpuBusy
         from ingest.ollama_client import (
             CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, litellm_headers,
-            litellm_url, post_json,
+            litellm_url, llm_mode, ollama_post, post_json,
         )
+
+        if llm_mode() == "ollama":
+            self._warm_ollama()
+            return
 
         started = time.time()
         pool = litellm_url()
@@ -862,6 +866,35 @@ class IngestPipeline:
                 timeout=300,
                 headers=litellm_headers(),
             )
+        except Exception as e:
+            logger.warning("Could not re-pin %s: %s", EMBED_MODEL, e)
+
+    def _warm_ollama(self) -> None:
+        """Dasselbe Aufwaermen mit Ollama direkt (``PHOTOVAULT_LLM=ollama``).
+
+        Hier laesst sich die Kontextgroesse pro Anfrage setzen und das Modell
+        anheften (`keep_alive: -1`); erst das grosse Modell, dann den Embedder
+        zurueckholen, aus demselben Grund wie oben.
+        """
+        from ingest.captioner import caption_options
+        from ingest.ollama_client import CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, ollama_post
+
+        started = time.time()
+        options = dict(caption_options())
+        options["num_predict"] = 1
+        try:
+            ollama_post("generate", {"model": CAPTION_MODEL, "prompt": "ok", "stream": False,
+                                     "options": options, "keep_alive": -1}, timeout=900)
+        except Exception as e:
+            logger.warning("Could not warm %s: %s", CAPTION_MODEL, e)
+            return
+        logger.info(
+            "Warmed %s via Ollama (%s) in %.0fs", CAPTION_MODEL,
+            f"num_ctx={CAPTION_NUM_CTX}" if CAPTION_NUM_CTX else "Kontext laut Profil",
+            time.time() - started,
+        )
+        try:
+            ollama_post("embed", {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1}, timeout=300)
         except Exception as e:
             logger.warning("Could not re-pin %s: %s", EMBED_MODEL, e)
 
