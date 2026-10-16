@@ -298,6 +298,10 @@ function render(data) {
           ${!done && j.eta_s ? `<span>ETA ${fmtDur(j.eta_s)}</span>` : ""}
           <span>${esc(j.phase || "")}</span>
         </div>
+        ${!done && j.paused ? `<div class="nums" style="color:#e8c46b">
+          <span>⏸ pausiert: ${esc(j.paused)}</span>
+          ${j.resume_at ? `<span>nächster Versuch ${fmtTime(j.resume_at)}</span>` : ""}
+        </div>` : ""}
         <div class="nums" style="opacity:.5">
           <span>gestartet ${fmtTime(j.started_at)}</span>
           ${j.finished_at ? `<span>fertig ${fmtTime(j.finished_at)}</span>` : ""}

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from ingest.captioner import Captioner, jpeg_b64, merge_tags, run_captions
+from ingest.gpu_tor import Pause as GpuPause
 from ingest.grounding import caption_display
 from ingest.netfs import retry_io
 from ingest.reembed import rebuild_text_vectors
@@ -222,7 +223,6 @@ def _video_frames_b64(file_path: str) -> list[str]:
 def run(
     client,
     collection: str = "photos",
-    ollama_url: Optional[str] = None,
     workers: int = 4,
     io_workers: int = 6,
     num_ctx: int = 0,
@@ -238,6 +238,10 @@ def run(
     Der Satz geht in den Index *und* ins EXIF (ImageDescription), sonst lebt
     er nur in Qdrant. `--exif-only` schreibt vorhandene Index-Sätze nach,
     ohne das Modell.
+
+    Lehnt das GPU-Tor ab (Spiel, Render, fremde Reservierung), pausiert der
+    Lauf mit dem Grund im Job-Eintrag und macht danach weiter; die betroffenen
+    Fotos zaehlen nicht als fehlgeschlagen (`ingest/gpu_tor.py`).
     """
     stats = {
         "selected": 0, "captioned": 0, "unreadable": 0, "failed": 0, "reembedded": 0,
@@ -270,8 +274,9 @@ def run(
     # num_ctx=0: keine Kontextgroesse mitschicken -> kein Reload, das
     # geladene Modell bleibt wie es ist. Ohne GPU-Modelle daneben brauchen
     # wir den kleinen Kontext nicht.
-    captioner = Captioner(ollama_url, num_ctx=num_ctx)
-    embedder = TextEmbedder(ollama_url)
+    captioner = Captioner(num_ctx=num_ctx)
+    embedder = TextEmbedder()
+    pause = GpuPause(job)
     started = time.time()
 
     def caption_one(photo: Photo) -> None:
@@ -294,7 +299,7 @@ def run(
         ready = [p for p in chunk if p.image_b64 is not None]
         stats["unreadable"] += len(chunk) - len(ready)
 
-        run_captions(ready, caption_one, workers)
+        run_captions(ready, caption_one, workers, on_busy=pause)
 
         done = [p for p in ready if p.caption_de]
         stats["failed"] += len(ready) - len(done)
@@ -445,7 +450,6 @@ def main() -> None:
     )
     parser.add_argument("--qdrant-url", default=os.environ.get("QDRANT_URL", "http://localhost:6333"))
     parser.add_argument("--collection", default=os.environ.get("PHOTOVAULT_COLLECTION", "photos"))
-    parser.add_argument("--ollama-url", default=os.environ.get("OLLAMA_URL"))
     parser.add_argument("--all", action="store_true",
                         help="Auch Fotos neu beschriften, die schon eine LLM-Caption haben")
     parser.add_argument("--person", help="Nur Fotos mit dieser bestaetigten Person")
@@ -481,7 +485,6 @@ def main() -> None:
     run(
         client,
         collection=args.collection,
-        ollama_url=args.ollama_url,
         workers=args.workers,
         io_workers=args.io_workers,
         num_ctx=args.num_ctx,

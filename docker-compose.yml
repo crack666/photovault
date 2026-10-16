@@ -31,9 +31,9 @@ services:
       - "${API_PORT:-8000}:8000"
     environment:
       QDRANT_URL: http://qdrant:6333
-      # Ollama läuft auf dem Host, nicht im Verbund. Ohne bleibt es bei
-      # Metadaten, Gesichtern und CLIP -- die Captions entfallen.
-      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      # Modelle nur ueber LiteLLM auf dem Host (dort sitzt das GPU-Tor), nicht
+      # Ollama direkt. Ohne LiteLLM bleibt es bei Metadaten, Gesichtern und
+      # CLIP -- Captions und Freitextsuche entfallen.
       LITELLM_URL: ${LITELLM_URL:-http://host.docker.internal:4000}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
       PHOTOVAULT_CAPTION_MODEL: ${PHOTOVAULT_CAPTION_MODEL:-local}

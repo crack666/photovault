@@ -66,8 +66,8 @@ def test_caption_structured_recovers_truncated_json(monkeypatch):
         'die eine Zahlungsaufforderung für Sounio enthält.'
     )
 
-    def fake_post(url, payload, timeout=180):
-        return {"message": {"content": truncated}}
+    def fake_post(url, payload, timeout=180, headers=None):
+        return {"choices": [{"message": {"content": truncated}}]}
 
     monkeypatch.setattr("ingest.captioner.post_json", fake_post)
     result = Captioner().caption_structured("/gibt/es/nicht.jpg", {}, image_b64="AAAA")

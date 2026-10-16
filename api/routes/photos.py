@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -26,7 +25,6 @@ from ingest.reembed import apply_annotations, rebuild_text_vectors
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 
 class AnnotateRequest(BaseModel):
@@ -130,7 +128,7 @@ def set_caption(point_id: str, req: CaptionRequest) -> dict:
         points=[point_id],
         wait=True,
     )
-    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS)
     return {"id": point_id, "caption_de": text or None,
             "locked": bool(req.lock and text), "reembedded": stats.get("updated", 0)}
 
@@ -191,7 +189,7 @@ def accept_date(point_id: str) -> dict:
         points=[point_id],
         wait=True,
     )
-    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS)
     return {
         "id": point_id,
         "date": when.strftime("%Y-%m-%d"),
@@ -266,7 +264,7 @@ def set_date(point_id: str, req: SetDateRequest) -> dict:
         points=[point_id],
         wait=True,
     )
-    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS)
     return {
         "id": point_id,
         "date": day,
@@ -316,7 +314,7 @@ def set_captions(req: BulkCaptionRequest) -> dict:
         wait=True,
     )
     stats = (
-        rebuild_text_vectors(q, req.photo_ids, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        rebuild_text_vectors(q, req.photo_ids, collection=PHOTOS)
         if req.reembed else {}
     )
     return {"updated": len(req.photo_ids), "locked": bool(req.lock),
@@ -458,7 +456,7 @@ def annotate(req: AnnotateRequest) -> AnnotateResponse:
     reembedded = failed = 0
     if req.reembed and result.get("changed_ids"):
         stats = rebuild_text_vectors(
-            q, result["changed_ids"], collection=PHOTOS, ollama_url=OLLAMA_URL
+            q, result["changed_ids"], collection=PHOTOS
         )
         reembedded, failed = stats["updated"], stats["failed"]
     return AnnotateResponse(
@@ -496,7 +494,7 @@ def reembed(req: ReembedRequest) -> dict:
     if not ids:
         raise HTTPException(400, "Weder photo_ids noch ein Album mit Treffern angegeben")
     try:
-        return rebuild_text_vectors(q, ids, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        return rebuild_text_vectors(q, ids, collection=PHOTOS)
     except Exception as e:
         logger.exception("Reembed failed")
         raise HTTPException(500, f"Re-Embed fehlgeschlagen: {e}") from e

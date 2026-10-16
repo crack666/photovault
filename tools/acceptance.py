@@ -142,13 +142,13 @@ def s1_composite_and_latency(client, collection: str, pts: list[Any]) -> None:
           f"max {max(lat):.1f} ms, median {statistics.median(lat):.1f} ms")
 
 
-def s_text_search(client, collection: str, ollama: str) -> None:
+def s_text_search(client, collection: str) -> None:
     """Semantische Suche ueber den grounded Text-Vektor."""
     import sys
     sys.path.insert(0, os.getcwd())
     from ingest.text_embedder import TextEmbedder
 
-    emb = TextEmbedder(ollama)
+    emb = TextEmbedder()
     probes = ["Silvester Feuerwerk", "Abiball 2008", "Party mit Freunden", "Strand und Meer"]
     lat = []
     ok_any = False
@@ -201,7 +201,6 @@ def s4_faces(client) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--qdrant-url", default=os.environ.get("QDRANT_URL", "http://127.0.0.1:6333"))
-    ap.add_argument("--ollama-url", default=os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"))
     ap.add_argument("--collection", default="photos")
     ap.add_argument("--prefix", default=None)
     args = ap.parse_args()
@@ -220,7 +219,7 @@ def main() -> None:
     s3_caption_context(pts)
     s4_faces(client)
     s5_grounded_embed(client, args.collection, pts)
-    s_text_search(client, args.collection, args.ollama_url)
+    s_text_search(client, args.collection)
 
     print(f"\n{'=' * 62}")
     for status in (FAIL, WARN, PASS):

@@ -75,7 +75,6 @@ if [ ! -f .env ]; then
         echo "PHOTO_DIR=${PHOTODIR}"
         echo "API_PORT=8000"
         echo "QDRANT_PORT=6333"
-        echo "OLLAMA_URL=http://host.docker.internal:11434"
     } > .env
     echo
     echo "  Gemerkt in .env -- beim naechsten Mal geht es ohne Nachfrage."

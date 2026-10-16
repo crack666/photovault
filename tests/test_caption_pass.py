@@ -486,3 +486,53 @@ def test_a_blip_does_not_mark_photos_unreadable(wired, monkeypatch):
 
     assert stats["unreadable"] == 0
     assert stats["captioned"] == 3
+
+
+def test_gpu_tor_pausiert_den_lauf_statt_fehler_zu_zaehlen(wired, monkeypatch):
+    """photovault#19: Tor zu heisst warten, mit Grund im Job, dann weiter.
+
+    Kein Foto zaehlt als fehlgeschlagen, und der Job endet als `done`.
+    """
+    from ingest.gpu_tor import GpuBusy, Pause
+
+    grund = "GPU belegt: ComfyUI rendert (1 Auftrag)"
+    abgelehnt = {"n": 0}
+
+    class Gesperrt:
+        def __init__(self, num_ctx=None):
+            pass
+
+        def caption_structured(self, file_path, context=None, image_b64=None, images_b64=None):
+            if abgelehnt["n"] < 2:
+                abgelehnt["n"] += 1
+                raise GpuBusy(grund, 30)
+            return {"caption_de": f"zu {file_path}", "scene_tags": []}
+
+    class Job:
+        def __init__(self):
+            self.updates, self.finished = [], None
+
+        def update(self, force=False, **fields):
+            self.updates.append(fields)
+
+        def finish(self, status="done", **fields):
+            self.finished = status
+
+    job = Job()
+    slept = []
+    monkeypatch.setattr(caption_pass, "Captioner", Gesperrt)
+    monkeypatch.setattr(caption_pass, "_start_job", lambda *a, **k: job)
+    monkeypatch.setattr(caption_pass, "GpuPause", lambda j: Pause(j, sleep=slept.append))
+    monkeypatch.setattr(caption_pass, "rebuild_text_vectors",
+                        lambda cl, ids, **kw: {"updated": len(ids)})
+    client = FakeClient([_Point(i, _payload(file_path=f"/p/{i}.jpg")) for i in range(4)])
+
+    stats = caption_pass.run(client, workers=1, io_workers=1)
+
+    assert stats["captioned"] == 4
+    assert stats["failed"] == 0
+    assert slept == [30, 30]
+    paused = [u["paused"] for u in job.updates if "paused" in u]
+    assert paused[0] == grund
+    assert paused[-1] == ""
+    assert job.finished == "done"

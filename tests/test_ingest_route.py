@@ -65,11 +65,10 @@ def _kein_netz(monkeypatch, tmp_path):
         raise AssertionError("Test wollte ein echtes Qdrant -- Doppel vergessen?")
 
     def _ollama_aus(*a, **kw):
-        raise AssertionError("Test wollte ein echtes Ollama -- Doppel vergessen?")
+        raise AssertionError("Test wollte ein echtes LiteLLM -- Doppel vergessen?")
 
     monkeypatch.setattr(ingest_route, "client", _qdrant)
-    monkeypatch.setattr(cap, "ollama_models", _ollama_aus)
-    monkeypatch.setattr(cap, "litellm_url", lambda: "")
+    monkeypatch.setattr(cap, "llm_models", _ollama_aus)
     monkeypatch.setattr(cap, "_accelerator", lambda: {"onnxruntime_providers": [], "cuda": False})
     monkeypatch.setattr(cap, "_cache", (0.0, {}))
     monkeypatch.setattr(cap, "ATLAS_FILE", tmp_path / "atlas.json")
@@ -101,14 +100,14 @@ def jobs(monkeypatch):
 
 
 def _ollama(monkeypatch, modelle):
-    """Ollama-Doppel. `modelle=None` heisst: der Dienst antwortet nicht."""
+    """LiteLLM-Doppel. `modelle=None` heisst: der Dienst antwortet nicht."""
     box = {"aufrufe": 0}
 
     def tags():
         box["aufrufe"] += 1
         return None if modelle is None else set(modelle)
 
-    monkeypatch.setattr(cap, "ollama_models", tags)
+    monkeypatch.setattr(cap, "llm_models", tags)
     return box
 
 
@@ -416,7 +415,7 @@ class TestOllamaNichtErreichbar:
         _ollama(monkeypatch, None)
         why = capabilities_route()["features"]["freetext"]["why"]
         assert "nicht erreichbar" in why
-        assert cap.ollama_url() in why
+        assert cap.litellm_url() in why
 
     def test_jedes_modellmerkmal_faellt_weg_und_sagt_was_fehlt(self, monkeypatch):
         _ollama(monkeypatch, None)

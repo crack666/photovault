@@ -1,4 +1,10 @@
-"""Thin Ollama HTTP client (stdlib)."""
+"""Schmaler HTTP-Client fuer LiteLLM (stdlib).
+
+Der Modulname stammt aus der Zeit, als PhotoVault Ollama direkt ansprach. Seit
+photovault#19 geht jede Modellanfrage ueber LiteLLM: nur dort sitzt das
+GPU-Tor, und wer an LiteLLM vorbei zu Ollama geht, belastet die Karte auch
+waehrend eines Spiels oder eines Renders (siehe ``ingest/gpu_tor.py``).
+"""
 from __future__ import annotations
 
 import json
@@ -8,9 +14,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from ingest.gpu_tor import from_http_error
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 #: LiteLLM-Aliase, nicht Ollama-Tags. Welches Gewicht dahinter liegt,
 #: steht nur in der LiteLLM-Config -- PhotoVault kennt `local` / `embedder`.
 CAPTION_MODEL = os.environ.get("PHOTOVAULT_CAPTION_MODEL", "local")
@@ -32,14 +39,16 @@ DEFAULT_LITELLM_URL = "http://127.0.0.1:4000"
 CAPTION_NUM_CTX = int(os.environ.get("PHOTOVAULT_CAPTION_NUM_CTX", "8192"))
 
 
-def ollama_url(override: str | None = None) -> str:
-    return (override or DEFAULT_OLLAMA_URL).rstrip("/")
-
-
 def litellm_url() -> str:
-    """Leer, wenn der Pool nicht konfiguriert ist -- dann bleibt Ollama der Fallback."""
+    """Adresse von LiteLLM; ohne Angabe der lokale Proxy auf crackdesk.
+
+    Bis photovault#19 hiess ein leerer Wert „Ollama direkt“. Diesen Rueckfall
+    gibt es nicht mehr: er ging am GPU-Tor vorbei.
+    """
     return (
-        os.environ.get("LITELLM_URL") or os.environ.get("PHOTOVAULT_EMBED_URL") or ""
+        os.environ.get("LITELLM_URL")
+        or os.environ.get("PHOTOVAULT_EMBED_URL")
+        or DEFAULT_LITELLM_URL
     ).rstrip("/")
 
 
@@ -53,8 +62,8 @@ def litellm_headers() -> dict[str, str]:
 def apply_llm_env() -> None:
     """CLI und lokaler Server: LiteLLM ist der Chokepoint, nicht Ollama.
 
-    Ohne das faellt `python -m ingest.caption_pass` auf :11434 zurueck, weil
-    keine `.env` geladen wird -- und der Pool `local`/`embedder` bleibt tot.
+    Ohne das fehlt `python -m ingest.caption_pass` der Schluessel, weil keine
+    `.env` geladen wird -- und LiteLLM lehnt jede Anfrage ab.
     Der Key kommt aus dem ai-stack-Hub, nicht aus diesem Repo.
     """
     os.environ.setdefault("LITELLM_URL", DEFAULT_LITELLM_URL)
@@ -124,5 +133,9 @@ def post_json(
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        logger.warning("Ollama HTTP %s %s: %s", e.code, url, body[:500])
+        busy = from_http_error(e.code, body, e.headers)
+        if busy is not None:
+            # Normalfall, kein Fehler: der Aufrufer pausiert oder meldet den Grund.
+            raise busy from e
+        logger.warning("LLM HTTP %s %s: %s", e.code, url, body[:500])
         raise

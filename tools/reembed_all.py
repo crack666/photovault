@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import time
 
 from api.qdrant_util import PHOTOS, client
@@ -31,7 +30,6 @@ from ingest.reembed import rebuild_text_vectors
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 #: Gemessen an diesem Bestand, je Foto.
 SECONDS_PER_PHOTO = 0.13
@@ -94,7 +92,7 @@ def main() -> None:
     for start in range(0, len(ids), args.batch):
         chunk = ids[start : start + args.batch]
         stats = rebuild_text_vectors(
-            qc, chunk, collection=args.collection, ollama_url=OLLAMA_URL
+            qc, chunk, collection=args.collection
         )
         for key in total:
             total[key] += stats.get(key, 0)
