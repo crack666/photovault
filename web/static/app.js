@@ -121,12 +121,30 @@ function showCover(cluster, faceId) {
   });
 }
 
+/* Wie viele Kacheln auf einmal in den DOM wandern.
+
+   Vorher standen alle auf einmal da -- bei einer grossen Gruppe 1.244 Stueck
+   und ein 21.000 px hohes Dokument. `loading="lazy"` half dagegen nicht
+   genug: gemessen am 27.10.2026 feuerte der Browser allein fuer den ersten
+   Bildschirm 112 Anfragen, beim Scrollen hunderte am Stueck. Jede kalte davon
+   laesst den Server das Original oeffnen (photovault#34).
+
+   Nachgelegt wird beim Scrollen, **nicht** blaetterweise: wer 1.200 Gesichter
+   mit dem Auge ueberfliegt, soll das in einem Zug tun und einmal bestaetigen.
+   Die Auswahl haengt ohnehin an `cluster.face_ids`, nicht am DOM -- was
+   gezeigt wird, aendert also nichts daran, was bestaetigt wird. */
+const KACHEL_STAPEL = 150;
+
+let thumbWache = null;
+
 /* Jedes Gesicht des Clusters ist anklickbar: groß ansehen, und wenn es nicht
    dazugehört, hier gleich ausschließen -- sonst zieht ein Fremder mit ein. */
 function renderThumbs(cluster) {
   const box = $("thumbs");
+  if (thumbWache) { thumbWache.disconnect(); thumbWache = null; }
   box.innerHTML = "";
-  cluster.face_ids.forEach((id) => {
+
+  const kachel = (id) => {
     const fig = document.createElement("figure");
     fig.className = "thumb";
     fig.dataset.id = id;
@@ -140,8 +158,35 @@ function renderThumbs(cluster) {
       fig.classList.toggle("out", cluster.excluded.has(id));
       updateClusterCount(cluster);
     });
-    box.appendChild(fig);
-  });
+    return fig;
+  };
+
+  const wache = document.createElement("div");
+  wache.className = "thumb-wache";
+  box.appendChild(wache);
+
+  let gezeigt = 0;
+  const nachlegen = () => {
+    const bis = Math.min(gezeigt + KACHEL_STAPEL, cluster.face_ids.length);
+    const stueck = document.createDocumentFragment();
+    for (; gezeigt < bis; gezeigt++) stueck.appendChild(kachel(cluster.face_ids[gezeigt]));
+    box.insertBefore(stueck, wache);
+    if (gezeigt >= cluster.face_ids.length) {
+      thumbWache.disconnect();
+      thumbWache = null;
+      wache.remove();
+    }
+  };
+
+  // Vorlauf, damit beim Scrollen nichts leer bleibt -- aber nicht so viel,
+  // dass wieder alles auf einmal kommt.
+  thumbWache = new IntersectionObserver(
+    (eintraege) => { if (eintraege.some((e) => e.isIntersecting)) nachlegen(); },
+    { rootMargin: "800px" },
+  );
+  thumbWache.observe(wache);
+  nachlegen();
+
   updateClusterCount(cluster);
   showCover(cluster, cluster.shown || cluster.cover_face_id);
 }
