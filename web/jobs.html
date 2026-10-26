@@ -62,7 +62,7 @@
   </main>
 
 <script type="module">
-import { renderNav } from "/static/core/nav.js";
+import { renderNav, tabUrl } from "/static/core/nav.js";
 import { notify, openModal } from "/static/core/modal.js";
 
 renderNav(document.getElementById("nav"), { active: "jobs" });
@@ -122,7 +122,9 @@ function renderStarters(runnable) {
     note: "PhotoVault benennt nie von allein; der Abgleich ist ein Vorschlag. "
         + "Wer schon benannt ist, kommt als eine Rückfrage je Person zurück, "
         + "nicht als dutzende Kleingruppen.",
-    href: "/index.html?tab=label",
+    // Nicht von Hand getippt: `/index.html?tab=label` stand hier und war ein
+    // 404 -- die Anwendung liegt unter `/`.
+    href: tabUrl("label"),
   };
 
   const karte = (r) => {
