@@ -59,6 +59,31 @@ class TestListJobs:
                       "started_at": time.time(), "updated_at": time.time()}])
         assert list_jobs(c)[0]["status"] == "running"
 
+    def test_fremde_arten_werden_uebersprungen(self):
+        """Teilt sich die Collection mit einem anderen Programm, darf dessen
+        Protokoll hier nicht erscheinen.
+
+        Real passiert am 26.10.2026: PhotoVault und der RAG-Ingest des ai-stack
+        benutzten beide den Vorgabenamen `ingest_jobs` im selben Qdrant. Die
+        fremden Zeilen tragen ein anderes Schema und rendern als `0 / 0 (0.0%)`
+        -- und der Aufraeumen-Knopf der Seite haette sie mitgeloescht.
+        """
+        c = _Client([
+            {"job_id": "unser", "kind": "ingest", "started_at": 200.0},
+            {"job_id": "fremd", "kind": "ingest_job", "started_at": 100.0},
+        ])
+        assert [j["job_id"] for j in list_jobs(c)] == ["unser"]
+
+    def test_eintrag_ohne_art_bleibt(self):
+        """Ohne `kind` ist ein Eintrag alt, nicht fremd.
+
+        Fremde Zeilen weisen sich durch ihre eigene Art aus. Einen Eintrag
+        wegzuwerfen, nur weil das Feld fehlt, wuerde eigene Historie kosten,
+        um fremde loszuwerden.
+        """
+        c = _Client([{"job_id": "alt_ohne_art", "started_at": 1.0}])
+        assert [j["job_id"] for j in list_jobs(c)] == ["alt_ohne_art"]
+
     def test_unreachable_qdrant_returns_empty(self):
         class _Broken:
             def scroll(self, **kw):

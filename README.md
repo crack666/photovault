@@ -875,9 +875,21 @@ stehen. Aufgeräumt wird nach Kategorie („läuft nicht mehr"), nicht nach
 Zustandsnamen: im Bestand stehen `done`, `succeeded`, `partial` und
 `done-with-errors` aus mehreren Programmgenerationen, eine Namensliste hätte
 41 von 47 Einträgen stillschweigend nicht angefasst. Der Tracker schreibt nach
-`ingest_jobs` in Qdrant und ist über das Feld `kind` generisch — Caption-Nachläufe
-oder Re-Embeds können dieselbe Anzeige benutzen. Ein Lauf, dessen Prozess stirbt,
-erscheint nach 2 Minuten ohne Aktualisierung als `stale` statt ewig als `running`.
+`photovault_jobs` in Qdrant (`PHOTOVAULT_JOBS_COLLECTION`) und ist über das Feld
+`kind` generisch — Caption-Nachläufe oder Re-Embeds können dieselbe Anzeige
+benutzen. Ein Lauf, dessen Prozess stirbt, erscheint nach 2 Minuten ohne
+Aktualisierung als `stale` statt ewig als `running`.
+
+Bis 26.10.2026 hieß die Collection `ingest_jobs` — generisch, und das ging
+schief: PhotoVault teilt sich das Qdrant mit dem ai-stack, dessen RAG-Ingest
+denselben Vorgabenamen benutzt. Von 44 Punkten gehörten 25 dem anderen
+Programm; sie tragen `progress.files_total` statt `total`/`processed` und
+erschienen deshalb als `0 / 0 (0.0%)`. Schlimmer als die Anzeige war, dass
+**Liste aufräumen** sie mitgelöscht hätte — die Ingest-Historie des ai-stack,
+die dort `manage.sh rag-status` ausliest. `list_jobs` überspringt seitdem
+zusätzlich jede fremde Art, falls jemand die Variable wieder auf eine geteilte
+Collection stellt; Einträge *ohne* `kind` gelten als eigene Altlast und bleiben
+([photovault#28](https://github.com/crack666/photovault/issues/28)).
 
 **GPU-Tor: Pause statt Fehler** ([photovault#19](https://github.com/crack666/photovault/issues/19)).
 LiteLLM fragt vor jeder Anfrage an ein lokales Modell das GPU-Tor (ai-stack

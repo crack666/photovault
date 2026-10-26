@@ -19,7 +19,20 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-COLLECTION = os.environ.get("PHOTOVAULT_JOBS_COLLECTION", "ingest_jobs")
+#: Eigener Name, weil PhotoVault sich das Qdrant laut README mit dem ai-stack
+#: teilt — und dessen RAG-Ingest schreibt sein Protokoll unter demselben
+#: generischen Vorgabenamen `ingest_jobs`. Am 26.10.2026 standen dort 44
+#: Punkte, 25 davon fremd: sie tragen `progress.files_total` statt
+#: `total`/`processed` und rendern deshalb als `0 / 0 (0.0%)`. Gefaehrlicher
+#: als die Anzeige war der Aufraeumen-Knopf, der sie mitgeloescht haette.
+COLLECTION = os.environ.get("PHOTOVAULT_JOBS_COLLECTION", "photovault_jobs")
+
+#: Arten, die aus diesem Programm stammen. Alles andere in der Collection ist
+#: fremd — `list_jobs` laesst es liegen, statt es als Nullzeile zu zeigen.
+#: Die eigene Collection oben macht das im Normalfall unnoetig; diese Pruefung
+#: faengt den Fall ab, dass jemand `PHOTOVAULT_JOBS_COLLECTION` wieder auf eine
+#: geteilte Collection stellt.
+OWN_KINDS = frozenset({"ingest", "faces", "caption", "reembed", "thumbs", "atlas"})
 #: Qdrant verlangt einen Vektor pro Punkt; hier reine Metadaten. Die Groesse
 #: richtet sich nach der vorhandenen Collection -- passt sie nicht, lehnt
 #: Qdrant jeden Upsert ab.
@@ -209,6 +222,16 @@ def list_jobs(client, collection: str = COLLECTION, limit: int = 50) -> list[dic
         logger.debug("Job listing failed: %s", e)
         return []
     jobs = [p.payload or {} for p in points]
+    # Aussortiert wird nur, was sich ausdruecklich als fremd ausweist. Ein
+    # Eintrag ganz ohne `kind` stammt aus einer aelteren Fassung dieses
+    # Programms und gehoert uns -- ihn wegzuwerfen hiesse, eigene Historie zu
+    # verlieren, um fremde loszuwerden.
+    fremd = [j for j in jobs if j.get("kind") and j["kind"] not in OWN_KINDS]
+    if fremd:
+        logger.debug("%d fremde Job-Eintraege in '%s' uebersprungen (Arten: %s)",
+                     len(fremd), collection,
+                     sorted({str(j.get("kind")) for j in fremd}))
+        jobs = [j for j in jobs if not (j.get("kind") and j["kind"] not in OWN_KINDS)]
     now = time.time()
     for job in jobs:
         job["started_at"] = as_epoch(job.get("started_at"))

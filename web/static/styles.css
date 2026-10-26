@@ -122,6 +122,7 @@ nav { display: flex; gap: 8px; }
 .primary,
 .primary-action,
 .starter button.go,
+.starter a.go,
 .joiner.on,
 .atlas-seg .chip.on,
 #btn-select-mode.on {
