@@ -17,10 +17,11 @@
   <main class="view wide">
     <h1>Jobs</h1>
     <p class="muted" style="max-width:60rem">
-      Nach neuen Fotos der Reihe nach von oben nach unten. Jeder Schritt baut
-      auf dem vorigen auf — überspringen geht, aber Schritt 5 wird ohne
-      Schritt 4 schlechter, weil die Beschreibungen die Namen als Kontext
-      nehmen. Was gerade nicht geht, sagt es am Knopf statt beim Start.
+      Nach neuen Fotos von oben nach unten — eine <b>Empfehlung, keine
+      Kette</b>. Woran ein Schritt wirklich hängt, steht an ihm dran: Schritt 3
+      etwa braucht nur Schritt 1 und hält Schritt 4 nicht auf, man kann also
+      längst Namen vergeben, während die Vorschaubilder noch entstehen.
+      Was gerade nicht geht, sagt es am Knopf statt beim Start.
     </p>
 
     <div class="starters" id="starters"></div>
@@ -134,6 +135,7 @@ function renderStarters(runnable) {
       </div>
       ${r.when ? `<p class="when">${esc(r.when)}</p>` : ""}
       ${r.gives ? `<p class="gives">${esc(r.gives)}</p>` : ""}
+      ${r.needs ? `<p class="needs">${esc(r.needs)}</p>` : ""}
       <p class="note">${esc(r.note)}</p>
       ${r.gpu ? `<span class="gpu">belegt die Grafikkarte</span>` : ""}
       ${r.ready ? "" : `<span class="why">${esc(r.blocked)}</span>`}

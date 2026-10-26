@@ -87,6 +87,13 @@
 .starter .gives { font-size: var(--fs-s); }
 .starter .gives::before { content: "→ "; color: #5e6b7e; }
 .starter .note { font-size: var(--fs-s); opacity: .85; }
+/* Die Voraussetzung ist das, was die Nummer allein nicht sagt: eine Ziffernfolge
+   liest sich als Kette, in der jedes Glied auf das vorige wartet. Genau so
+   wurde sie auch verstanden -- dabei haelt Schritt 3 den vierten gar nicht auf. */
+.starter .needs {
+  font-size: var(--fs-s); color: #8fa3bb;
+  border-left: 2px solid #3a4353; padding-left: .5rem;
+}
 
 /* Schritt 4 ist Handarbeit und hat keinen Startknopf -- das darf man ihm
    ansehen, sonst sucht man ihn. */
