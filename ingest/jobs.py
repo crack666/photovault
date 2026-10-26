@@ -27,29 +27,46 @@ logger = logging.getLogger(__name__)
 #: als die Anzeige war der Aufraeumen-Knopf, der sie mitgeloescht haette.
 COLLECTION = os.environ.get("PHOTOVAULT_JOBS_COLLECTION", "photovault_jobs")
 
-#: Arten, die aus diesem Programm stammen. Alles andere in der Collection ist
-#: fremd — `list_jobs` laesst es liegen, statt es als Nullzeile zu zeigen.
-#: Die eigene Collection oben macht das im Normalfall unnoetig; diese Pruefung
-#: faengt den Fall ab, dass jemand `PHOTOVAULT_JOBS_COLLECTION` wieder auf eine
-#: geteilte Collection stellt.
-OWN_KINDS = frozenset({"ingest", "faces", "caption", "reembed", "thumbs", "atlas"})
 #: Qdrant verlangt einen Vektor pro Punkt; hier reine Metadaten. Die Groesse
 #: richtet sich nach der vorhandenen Collection -- passt sie nicht, lehnt
 #: Qdrant jeden Upsert ab.
 DEFAULT_VECTOR_SIZE = 4
 FLUSH_SECONDS = 2.0
 
+#: Wie viele gescheiterte Dateien ein Eintrag namentlich mitfuehrt. Ein Lauf
+#: ueber 50.000 Dateien kann tausende Fehler haben, und alle zu speichern
+#: bliese den Qdrant-Punkt auf. Die ersten paar reichen, um zu erkennen, *was
+#: fuer eine Sorte* Datei es trifft -- wie viele es insgesamt waren, sagt
+#: weiterhin der Zaehler.
+MAX_FAILURES = 20
+
 #: Welches `-m`-Modul ein Lauf in der Kommandozeile tragen muss. Ohne den
 #: Abgleich koennte ein wiederverwendetes PID einen fremden Prozess treffen —
 #: im Docker-Container waere PID 1 der API-Server.
 KIND_MARKERS = {
     "ingest": ("ingest.pipeline",),
+    # Derselbe Lauf, nur mit Beschreibungen: `pipeline` waehlt die Kennung
+    # danach, ob `--skip-caption` gesetzt ist. Sie fehlte hier, und als
+    # `list_jobs` anfing fremde Arten zu ueberspringen, waere ein Ingest mit
+    # Beschreibungen damit von der Seite verschwunden.
+    "ingest-caption": ("ingest.pipeline",),
     "faces": ("ingest.face_pass",),
     "caption": ("ingest.caption_pass",),
     "reembed": ("tools.reembed_all",),
     "thumbs": ("tools.thumbs",),
     "atlas": ("tools.atlas_build",),
 }
+
+#: Arten, die aus diesem Programm stammen. Alles andere in der Collection ist
+#: fremd — `list_jobs` laesst es liegen, statt es als Nullzeile zu zeigen.
+#: Die eigene Collection oben macht das im Normalfall unnoetig; diese Pruefung
+#: faengt den Fall ab, dass jemand `PHOTOVAULT_JOBS_COLLECTION` wieder auf eine
+#: geteilte Collection stellt.
+#:
+#: Abgeleitet und nicht abgeschrieben: eine zweite, von Hand gepflegte Liste
+#: derselben Kennungen driftet, und hier kostet jede Abweichung Sichtbarkeit —
+#: eine Art, die oben fehlt, verschwindet unten von der Seite.
+OWN_KINDS = frozenset(KIND_MARKERS)
 
 
 class JobTracker:
@@ -146,6 +163,20 @@ class JobTracker:
             return
         self._last_flush = now
         self._write("running")
+
+    def fail(self, path: Any, reason: Any) -> None:
+        """Eine gescheiterte Datei merken, nicht nur zaehlen.
+
+        `1 Fehler` auf der Uebersichtsseite laesst ratlos zurueck: welche
+        Datei, und woran? Der Grund stand bisher ausschliesslich im Terminal
+        dessen, der den Lauf gestartet hat -- und wer ihn ueber die Oberflaeche
+        startet, hat gar keins. Ein Lauf, der `done-with-errors` meldet und
+        verschweigt was, ist schlechter als einer, der nichts meldet: er macht
+        auf ein Problem aufmerksam, das man anschliessend nicht finden kann.
+        """
+        liste = self._state.setdefault("failures", [])
+        if len(liste) < MAX_FAILURES:
+            liste.append({"path": str(path), "reason": str(reason)[:200]})
 
     def finish(self, status: str = "done", **fields: Any) -> None:
         self._state.update({k: v for k, v in fields.items() if v is not None})

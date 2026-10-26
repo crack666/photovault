@@ -87,6 +87,29 @@
 .starter .gives { font-size: var(--fs-s); }
 .starter .gives::before { content: "→ "; color: #5e6b7e; }
 .starter .note { font-size: var(--fs-s); opacity: .85; }
+/* Die Voraussetzung ist das, was die Nummer allein nicht sagt: eine Ziffernfolge
+   liest sich als Kette, in der jedes Glied auf das vorige wartet. Genau so
+   wurde sie auch verstanden -- dabei haelt Schritt 3 den vierten gar nicht auf. */
+.starter .needs {
+  font-size: var(--fs-s); color: #8fa3bb;
+  border-left: 2px solid #3a4353; padding-left: .5rem;
+}
+
+/* Gescheiterte Dateien beim Lauf, nicht nur ihre Anzahl. Eingeklappt, weil
+   der Normalfall null Fehler ist -- aufgeklappt steht da, welche Datei und
+   woran. Ein Lauf, der `done-with-errors` meldet und verschweigt was, macht
+   auf ein Problem aufmerksam, das man anschliessend nicht finden kann. */
+.job-noinfo { color: #7b8695; font-size: var(--fs-s); }
+.job-fails { margin-top: .4rem; font-size: var(--fs-s); }
+.job-fails summary { cursor: pointer; color: #e88c89; }
+.job-fails ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+.job-fails li { margin: .25rem 0; line-height: 1.4; }
+.job-fails code {
+  color: var(--text); word-break: break-all;
+  background: #1b2029; border-radius: var(--r-s); padding: 0 .25rem;
+}
+.job-fails li span { color: var(--muted); display: block; }
+.job-fails .rest { color: var(--muted); margin: .5rem 0 0; }
 
 /* Schritt 4 ist Handarbeit und hat keinen Startknopf -- das darf man ihm
    ansehen, sonst sucht man ihn. */

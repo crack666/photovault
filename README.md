@@ -880,6 +880,15 @@ Zustandsnamen: im Bestand stehen `done`, `succeeded`, `partial` und
 benutzen. Ein Lauf, dessen Prozess stirbt, erscheint nach 2 Minuten ohne
 Aktualisierung als `stale` statt ewig als `running`.
 
+Scheitert eine Datei, steht sie **namentlich** im Eintrag, nicht nur in einem
+Zähler: `done-with-errors` und sonst nichts lässt ratlos zurück, und der Grund
+stand bisher allein im Terminal dessen, der den Lauf gestartet hat — wer ihn
+über die Oberfläche startet, hat keins. Mitgeführt werden höchstens 20 Dateien,
+damit ein Lauf über 50.000 den Qdrant-Punkt nicht sprengt; wie viele es
+insgesamt waren, sagt weiterhin der Zähler. Ältere Einträge, die noch vor
+dieser Änderung entstanden sind, schreiben „ohne Angabe welcher Dateien"
+dazu, statt so auszusehen, als gäbe es nichts zu sagen.
+
 Bis 26.10.2026 hieß die Collection `ingest_jobs` — generisch, und das ging
 schief: PhotoVault teilt sich das Qdrant mit dem ai-stack, dessen RAG-Ingest
 denselben Vorgabenamen benutzt. Von 44 Punkten gehörten 25 dem anderen

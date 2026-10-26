@@ -84,6 +84,13 @@ class Runnable(BaseModel):
     #: Was der Schritt dem Archiv bringt. Ohne das bleibt die Reihenfolge eine
     #: Anweisung statt einer Begruendung.
     gives: str = ""
+    #: Woran dieser Schritt wirklich haengt. Eine Nummernfolge allein liest
+    #: sich als Kette, in der jedes Glied auf das vorige wartet -- genau so
+    #: wurde sie auch verstanden ("man haette erst 1, 2, 3 laufen lassen
+    #: sollen und dann die Namen vergeben"). Schritt 3 ist aber keine
+    #: Voraussetzung fuer Schritt 4: die Gesichtsausschnitte zum Benennen
+    #: erzeugt `/api/faces/{id}/crop` selbst.
+    needs: str = ""
 
 
 def sources_path() -> Path:
@@ -119,6 +126,7 @@ RUNNABLE: dict[str, Runnable] = {
         hint="Unten die Ordner als Quelle anhaken.",
         label="Neue Dateien einlesen",
         step=1,
+        needs="Voraussetzung für alles Weitere.",
         when="Immer zuerst, sobald Dateien dazugekommen sind.",
         gives="Datum, Herkunft, Gesichter und Szene je Foto.",
         note="Ordner unten, nur was noch nicht im Index liegt. Fotos: Gesichter "
@@ -132,6 +140,7 @@ RUNNABLE: dict[str, Runnable] = {
         hint="insightface auf der Grafikkarte. Nicht zusammen mit Captions oder Embeddings.",
         label="Gesichter in Videos finden",
         step=2,
+        needs="Braucht Schritt 1.",
         when="Nach dem Einlesen, wenn Videos dabei waren.",
         gives="Personen, die nur im Film vorkommen, nicht im Standbild.",
         note="Nach dem Einlesen. ffmpeg holt Frames parallel in den Speicher, "
@@ -145,6 +154,7 @@ RUNNABLE: dict[str, Runnable] = {
              "Ohne den Pool funktionieren alle anderen Funktionen weiter.",
         label="Bildbeschreibungen erzeugen",
         step=5,
+        needs="Braucht Schritt 4. Ohne Namen werden die Sätze deutlich blasser.",
         when="Erst wenn die Namen sitzen — sie gehen als Kontext mit hinein.",
         gives="Ein deutscher Satz je Foto, im Index und in der Datei.",
         note="Erst wenn die Namen sitzen. Vision-Modell über Medien ohne "
@@ -157,6 +167,7 @@ RUNNABLE: dict[str, Runnable] = {
         hint=f"LiteLLM starten; Pool `{EMBED_MODEL}` muss in der Config stehen.",
         label="Text-Vektoren neu bauen",
         step=6,
+        needs="Braucht Schritt 5 — oder neue Namen aus Schritt 4.",
         when="Nach neuen Beschreibungen, Namen oder Notizen.",
         gives="Die Freitextsuche findet das Neue.",
         note="Nach neuen Captions, Namen, Notizen — oder wenn sich die Regel geändert hat.",
@@ -167,7 +178,9 @@ RUNNABLE: dict[str, Runnable] = {
         flags=(),
         label="Vorschaubilder anlegen",
         step=3,
-        when="Nach dem Einlesen — jederzeit, stoert niemanden.",
+        needs="Braucht Schritt 1 — sonst nichts. Blockiert Schritt 4 nicht: "
+              "die Gesichtsausschnitte zum Benennen entstehen von allein.",
+        when="Nach dem Einlesen — jederzeit, auch nebenher.",
         gives="Raster, Karte und Listen laufen ohne Netzlaufwerk.",
         note="Erzeugt die fehlenden Kacheln fuer Raster, Karte und Listen. Liest "
              "jedes Original einmal -- ueber ein Netzlaufwerk ist das der langsame "
@@ -182,6 +195,8 @@ RUNNABLE: dict[str, Runnable] = {
         hint="pip install 'photovault[atlas]'",
         label="Karte neu rechnen",
         step=7,
+        needs="Läuft auch ohne Schritt 5 — dann heißen die Kontinente nach "
+              "Szenen-Tags statt nach den Beschreibungen.",
         when="Zuletzt — die Kontinente werden aus den Beschreibungen benannt.",
         gives="Das Archiv als eine Karte, mit Lasso-Auswahl.",
         note="UMAP über die CLIP-Vektoren, reine Rechenarbeit auf der CPU. Kein Trockenlauf.",
@@ -254,6 +269,7 @@ def _runnable_state(running: list[dict]) -> list[dict]:
             "ready": not blocked,
             "blocked": blocked,
             "step": r.step, "when": r.when, "gives": r.gives,
+            "needs": r.needs,
         })
     # Nach Reihenfolge, nicht nach Eintragung: die Seite soll von oben nach
     # unten lesbar sein wie eine Anleitung.
