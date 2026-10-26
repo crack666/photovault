@@ -144,6 +144,29 @@ class TestStatischeAuslieferung:
         assert r.status_code == 200
         assert r.headers["cache-control"] == "no-cache"
 
+    def test_verlinkte_tab_adressen_werden_auch_ausgeliefert(self, client):
+        """Was `tabUrl` im Browser baut, muss der Server auch kennen.
+
+        Die Jobs-Seite verlinkte Schritt 4 auf `/index.html?tab=label` --
+        getippt, nicht abgeleitet, und ein totes Ende: die Anwendung liegt
+        unter `/`, eine Route `index.html` gibt es nicht. Nichts hat gewarnt,
+        der Browser zeigte `{"detail":"Not Found"}`.
+
+        Darum hier beide Seiten des Vertrags: die Adresse, die `nav.js`
+        erzeugt, und die Antwort des Servers darauf.
+        """
+        import re
+
+        from api.main import WEB_DIR
+
+        nav = (WEB_DIR / "static" / "core" / "nav.js").read_text(encoding="utf-8")
+        muster = re.search(r"return `(/[^`]*?)\$\{encodeURIComponent\(id\)\}`", nav)
+        assert muster, "tabUrl sieht anders aus als erwartet -- Test nachziehen"
+        assert client.get(muster.group(1) + "label").status_code == 200
+
+        # Und die Falle, in die es ging, bleibt eine Falle.
+        assert client.get("/index.html").status_code == 404
+
     def test_module_werden_nicht_gecacht(self, client):
         r = client.get("/static/core/dom.js")
         assert r.status_code == 200

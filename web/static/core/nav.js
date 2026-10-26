@@ -20,6 +20,17 @@ export const TABS = [
 
 export const JOBS_PAGE = "/jobs.html";
 
+/** Adresse eines Tabs von einer anderen Seite aus.
+ *
+ * Ausgelagert, weil sie sonst abgeschrieben wird: die Jobs-Seite verlinkte
+ * Schritt 4 auf `/index.html?tab=label` und lief damit in ein 404 — die
+ * Anwendung liegt unter `/`, eine `index.html` gibt es als Route nicht.
+ * Wer von aussen auf einen Tab zeigt, nimmt das hier.
+ */
+export function tabUrl(id) {
+  return `/?tab=${encodeURIComponent(id)}`;
+}
+
 /**
  * @param {Element} host   das <nav>
  * @param {object} o
@@ -31,7 +42,7 @@ export function renderNav(host, { active = "label", inPlace = false } = {}) {
     const on = inPlace && t.id === active ? " on" : "";
     return inPlace
       ? `<button class="tab${on}" data-tab="${t.id}">${t.label}</button>`
-      : `<a class="tab" href="/?tab=${t.id}">${t.label}</a>`;
+      : `<a class="tab" href="${tabUrl(t.id)}">${t.label}</a>`;
   }).join("") + (active === "jobs"
     ? `<span class="tab on">Jobs</span>`
     : `<a class="tab" href="${JOBS_PAGE}">Jobs</a>`);
