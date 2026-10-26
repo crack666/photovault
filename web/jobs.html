@@ -298,6 +298,21 @@ document.getElementById("more").onclick = () => { limit += PAGE; tick(); };
 
 /* ---- Liste ------------------------------------------------------------- */
 
+/* Welche Fehlerlisten offen stehen.
+
+   Die Jobliste wird im Zwei-Sekunden-Takt komplett neu gezeichnet. Ohne
+   dieses Gedaechtnis klappt eine aufgeklappte Fehlerliste jedes Mal wieder
+   zu -- und zwar genau waehrend man sie liest, was schlimmer ist als sie
+   gar nicht erst anzubieten. */
+const offeneFehler = new Set();
+
+document.getElementById("jobs").addEventListener("toggle", (e) => {
+  const d = e.target.closest("details[data-fails]");
+  if (!d) return;
+  if (d.open) offeneFehler.add(d.dataset.fails);
+  else offeneFehler.delete(d.dataset.fails);
+}, true);  // `toggle` steigt nicht auf, also in der Erfassungsphase abgreifen
+
 function render(data) {
   const box = document.getElementById("jobs");
   const jobs = data.jobs || [];
@@ -334,6 +349,9 @@ function render(data) {
         <div class="nums">
           <span><b>${j.processed ?? 0}</b> / ${j.total ?? 0} (${pct.toFixed(1)}%)</span>
           ${j.errors ? `<span style="color:#e88c89"><b>${j.errors}</b> Fehler</span>` : ""}
+          ${j.errors && !(j.failures || []).length ? `<span class="job-noinfo"
+            title="Der Lauf hat die Fehler nur gezählt. Welche Dateien es traf, steht im Protokoll des Prozesses.">
+            (ohne Angabe welcher Dateien)</span>` : ""}
           ${j.skipped ? `<span>${j.skipped} übersprungen</span>` : ""}
           <span><b>${(Number(j.rate_per_s) || 0).toFixed(2)}</b>/s</span>
           <span>Laufzeit ${fmtDur(j.elapsed_s)}</span>
@@ -344,6 +362,18 @@ function render(data) {
           <span>⏸ pausiert: ${esc(j.paused)}</span>
           ${j.resume_at ? `<span>nächster Versuch ${fmtTime(j.resume_at)}</span>` : ""}
         </div>` : ""}
+        ${(j.failures || []).length ? `<details class="job-fails"
+          data-fails="${esc(j.job_id)}"${offeneFehler.has(j.job_id) ? " open" : ""}>
+          <summary>Woran es lag (${j.failures.length}${
+            j.errors > j.failures.length ? ` von ${j.errors}` : ""})</summary>
+          <ul>${j.failures.map(f => `<li>
+            <code>${esc(f.path || "")}</code>
+            <span>${esc(f.reason || "")}</span></li>`).join("")}</ul>
+          ${j.errors > j.failures.length ? `<p class="rest">Die uebrigen ${
+            j.errors - j.failures.length} stehen im Protokoll des Laufs — hier
+            werden hoechstens ${j.failures.length} mitgefuehrt, damit ein Lauf
+            mit tausenden Fehlern den Eintrag nicht sprengt.</p>` : ""}
+        </details>` : ""}
         <div class="nums" style="opacity:.5">
           <span>gestartet ${fmtTime(j.started_at)}</span>
           ${j.finished_at ? `<span>fertig ${fmtTime(j.finished_at)}</span>` : ""}

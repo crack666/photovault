@@ -342,6 +342,8 @@ def _run_piped(
             except Exception as e:
                 logger.warning("Unreadable, skipping: %s (%s)", photo.file_path, e)
                 bump("unreadable")
+                if job is not None:
+                    job.fail(photo.file_path, e)
                 photo.failed = True
                 progress(photo)
 

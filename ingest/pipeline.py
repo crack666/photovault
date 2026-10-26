@@ -439,6 +439,7 @@ class IngestPipeline:
                 except Exception as e:
                     logger.warning("Error processing %s: %s", fp, e)
                     self.progress.errors += 1
+                    self.job.fail(fp, e)
 
                 seen += 1
                 if self.config.progress_every and seen % self.config.progress_every == 0:
