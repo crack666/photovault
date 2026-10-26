@@ -2,10 +2,35 @@
 from __future__ import annotations
 
 import logging
+import warnings
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# scikit-image 0.26 hat `SimilarityTransform.estimate()` zugunsten des
+# Klassenkonstruktors `from_estimate()` abgekuendigt. insightface 1.0.1 ruft in
+# `utils/face_align.py` weiter die alte Form. Beim Einlesen von 3.251 Medien
+# ertraenkte das den Fortschritt in tausenden identischen Zeilen (26.10.2026).
+#
+# In einem einfachen Skript meldet Python denselben Ort nur einmal (gemessen:
+# drei Aufrufe, eine Zeile) -- die Flut entsteht erst im Lauf mit seinen
+# Lese-, GPU- und Schreib-Arbeitern, die sich die Warn-Registry nicht teilen.
+# Der Filter steht deshalb im Modul, das jeder dieser Arbeiter importiert.
+#
+# Bewusst nicht behoben, sondern stummgeschaltet: der Aufruf funktioniert, der
+# Code gehoert uns nicht, und das Update auf insightface 2.x waere kein
+# Fehlerbehebung sondern ein Modellwechsel -- ob buffalo_l dort denselben
+# Einbettungsraum liefert, ist unbelegt, und 35.051 vorhandene Gesichtsvektoren
+# samt 119 benannter Personen haengen daran.
+#
+# Der Filter ist eng gefasst: nur diese Kategorie aus diesem Modul. Ein
+# `simplefilter("ignore")` wuerde auch die Abkuendigung verschlucken, die uns
+# wirklich trifft -- scikit-image entfernt `estimate()` in 2.2, dann bricht
+# insightface 1.0.1 hart. Bis dahin ist das hier Laerm, danach ein Umzug.
+warnings.filterwarnings(
+    "ignore", category=FutureWarning, module=r"insightface\.utils\.face_align",
+)
 
 _CUDA_LIBS_LOADED = False
 #: Reihenfolge zaehlt -- cublas braucht cublasLt, cudnn braucht das CUDA-Runtime.
