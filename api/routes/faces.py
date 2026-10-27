@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -164,6 +165,44 @@ def resolve_photo_id(q, photo: str) -> str:
     if not found:
         raise HTTPException(500, "Foto ohne photo_id im Payload")
     return str(found)
+
+
+@router.get("/{face_id}/photo")
+def photo_of_face(face_id: str) -> dict:
+    """Zu welchem Foto gehoert dieses Gesicht?
+
+    Die Gegenrichtung zu `faces_of_photo`, und sie fehlte. Auf "Wer ist das?"
+    sieht man nur den Zuschnitt -- bei einem Gesicht, das halb hinter einer
+    Wand steht, reicht das nicht zur Entscheidung, ob es in die Gruppe
+    gehoert. Die Kennung kommt erst auf Klick und nicht mit jeder Karte mit:
+    eine Gruppe hat bis zu 1.244 Gesichter, und eine zweite Liste in jeder
+    Antwort waere Last fuer einen Fall, der selten eintritt.
+    """
+    q = client()
+    try:
+        points = q.retrieve(collection_name=FACES, ids=[face_id], with_payload=True)
+    except Exception as e:
+        raise HTTPException(502, f"Gesicht nicht abrufbar: {e}") from e
+    if not points:
+        raise HTTPException(404, "face not found")
+    payload = points[0].payload or {}
+    photo_id = payload.get("photo_id")
+    if not photo_id:
+        raise HTTPException(404, "face has no photo")
+    path = payload.get("file_path") or ""
+    from ingest.media import is_video
+
+    # Zurueck geht die **Punkt-ID**, nicht der Hash. Der Gesichts-Payload
+    # verweist mit `photo_id` auf den sha256 der Datei; die Oberflaeche und
+    # alle Foto-Routen kennen dagegen nur die uuid5 daraus (siehe
+    # `resolve_photo_id` weiter unten und `qdrant_writer`). Den Hash direkt
+    # weiterzureichen ist kein leeres Ergebnis, sondern ein Fehler aus Qdrant:
+    # "is not a valid point ID".
+    return {
+        "photo_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, photo_id)),
+        "file_name": Path(path).name if path else "",
+        "kind": "video" if path and is_video(path) else "photo",
+    }
 
 
 @router.get("")
