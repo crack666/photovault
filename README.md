@@ -1001,12 +1001,36 @@ Beispiele, die zur Hand liegen.
 
 ```bash
 python -m tools.privacy_check           # alle versionierten Dateien
+python -m tools.privacy_check --text F  # beliebiger Text, "-" liest stdin
 python -m tools.privacy_check --install # als pre-commit-Hook einrichten
 ```
 
 Die Prüfung kennt die echten Namen, weil sie im laufenden Index stehen — eine
 handgepflegte Liste veraltet mit jedem neuen Label. Zusätzlich sucht sie nach
 Schlüsseln, privaten IP-Adressen und E-Mail-Adressen.
+
+### Issues und Pull Requests zählen mit
+
+Der Commit-Hook sieht sie nie: sie gehen per `gh` direkt an GitHub, und bei
+einem öffentlichen Repository sind sie öffentlich, sobald sie entstehen. Am
+27.10.2026 stand so ein echter Name in einem Issue-Text, während Code und
+Commits sauber waren.
+
+**Nachträglich prüfen hilft dort nicht.** Ein einmal veröffentlichter Text
+steht auch nach dem Bearbeiten noch in der Versionsgeschichte des Issues, die
+jeder lesen kann. Deshalb vorher — oder gar nicht:
+
+```bash
+tools/gh-privat issue create --title "…" --body-file text.md
+tools/gh-privat pr create --title "…" --body "…"
+```
+
+`gh-privat` sammelt `--title`, `--body` und `--body-file` ein, schickt sie
+durch dieselbe Prüfung und ruft `gh` nur auf, wenn nichts gefunden wurde.
+Lesende Befehle (`pr list`, `issue view`) reicht es ungeprüft durch.
+
+Was es **nicht** kann: einen Text abfangen, der über die GitHub-Weboberfläche
+entsteht. Dort hilft nur, die Namen gar nicht erst zu tippen.
 
 Nicht versioniert werden `sources.txt` (die Ordnernamen eines privaten Archivs
 verraten schon viel; Vorlage: `sources.example.txt`) und `.privacy-denylist`.
