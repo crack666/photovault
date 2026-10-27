@@ -93,6 +93,17 @@ function renderCard() {
     : "Wer ist das?";
   $("name-form").classList.remove("hidden");
   $("btn-confirm-known").classList.toggle("hidden", !known);
+  /* Der gemerkte Text gehoert zur vorigen Karte und ist ab hier falsch.
+
+     `karteBusy(true)` legt die Knopfbeschriftung beiseite, um sie nach der
+     Zuordnung wiederherzustellen -- fuer den Fall, dass sie fehlschlaegt und
+     die Karte stehen bleibt. Geht sie durch, zeichnet `next()` aber die
+     naechste Karte, *bevor* das `finally` laeuft: der Knopf trug dann wieder
+     den Namen der eben zugeordneten Person, waehrend Titel und Vorschlag
+     schon die naechste zeigten. Wer hier schreibt, hat den gueltigen Text --
+     also faellt der gemerkte weg. */
+  delete $("btn-confirm-known").dataset.text;
+  delete $("btn-confirm-known").dataset.laufText;
   $("btn-confirm-known").textContent = known
     ? `Ja, ${cluster.size} Gesichter ${cluster.person_name} zuordnen`
     : "";
@@ -262,10 +273,25 @@ function karteBusy(on, text) {
   const knopf = $("btn-confirm-known");
   if (on) {
     knopf.dataset.text = knopf.dataset.text || knopf.textContent;
-    if (text) knopf.textContent = text;
+    if (text) {
+      knopf.dataset.laufText = text;
+      knopf.textContent = text;
+    }
   } else if (knopf.dataset.text) {
-    knopf.textContent = knopf.dataset.text;
+    // Nur zurueckschreiben, solange der Knopf noch den Lauftext traegt. Hat
+    // inzwischen jemand anders geschrieben -- `showCard` fuer die naechste
+    // Karte --, dann ist dessen Text der gueltige, und der gemerkte gehoert
+    // zur Person, die gerade fertig zugeordnet wurde.
+    if (!knopf.dataset.laufText || knopf.textContent === knopf.dataset.laufText) {
+      knopf.textContent = knopf.dataset.text;
+    }
+  }
+  if (!on) {
+    // Unabhaengig vom Zweig darueber: liegen bleiben darf nichts. Hat
+    // `showCard` den gemerkten Text schon weggeraeumt, lief der Zweig gar
+    // nicht -- und `laufText` waere sonst zurueckgeblieben.
     delete knopf.dataset.text;
+    delete knopf.dataset.laufText;
   }
 }
 
