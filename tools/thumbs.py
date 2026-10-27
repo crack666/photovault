@@ -416,12 +416,112 @@ def warm(zus, sizes) -> int:
     return fertig
 
 
+#: Groesse, in der die Benennen-Seite die Gesichter anfordert (`cropUrl` im
+#: Frontend haengt `?size=160` an). Die 640er der Grossansicht sind einzelne
+#: Abrufe, nicht der Schwung, der die Seite ausbremst.
+FACE_SIZE = 160
+
+
+def warm_faces(sizes=(FACE_SIZE,)) -> int:
+    """Die Gesichtsausschnitte vorerzeugen, nicht nur die Ganzbild-Kacheln.
+
+    `cache_keys` nimmt den Kasten in den Schluessel auf -- eine Ganzbild-Kachel
+    und ein Gesichtsausschnitt sind also verschiedene Eintraege. `--warm` hat
+    bisher nur erstere erzeugt, womit der Lauf ausgerechnet fuer die Seite
+    wirkungslos blieb, auf der es am meisten weh tut: "Wer ist das?" fordert
+    beim ersten Blick auf eine grosse Gruppe hunderte Ausschnitte auf einmal
+    an, und jeder kalte laesst den Server das **Original** oeffnen. Gemessen
+    am 27.10.2026: 1.244 Kacheln fuer eine Person, 112 Anfragen allein fuer
+    den ersten Bildschirm (photovault#34).
+
+    Gruppiert wird nach Datei: ein Foto mit fuenf Gesichtern wurde sonst
+    fuenfmal geoeffnet und dekodiert. `get_thumb` nimmt ein fertiges
+    PIL-Image entgegen, also reicht einmal lesen.
+    """
+    from collections import defaultdict
+
+    from api.thumbs import cache_keys
+    from ingest.media import is_video
+
+    q = client()
+    da = scan(CACHE_DIR, sizes)
+    nach_datei: dict[tuple, list] = defaultdict(list)
+    gesamt = 0
+
+    offset = None
+    while True:
+        try:
+            batch, offset = q.scroll(
+                collection_name=FACES, limit=1024, offset=offset,
+                with_payload=["file_path", "box", "content_sha256", "frame_ss"],
+                with_vectors=False,
+            )
+        except Exception as e:
+            logger.debug("Gesichter nicht lesbar: %s", e)
+            break
+        for pt in batch:
+            pl = pt.payload or {}
+            fp, box = pl.get("file_path"), pl.get("box")
+            if not fp or not box or len(box) != 4:
+                continue
+            gesamt += 1
+            h = pl.get("content_sha256")
+            extra = None
+            if pl.get("frame_ss") is not None or is_video(fp):
+                extra = f"ss={float(pl.get('frame_ss') or 0.0)}"
+            schreib, suchen = cache_keys(fp, box, FACE_PAD, h, extra=extra)
+            for s in sizes:
+                if any(digest(k) in da[s] for k in suchen):
+                    continue
+                nach_datei[(fp, extra, h)].append((box, s))
+        if offset is None:
+            break
+
+    fehlend = sum(len(v) for v in nach_datei.values())
+    if not fehlend:
+        print(f"Nichts zu tun -- alle {gesamt} Gesichtsausschnitte sind da.")
+        return 0
+    print(f"{fehlend} Gesichtsausschnitte aus {len(nach_datei)} Dateien erzeugen.")
+    print("Jede Datei wird einmal gelesen, nicht einmal je Gesicht.")
+
+    fertig = 0
+    for i, ((fp, extra, h), posten) in enumerate(nach_datei.items(), 1):
+        bild = None
+        # Nur Standbilder lassen sich teilen. Ein Video-Frame haengt am
+        # Zeitpunkt, und den loest die Route selbst auf.
+        if extra is None:
+            try:
+                from PIL import Image, ImageFile
+
+                ImageFile.LOAD_TRUNCATED_IMAGES = True
+                bild = Image.open(fp)
+                bild.load()
+            except Exception as e:
+                logger.debug("%s nicht lesbar: %s", fp, e)
+                bild = None
+        for box, s in posten:
+            try:
+                get_thumb(fp, size=s, box=box, pad=FACE_PAD, content_hash=h,
+                          extra=extra, image=bild)
+                fertig += 1
+            except Exception as e:
+                logger.debug("%s %s (%s px): %s", fp, box, s, e)
+        if bild is not None:
+            bild.close()
+        if i % 100 == 0:
+            print(f"  {i}/{len(nach_datei)} Dateien", flush=True)
+    print(f"{fertig} von {fehlend} erzeugt.")
+    return fertig
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--prune", action="store_true", help="verwaiste Kacheln loeschen")
     ap.add_argument("--move", action="store_true", help="vom alten Ort herueberschieben")
     ap.add_argument("--warm", action="store_true", help="fehlende Kacheln erzeugen")
+    ap.add_argument("--no-faces", action="store_true",
+                    help="bei --warm die Gesichtsausschnitte auslassen")
     ap.add_argument("--rekey", action="store_true",
                     help="vom Pfad- auf den Inhalts-Schluessel umbenennen")
     ap.add_argument("--sizes", default=",".join(str(s) for s in ATLAS_SIZES),
@@ -454,6 +554,11 @@ def main(argv=None) -> int:
     if args.warm:
         print()
         warm(zus, sizes)
+        # Die Gesichtsausschnitte gehoeren dazu: ohne sie laesst der Lauf
+        # ausgerechnet die Seite kalt, auf der es am meisten weh tut.
+        if not args.no_faces:
+            print()
+            warm_faces()
     return 0
 
 

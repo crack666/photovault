@@ -328,3 +328,69 @@ class TestDropCached:
         lege(tmp_path, "sha256:abc", 160)
         assert th.drop_cached("/a.jpg") == 0
         assert len(list(tmp_path.rglob("*.jpg"))) == 1
+
+
+class TestWarmFaces:
+    """`--warm` liess ausgerechnet die Gesichtsausschnitte kalt.
+
+    `cache_keys` nimmt den Kasten in den Schluessel auf, also sind Ganzbild-
+    Kachel und Zuschnitt verschiedene Eintraege. Der Lauf erzeugte nur erstere
+    und war damit wirkungslos fuer "Wer ist das?" -- die Seite, auf der es am
+    meisten weh tut (photovault#34).
+    """
+
+    class _Q:
+        def __init__(self, gesichter):
+            self.gesichter = gesichter
+
+        def scroll(self, collection_name, **kw):
+            from api.qdrant_util import FACES
+
+            if collection_name != FACES:
+                return [], None
+            return [type("P", (), {"payload": g})() for g in self.gesichter], None
+
+    def test_liest_jede_datei_einmal_statt_je_gesicht(self, tmp_path, monkeypatch):
+        """Drei Gesichter auf einem Foto sind ein Lesevorgang, nicht drei.
+
+        `get_thumb` nimmt ein fertiges Bild entgegen; ohne diese Gruppierung
+        wuerde dieselbe Datei je Gesicht erneut geoeffnet und dekodiert --
+        ueber ein Netzlaufwerk der ganze Unterschied.
+        """
+        geoeffnet, erzeugt = [], []
+        monkeypatch.setattr(thumbs, "client", lambda: self._Q([
+            {"file_path": "/a.jpg", "box": [1, 2, 3, 4], "content_sha256": "h"},
+            {"file_path": "/a.jpg", "box": [5, 6, 7, 8], "content_sha256": "h"},
+            {"file_path": "/a.jpg", "box": [9, 10, 11, 12], "content_sha256": "h"},
+        ]))
+        monkeypatch.setattr(thumbs, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(thumbs, "get_thumb",
+                            lambda *a, **kw: erzeugt.append(kw.get("box")))
+
+        import PIL.Image
+
+        def falsches_open(pfad, *a, **kw):
+            geoeffnet.append(str(pfad))
+            return type("B", (), {"load": lambda s: None, "close": lambda s: None})()
+
+        monkeypatch.setattr(PIL.Image, "open", falsches_open)
+
+        assert thumbs.warm_faces() == 3
+        assert len(erzeugt) == 3
+        assert geoeffnet == ["/a.jpg"], f"einmal lesen, nicht dreimal: {geoeffnet}"
+
+    def test_vorhandene_werden_uebersprungen(self, tmp_path, monkeypatch):
+        """Ein zweiter Lauf darf keine Originale mehr anfassen."""
+        from api.thumbs import cache_keys
+
+        gesicht = {"file_path": "/a.jpg", "box": [1, 2, 3, 4], "content_sha256": "h"}
+        schreib, _ = cache_keys("/a.jpg", [1, 2, 3, 4], thumbs.FACE_PAD, "h", extra=None)
+        # `lege` hasht, was es bekommt -- der Cache-Schluessel ist genau der
+        # String, aus dem `scan` den Dateinamen bildet.
+        lege(tmp_path, schreib, thumbs.FACE_SIZE)
+
+        monkeypatch.setattr(thumbs, "client", lambda: self._Q([gesicht]))
+        monkeypatch.setattr(thumbs, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(thumbs, "get_thumb",
+                            lambda *a, **kw: pytest.fail("haette nichts tun duerfen"))
+        assert thumbs.warm_faces() == 0
