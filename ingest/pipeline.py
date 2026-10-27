@@ -1095,7 +1095,7 @@ def _load_image(file_path: str):
     """(Original, RGB-Fassung, Warnung). Das Original traegt die EXIF-Daten, die beim
     Konvertieren verloren gehen; die RGB-Fassung brauchen die Modelle."""
     try:
-        from PIL import Image, ImageFile
+        from PIL import Image, ImageFile, ImageOps
 
         ImageFile.LOAD_TRUNCATED_IMAGES = True
         raw = Image.open(file_path)
@@ -1107,7 +1107,16 @@ def _load_image(file_path: str):
             warn = "truncated"
             if getattr(raw, "im", None) is None:
                 return None, None, "unreadable"
-        rgb = raw if raw.mode == "RGB" else raw.convert("RGB")
+        # Aufrecht, bevor ein Modell das Bild sieht. `api/thumbs.py` dreht vor
+        # dem Zuschneiden, hier geschah es nicht -- also sass ein
+        # Gesichtskasten in Roh-Koordinaten, waehrend der Zuschnitt ihn auf
+        # dem gedrehten Bild anlegte. Bei einem 180-Grad-Foto landete er
+        # spiegelverkehrt im Hintergrund: die Oberflaeche zeigte einen Zaun,
+        # wo ein Kind stand (photovault#37). Und der Detektor findet ein auf
+        # dem Kopf stehendes Gesicht schlechter -- auf jenem Foto eins statt
+        # zwei. `raw` bleibt unangetastet, denn daraus kommen die EXIF-Daten.
+        rgb = ImageOps.exif_transpose(raw) or raw
+        rgb = rgb if rgb.mode == "RGB" else rgb.convert("RGB")
         return raw, rgb, warn
     except Exception as e:
         logger.debug("Could not decode %s: %s", file_path, e)
