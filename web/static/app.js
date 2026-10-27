@@ -2,6 +2,7 @@ import { api, cropUrl } from "./core/api.js";
 import { $, escapeHtml } from "./core/dom.js";
 import { watchMedia } from "./core/images.js";
 import { faceStatsLine } from "./core/format.js";
+import { notify } from "./core/modal.js";
 import { refreshEventNames, refreshPersonNames } from "./core/names.js";
 import { rememberTab, renderNav, tabFromUrl, photoFromUrl } from "./core/nav.js";
 import { forgetPeopleList } from "./core/people.js";
@@ -115,6 +116,10 @@ function renderCard() {
 
 function showCover(cluster, faceId) {
   cluster.shown = faceId;
+  // Steht dauerhaft sichtbar oben: ein Klick darauf ist die naheliegende
+  // Geste fuer "zeig mir das ganze Foto".
+  $("cover").dataset.face = faceId;
+  $("cover").title = "Ganzes Foto ansehen";
   $("cover").src = `${cropUrl(faceId)}?size=640`;
   $("thumbs").querySelectorAll("figure").forEach((f) => {
     f.classList.toggle("on", f.dataset.id === faceId);
@@ -133,6 +138,23 @@ function showCover(cluster, faceId) {
    mit dem Auge ueberfliegt, soll das in einem Zug tun und einmal bestaetigen.
    Die Auswahl haengt ohnehin an `cluster.face_ids`, nicht am DOM -- was
    gezeigt wird, aendert also nichts daran, was bestaetigt wird. */
+/* Das ganze Foto zu einem Gesicht.
+
+   Auf dieser Seite sieht man nur den Zuschnitt. Bei einem Gesicht, das halb
+   hinter einer Wand steht oder im Hintergrund verschwimmt, laesst sich daran
+   nicht entscheiden, ob es in die Gruppe gehoert -- dafuer braucht es das
+   Bild drumherum. Die Foto-Kennung kommt erst auf Klick: eine Gruppe hat bis
+   zu 1.244 Gesichter, und sie allen mitzugeben waere Last fuer einen Fall,
+   der selten eintritt. */
+async function zeigeGanzesFoto(faceId) {
+  try {
+    const d = await api(`/api/faces/${encodeURIComponent(faceId)}/photo`);
+    showLightbox([{ id: d.photo_id, kind: d.kind, file_name: d.file_name }], 0);
+  } catch (e) {
+    notify(`Foto nicht ladbar: ${e.message}`);
+  }
+}
+
 const KACHEL_STAPEL = 150;
 
 let thumbWache = null;
@@ -150,8 +172,21 @@ function renderThumbs(cluster) {
     fig.dataset.id = id;
     fig.classList.toggle("out", cluster.excluded.has(id));
     fig.innerHTML = `<img loading="lazy" src="${cropUrl(id)}?size=160" alt="" />
-                     <button type="button" class="drop" title="Gehört nicht dazu">✕</button>`;
+                     <button type="button" class="drop" title="Gehört nicht dazu">✕</button>
+                     <button type="button" class="gross"
+                             title="Ganzes Foto ansehen (oder Doppelklick)">⤢</button>`;
     fig.querySelector("img").addEventListener("click", () => showCover(cluster, id));
+    // Einfacher Klick zeigt den Zuschnitt oben gross; das ganze Foto braucht
+    // es erst, wenn der Ausschnitt die Frage nicht beantwortet -- ein Gesicht
+    // halb hinter einer Wand etwa.
+    fig.querySelector("img").addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      zeigeGanzesFoto(id);
+    });
+    fig.querySelector(".gross").addEventListener("click", (e) => {
+      e.stopPropagation();
+      zeigeGanzesFoto(id);
+    });
     fig.querySelector(".drop").addEventListener("click", (e) => {
       e.stopPropagation();
       cluster.excluded.has(id) ? cluster.excluded.delete(id) : cluster.excluded.add(id);
@@ -268,6 +303,11 @@ refreshEventNames();
 // beim Auswerten von app.js, weil die Listener dort standen; jetzt sagt es
 // der Router ausdruecklich -- und zwar bevor der erste Tab aufgeht.
 bindLightbox();
+
+$("cover").addEventListener("click", () => {
+  const id = $("cover").dataset.face;
+  if (id) zeigeGanzesFoto(id);
+});
 bindEvents();
 bindUnknown();
 bindSearch();

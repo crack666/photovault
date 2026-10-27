@@ -165,3 +165,44 @@ def test_video_crop_uses_the_frame_not_the_poster(monkeypatch):
     assert seen["extra"] == "ss=1.7"
     assert seen["image"] == "PIL"
     assert seen["box"] == [10, 20, 40, 60]
+
+
+class TestPhotoOfFace:
+    """Gesicht -> Foto, fuer die Grossansicht auf „Wer ist das?".
+
+    Die Richtung fehlte, und beim Nachruesten ist genau die Verwechslung
+    passiert, vor der der Kopf dieser Datei warnt: zurueckgegeben wurde der
+    `photo_id` aus dem Gesichts-Payload -- der sha256 der Datei. Qdrant
+    antwortet darauf nicht mit einem leeren Ergebnis, sondern mit
+    „is not a valid point ID", und in der Oberflaeche stand ein 404.
+    """
+
+    class _Q:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def retrieve(self, collection_name, ids, **kw):
+            return [_P(ids[0], self.payload)] if self.payload else []
+
+    def ruf(self, payload, monkeypatch):
+        from api.routes import faces as modul
+
+        monkeypatch.setattr(modul, "client", lambda: self._Q(payload))
+        return modul.photo_of_face("egal")
+
+    def test_gibt_die_punkt_id_zurueck_nicht_den_hash(self, monkeypatch):
+        hash_ = "8377f48bf9b091671b5191113030bab79b554968f3b3f3524e50fe585aa28a1b"
+        d = self.ruf({"photo_id": hash_, "file_path": "/a/b.jpg"}, monkeypatch)
+        assert d["photo_id"] != hash_
+        # Muss als Punkt-ID durchgehen -- sonst lehnt Qdrant die Anfrage ab.
+        uuid.UUID(d["photo_id"])
+        assert d["photo_id"] == str(uuid.uuid5(uuid.NAMESPACE_DNS, hash_))
+
+    def test_nennt_dateinamen_und_art(self, monkeypatch):
+        d = self.ruf({"photo_id": "x", "file_path": "/a/Urlaub/film.mp4"}, monkeypatch)
+        assert d["file_name"] == "film.mp4" and d["kind"] == "video"
+
+    def test_ohne_foto_ein_404(self, monkeypatch):
+        with pytest.raises(HTTPException) as e:
+            self.ruf({"file_path": "/a/b.jpg"}, monkeypatch)
+        assert e.value.status_code == 404
