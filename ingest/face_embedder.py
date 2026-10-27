@@ -214,6 +214,10 @@ def _to_bgr(image) -> np.ndarray | None:
 
 
 def _load_bgr(file_path: str) -> np.ndarray | None:
-    from PIL import Image
+    from PIL import Image, ImageOps
 
-    return _to_bgr(Image.open(file_path))
+    # Aufrecht wie in `pipeline._load_image` und in `api/thumbs.py`: ein
+    # Kasten, der auf dem rohen Bild entsteht, passt sonst nicht zu dem
+    # Zuschnitt, den die Oberflaeche daraus macht (photovault#37).
+    bild = Image.open(file_path)
+    return _to_bgr(ImageOps.exif_transpose(bild) or bild)
