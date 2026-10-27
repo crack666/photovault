@@ -13,6 +13,7 @@ immer aktuell.
     python -m tools.privacy_check              # alle versionierten Dateien
     python -m tools.privacy_check --staged     # nur was im Commit landet
     python -m tools.privacy_check --message F  # eine Commit-Nachricht
+    python -m tools.privacy_check --text F     # beliebiger Text, "-" = stdin
     python -m tools.privacy_check --install    # als Git-Hooks einrichten
 
 **Auch die Commit-Nachricht wird geprüft.** Sie ist Teil dessen, was ein
@@ -22,6 +23,16 @@ in eine Commit-Nachricht geraten.
 
 Ist Qdrant nicht erreichbar, greift `.privacy-denylist` — eine lokale Kopie der
 Namen, die selbst nicht versioniert wird.
+
+**Issues und Pull Requests zaehlen mit.** Ein Commit-Hook sieht sie nie: sie
+gehen per `gh` direkt an GitHub, und bei einem oeffentlichen Repository sind
+sie in dem Moment oeffentlich, in dem sie entstehen. Am 27.10.2026 stand so
+ein echter Name in einem Issue-Text, waehrend Code und Commits sauber waren.
+Dafuer ist `--text` da, und `tools/gh-privat` haengt es vor `gh`.
+
+Nachtraegliches Pruefen hilft hier nicht: ein einmal veroeffentlichter Text
+steht auch nach dem Bearbeiten noch in der Versionsgeschichte des Issues, die
+jeder lesen kann. Geprueft wird **vor** dem Absenden oder gar nicht.
 """
 from __future__ import annotations
 
@@ -254,6 +265,9 @@ def main() -> int:
     parser.add_argument("--staged", action="store_true", help="Nur was im Commit landet")
     parser.add_argument("--message", metavar="DATEI",
                         help="Eine Commit-Nachricht pruefen (fuer den commit-msg-Hook)")
+    parser.add_argument("--text", metavar="DATEI",
+                        help="Beliebigen Text pruefen, \"-\" liest von der "
+                             "Standardeingabe (Issue- und PR-Texte vor dem Absenden)")
     parser.add_argument("--install", action="store_true", help="Als Git-Hooks einrichten")
     parser.add_argument("--qdrant-url", default=None)
     args = parser.parse_args()
@@ -265,11 +279,28 @@ def main() -> int:
     extra = extra_terms()
     terms = terms_from(names)
 
-    if args.message:
-        hits = scan([args.message], terms)
+    if args.message or args.text:
+        quelle = args.message or args.text
+        wo = "in der Commit-Nachricht" if args.message else "im Text"
+        tmp = None
+        if quelle == "-":
+            import tempfile
+
+            tmp = tempfile.NamedTemporaryFile(
+                "w", suffix=".txt", delete=False, encoding="utf-8")
+            tmp.write(sys.stdin.read())
+            tmp.close()
+            quelle = tmp.name
+        try:
+            hits = scan([quelle], terms)
+        finally:
+            if tmp:
+                os.unlink(tmp.name)
         if not hits:
+            if args.text:
+                print(f"{len(names)} Personennamen geprueft. Nichts gefunden.")
             return 0
-        _report(hits, "in der Commit-Nachricht", with_path=False)
+        _report(hits, wo, with_path=False)
         print()
         print("Bitte umformulieren.")
         return 1
