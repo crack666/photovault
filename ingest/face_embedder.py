@@ -213,11 +213,22 @@ def _to_bgr(image) -> np.ndarray | None:
     return rgb[:, :, ::-1].copy()
 
 
-def _load_bgr(file_path: str) -> np.ndarray | None:
-    from PIL import Image, ImageOps
+def load_upright(file_path: str):
+    """Ein Standbild so oeffnen, wie es ein Modell sehen muss: aufrecht.
 
-    # Aufrecht wie in `pipeline._load_image` und in `api/thumbs.py`: ein
-    # Kasten, der auf dem rohen Bild entsteht, passt sonst nicht zu dem
-    # Zuschnitt, den die Oberflaeche daraus macht (photovault#37).
+    Die **eine** Stelle dafuer. Dass es vorher drei Ladewege gab, von denen
+    nur einer (`api/thumbs.py`) die EXIF-Ausrichtung beachtete, war genau der
+    Fehler aus photovault#37: der Gesichtskasten entstand auf dem rohen Bild,
+    der Zuschnitt lag auf dem gedrehten, und bei einem 180-Grad-Foto zeigte
+    die Oberflaeche einen Zaun statt eines Kindes.
+    """
+    from PIL import Image, ImageFile, ImageOps
+
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
     bild = Image.open(file_path)
-    return _to_bgr(ImageOps.exif_transpose(bild) or bild)
+    bild.load()
+    return ImageOps.exif_transpose(bild) or bild
+
+
+def _load_bgr(file_path: str) -> np.ndarray | None:
+    return _to_bgr(load_upright(file_path))

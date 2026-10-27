@@ -214,6 +214,7 @@ def run(
     matcher=None,
     io_workers: int = 6,
     ffmpeg_workers: int = 8,
+    only_paths: "set[str] | None" = None,
     **filter_args,
 ) -> dict[str, int]:
     stats = {
@@ -221,10 +222,22 @@ def run(
         "unreadable": 0, "failed": 0,
     }
     photos = select_photos(
-        client, collection, limit=limit,
+        client, collection, limit=None if only_paths else limit,
         missing_only=False, skip_locked=False, kind=kind, **filter_args,
     )
-    if missing_only:
+    if only_paths is not None:
+        # Eine ausdrueckliche Liste schlaegt die Markierung: sie entsteht aus
+        # einer Messung von aussen und meint genau diese Dateien. `--album`
+        # und `--path` koennen eine verstreute Menge nicht ausdruecken -- die
+        # 416 Fotos mit gedrehter EXIF-Ausrichtung etwa liegen quer durchs
+        # Archiv (photovault#37).
+        photos = [p for p in photos
+                  if (p.payload or {}).get("file_path") in only_paths]
+        # `--limit` erst jetzt: vorher griff es in Scroll-Reihenfolge und
+        # liess von einer gezielten Liste meist nichts uebrig.
+        if limit:
+            photos = photos[:limit]
+    elif missing_only:
         photos = [p for p in photos if (p.payload or {}).get("face_source") != FACE_SOURCE]
     stats["selected"] = len(photos)
     if not photos:
@@ -269,6 +282,7 @@ def run(
         photos, embedder=embedder, writer=writer, matcher=matcher,
         client=client, collection=collection, stats=stats, job=job,
         io_workers=io_workers, ffmpeg_workers=ffmpeg_workers, started=started,
+        kind=kind,
     )
     if job:
         job.finish(
@@ -285,7 +299,7 @@ def run(
 
 def _run_piped(
     photos, *, embedder, writer, matcher, client, collection, stats, job,
-    io_workers: int, ffmpeg_workers: int, started: float,
+    io_workers: int, ffmpeg_workers: int, started: float, kind: str = "video",
 ) -> None:
     """ffmpeg parallel in den Speicher, insightface nur auf einem Thread.
 
@@ -333,11 +347,22 @@ def _run_piped(
             except queue.Empty:
                 break
             try:
-                frames = load_video_frames(
-                    photo.file_path,
-                    photo.payload.get("duration_s"),
-                    ffmpeg_pool=ffmpeg_pool,
-                )
+                if kind == "photo":
+                    # Ein Standbild hat keine Frames. `--kind photo` waehlte
+                    # zwar Fotos aus, schickte sie aber trotzdem durch ffmpeg
+                    # -- 415 von 415 kamen als "unlesbar" zurueck. `ss=None`
+                    # ist dabei wesentlich: daran erkennt der Zuschnitt spaeter,
+                    # dass er das Bild selbst lesen darf und nicht einen Frame
+                    # suchen muss.
+                    from ingest.face_embedder import load_upright
+
+                    frames = [(None, load_upright(photo.file_path))]
+                else:
+                    frames = load_video_frames(
+                        photo.file_path,
+                        photo.payload.get("duration_s"),
+                        ffmpeg_pool=ffmpeg_pool,
+                    )
                 to_gpu.put({"photo": photo, "frames": frames})
             except Exception as e:
                 logger.warning("Unreadable, skipping: %s (%s)", photo.file_path, e)
@@ -417,6 +442,21 @@ def _start_job(client, total: int, collection: str):
         return None
 
 
+def _lies_pfade(datei: Optional[str]) -> "set[str] | None":
+    """Dateiliste einlesen -- leere Zeilen und `#`-Kommentare fallen weg."""
+    if not datei:
+        return None
+    pfade = set()
+    with open(datei, encoding="utf-8") as f:
+        for zeile in f:
+            z = zeile.strip()
+            if z and not z.startswith("#"):
+                pfade.add(z)
+    if not pfade:
+        raise SystemExit(f"{datei} enthaelt keine Pfade")
+    return pfade
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Gesichter in Videos finden, ohne CLIP und ohne Ollama.",
@@ -433,6 +473,10 @@ def main() -> None:
     parser.add_argument("--person", help="Nur Medien mit dieser bestaetigten Person")
     parser.add_argument("--album", help="Nur Alben, deren Name diesen Text enthaelt")
     parser.add_argument("--path", dest="path_contains", help="Nur Pfade, die diesen Text enthalten")
+    parser.add_argument("--paths-file",
+                        help="Nur die Dateien aus dieser Liste (eine je Zeile). "
+                             "Schlaegt die Markierung -- fuer gezielte Nacharbeit "
+                             "an einer verstreuten Menge.")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--io-workers", type=int, default=6,
                         help="Clips gleichzeitig von der Platte holen")
@@ -465,6 +509,7 @@ def main() -> None:
         path_contains=args.path_contains,
         io_workers=args.io_workers,
         ffmpeg_workers=args.ffmpeg_workers,
+        only_paths=_lies_pfade(args.paths_file),
     )
 
 
