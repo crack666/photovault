@@ -176,6 +176,29 @@ nav { display: flex; gap: 8px; }
   .hero img { width: 148px; height: 148px; }
 }
 
+/* Waehrend eine Zuordnung laeuft.
+
+   Kein Laufbalken: der Server meldet keinen Fortschritt, und ein Balken, der
+   raet, ist schlimmer als ein Kreisel, der nur "ich arbeite" sagt. Wichtiger
+   als die Anzeige ist ohnehin das Sperren -- sichtbar passierte vorher
+   nichts, also klickte man ein zweites Mal, und die zweite Anfrage machte
+   dieselbe Minute Arbeit noch einmal. */
+.card.laeuft { cursor: progress; }
+.card.laeuft #thumbs, .card.laeuft #suggestions { opacity: .45; pointer-events: none; }
+.card.laeuft #btn-confirm-known {
+  position: relative; padding-left: 2.4rem;
+}
+.card.laeuft #btn-confirm-known::before {
+  content: ""; position: absolute; left: 1rem; top: 50%;
+  width: 14px; height: 14px; margin-top: -7px;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: kreisel .7s linear infinite;
+}
+@keyframes kreisel { to { transform: rotate(360deg); } }
+/* Ein gesperrter Knopf wird sonst blass -- hier soll er lesbar bleiben,
+   denn genau er traegt die Erklaerung, warum gerade nichts geht. */
+.card.laeuft #btn-confirm-known:disabled { opacity: 1; }
+
 /* Das ganze Foto ansehen -- zweiter Knopf, gegenueber dem Ausschliessen. */
 .thumbs .thumb .gross {
   position: absolute; left: 2px; top: 2px;

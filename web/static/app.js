@@ -104,7 +104,10 @@ function renderCard() {
     chip.className = "chip";
     const pct = Math.round((s.score || 0) * 100);
     chip.innerHTML = `<strong>${escapeHtml(s.name)}</strong> · ${pct}%`;
-    chip.addEventListener("click", () => assignExisting(s.id, keptFaces(cluster)));
+    chip.addEventListener("click", () => mitRueckmeldung(
+      `${keptFaces(cluster).length} Gesichter werden ${s.name} zugeordnet …`,
+      () => assignExisting(s.id, keptFaces(cluster)),
+    ));
     $("suggestions").appendChild(chip);
   });
   $("name-input").value = "";
@@ -238,10 +241,55 @@ function updateClusterCount(cluster) {
     + (out ? ` · ${out} ausgeschlossen` : "");
 }
 
+/* Waehrend eine Zuordnung laeuft, nimmt die Karte nichts mehr an.
+
+   Ein Klick auf "Ja, 1312 Gesichter zuordnen" kann fast eine Minute dauern:
+   die Namen selbst sitzen schnell, aber jedes betroffene Foto bekommt danach
+   einen neuen Text-Vektor (~130 ms, `_assign` in api/routes/persons.py), und
+   das sind bei einer grossen Gruppe ueber 900 Fotos. Vorher passierte
+   sichtbar nichts -- also klickt man noch einmal, und die zweite Anfrage
+   macht dieselbe Arbeit ein zweites Mal. */
+const KARTE_SPERREN = [
+  "btn-confirm-known", "btn-skip", "name-input",
+];
+
+function karteBusy(on, text) {
+  const karte = $("card");
+  karte.classList.toggle("laeuft", !!on);
+  KARTE_SPERREN.forEach((id) => { const e = $(id); if (e) e.disabled = !!on; });
+  karte.querySelectorAll("#suggestions button, #name-form button, .thumb .drop")
+    .forEach((b) => { b.disabled = !!on; });
+  const knopf = $("btn-confirm-known");
+  if (on) {
+    knopf.dataset.text = knopf.dataset.text || knopf.textContent;
+    if (text) knopf.textContent = text;
+  } else if (knopf.dataset.text) {
+    knopf.textContent = knopf.dataset.text;
+    delete knopf.dataset.text;
+  }
+}
+
+/** Eine Zuordnung mit Rueckmeldung -- und ohne zweiten Klick dazwischen. */
+async function mitRueckmeldung(text, arbeit) {
+  if ($("card").classList.contains("laeuft")) return;
+  karteBusy(true, text);
+  try {
+    await arbeit();
+  } catch (e) {
+    notify(`Zuordnen fehlgeschlagen: ${e.message || e}`, { kind: "error" });
+  } finally {
+    karteBusy(false);
+  }
+}
+
 $("btn-confirm-known").addEventListener("click", () => {
   const cluster = state.clusters[state.index];
   if (!cluster || cluster.kind !== "known") return;
-  assignExisting(cluster.person_id, keptFaces(cluster));
+  const n = keptFaces(cluster).length;
+  mitRueckmeldung(
+    `${n} Gesichter werden ${cluster.person_name} zugeordnet …`,
+    () => assignExisting(cluster.person_id, keptFaces(cluster)),
+  );
 });
 
 async function assignExisting(personId, faceIds) {
@@ -278,7 +326,10 @@ $("name-form").addEventListener("submit", (e) => {
   const cluster = state.clusters[state.index];
   const name = $("name-input").value.trim();
   if (!cluster || !name) return;
-  assignNew(name, keptFaces(cluster));
+  mitRueckmeldung(
+    `${keptFaces(cluster).length} Gesichter werden ${name} zugeordnet …`,
+    () => assignNew(name, keptFaces(cluster)),
+  );
 });
 
 $("btn-skip").addEventListener("click", async () => {
