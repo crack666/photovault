@@ -70,6 +70,21 @@ def _in_der_bibliothek(pfad: str) -> str:
                  f"PHOTOVAULT_PHOTO_ROOT verschiebt die Grenze.")
     return pfad
 
+
+def _lesen_oder_leer() -> src.SourcesFile:
+    """Die Datei -- oder eine leere, solange es sie noch nicht gibt.
+
+    Fuer die beiden Wege, auf denen man zur *ersten* Quelle kommt: den
+    Waehler und das Hinzufuegen. Ohne `sources.txt` liefen beide in einen
+    `FileNotFoundError` und damit in eine 500 -- genau in dem Zustand, fuer
+    den die Jobs-Seite "Unten einen Ordner als Quelle hinzufuegen" sagt.
+    Geschrieben wird die Datei beim ersten `add` ohnehin.
+    """
+    if not Path(FILE).exists():
+        return src.SourcesFile(path=FILE)
+    return src.read(FILE)
+
+
 #: Obergrenze fuer den Trockenlauf. Ein Zaehllauf ueber ein NAS kostet Zeit;
 #: mehr als das braucht niemand, um eine Entscheidung zu treffen.
 PREVIEW_CAP = 200_000
@@ -153,7 +168,7 @@ def add_source(req: AddRequest) -> dict:
     p = _in_der_bibliothek(req.path.rstrip("/"))
     if not Path(p).is_dir():
         raise HTTPException(400, f"Kein Verzeichnis: {p}")
-    s = src.read(FILE)
+    s = _lesen_oder_leer()
     if any(e.path.rstrip("/") == p and e.exclude == req.exclude for e in s.entries):
         raise HTTPException(409, f"Steht schon drin: {p}")
     try:
@@ -256,7 +271,7 @@ def browse(path: str = "") -> dict:
     except OSError as e:
         raise HTTPException(502, f"Nicht lesbar: {e}") from e
 
-    s = src.read(FILE)
+    s = _lesen_oder_leer()
     drin = {e.path.rstrip("/"): e for e in s.entries}
     for d in dirs:
         e = drin.get(d["path"].rstrip("/"))
