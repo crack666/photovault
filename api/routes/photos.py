@@ -178,10 +178,16 @@ def accept_date(point_id: str) -> dict:
             logger.warning("EXIF-Datum nicht schreibbar (%s): %s", path, e)
             reason = str(e)
     stamp = when.strftime("%Y-%m-%dT%H:%M:%S")
+    if when.tzinfo is not None:
+        from ingest.localtime import to_local
+
+        day = to_local(when).strftime("%Y-%m-%d")
+    else:
+        day = when.strftime("%Y-%m-%d")
     q.set_payload(
         collection_name=PHOTOS,
         payload={
-            "date": when.strftime("%Y-%m-%d"),
+            "date": day,
             "taken_at": stamp,
             "date_source": "accepted",
             "date_confidence": 1.0,
@@ -192,7 +198,7 @@ def accept_date(point_id: str) -> dict:
     stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS)
     return {
         "id": point_id,
-        "date": when.strftime("%Y-%m-%d"),
+        "date": day,
         "taken_at": stamp,
         "written": written,
         "exif_reason": reason,
@@ -276,8 +282,22 @@ def set_date(point_id: str, req: SetDateRequest) -> dict:
 
 
 def _when_from_payload(payload: dict) -> datetime | None:
-    raw = payload.get("taken_at") or payload.get("date") or ""
-    raw = str(raw).replace("Z", "")
+    """Zeitpunkt aus dem Index.
+
+    `taken_at` mit `Z` ist UTC und kommt mit Zone zurueck -- der EXIF-Schreiber
+    rechnet in Ortszeit um (Issue #43). Mitternacht heisst „Uhr unbekannt“
+    und bleibt der blanke Tag; umgerechnet waere daraus 02:00 geworden.
+    """
+    raw = str(payload.get("taken_at") or payload.get("date") or "")
+    if len(raw) >= 19 and raw[11:19] != "00:00:00":
+        from ingest.localtime import parse_utc
+
+        aware = parse_utc(raw)
+        if aware is not None:
+            return aware.astimezone(timezone.utc)
+    raw = raw.replace("Z", "")
+    if len(raw) >= 19 and raw[11:19] == "00:00:00":
+        raw = raw[:10]
     for fmt, n in (("%Y-%m-%dT%H:%M:%S", 19), ("%Y-%m-%d", 10)):
         try:
             return datetime.strptime(raw[:n], fmt)
