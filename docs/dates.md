@@ -187,18 +187,39 @@ Sicherheiten, jede gegen einen konkreten Schaden:
 - `date_source=exif` wird nie angefasst. Eine Kamera bleibt eine Kamera.
 - Mitternacht im Index heißt „Uhr unbekannt“ — nichts schreiben, keine
   erfundene Präzision.
-- Herkunftsnotiz `photovault:src=filename` (oder `file_time` / `folder`).
-  Der nächste Ingest liest das und gibt nicht Vertrauen 1,0 wie bei einer
-  Messung.
+- Herkunftsnotiz `photovault:src=filename+mtime` (oder `folder+mtime`,
+  `file_time`). `+mtime` heißt: nur der Tag kommt aus dem Namen, die Uhrzeit
+  aus der Dateizeit — der Name kennt keine Uhr. `src=filename` ohne Zusatz
+  hieße „alles aus dem Namen“. Der nächste Ingest liest die Notiz und gibt
+  nicht Vertrauen 1,0 wie bei einer Messung; `date_source` bleibt `filename`.
+- **Ortszeit, nicht UTC.** Der Index hält die Uhr in UTC (`…Z`).
+  `DateTimeOriginal` hat keine Zone und wird überall als Ortszeit gelesen.
+  Geschrieben wird deshalb die Ortszeit (`PHOTOVAULT_TZ`, sonst `TZ`, sonst
+  System; docker-compose setzt `TZ`), dazu `OffsetTimeOriginal` (`+02:00`).
+  Ob die Dateizeit zum Tag des Namens passt, entscheidet der Tag in
+  Ortszeit — um 00:30 ist es in UTC noch gestern (Issue #43).
 - Dateizeit und Birth-Time werden nach dem Schreiben wiederhergestellt.
   Sonst zerstört genau dieser Lauf die Quelle, aus der die Uhr kam.
-- Gegenprobe: nach dem Insert muss `read_capture_time` denselben Wert lesen.
+- Gegenprobe: nach dem Insert muss `read_capture_time` dieselbe Ortszeit
+  lesen und `DateTimeOriginal` + `OffsetTimeOriginal` denselben Zeitpunkt
+  ergeben wie der Indexwert — nicht nur dieselben Ziffern.
 - PNG und andere Formate ohne verlustfreien EXIF-Tausch bleiben draußen.
 
 ```bash
 python -m tools.exif_repair --preview     # wer käme in Frage (Index)
 python -m tools.exif_repair               # Trockenlauf, Dateien öffnen
 python -m tools.exif_repair --apply --limit 200
+```
+
+Vor dem Fix für #43 wurde die UTC-Uhr unverändert geschrieben (Notiz
+`src=filename;mtime=…` ohne `+mtime`, `DateTimeOriginal` = Notiz-mtime).
+Diese Dateien korrigiert `tools/exif_tz_fix.py` — Trockenlauf zählt, erst
+`--apply` schreibt; Dateien, bei denen die Ortszeit auf einen anderen Tag
+fiele, bleiben liegen und werden gelistet:
+
+```bash
+TZ=Europe/Berlin python -m tools.exif_tz_fix /mnt/photo --sample 5
+TZ=Europe/Berlin python -m tools.exif_tz_fix /mnt/photo --apply --limit 50
 ```
 
 Reihenfolge: erst `--preview` auf Tag 306 vs. Original (`backfill_taken_at`),
@@ -220,6 +241,10 @@ Importnacht ist. 306 gilt nur, wenn Original fehlt.
 
 `tests/test_exif_repair.py`: Kamera-EXIF ist kein Kandidat; WhatsApp mit
 Dateiname und Uhrzeit ist einer; Mitternacht nicht.
+
+`tests/test_exif_timezone.py`: Sommer und Winter in `Europe/Berlin`,
+Tagesübergang um 00:30, Gegenprobe auf den Zeitpunkt, `+mtime` in der Notiz,
+Korrektur des Altbestands.
 
 Wer das Verfahren auf einem fremden Bestand wiederholt, braucht keinen neuen
 Unit-Test — der ist lokal und kennt keine Alben. Die Probe ist `--preview`

@@ -148,4 +148,8 @@ def _own_note(exif) -> str | None:
     if _MARKER not in text:
         return None
     rest = text.split(_MARKER, 1)[1]
-    return rest.split(";", 1)[0].strip() or None
+    # `filename+mtime`: Tag aus dem Namen, Uhr aus der Dateizeit. Die Herkunft
+    # des *Datums* -- und damit `date_source` und das Vertrauen -- bleibt
+    # `filename`; der Zusatz sagt nur, woher die Uhrzeit stammt.
+    src = rest.split(";", 1)[0].strip()
+    return src.split("+", 1)[0].strip() or None

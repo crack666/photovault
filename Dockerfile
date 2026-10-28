@@ -9,7 +9,7 @@ WORKDIR /app
 # Erst die Abhaengigkeiten: sie aendern sich selten, der Code staendig --
 # so bleibt die teure Installationsschicht im Cache.
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir -e . || pip install --no-cache-dir         "insightface>=0.7.3" "open-clip-torch>=2.24" "Pillow>=10.0"         "qdrant-client>=1.9" "fastapi>=0.111" "uvicorn>=0.30" "pydantic>=2.0"         python-multipart aiofiles "numpy>=1.26" "torch>=2.2" "piexif>=1.1.3"
+RUN pip install --no-cache-dir -e . || pip install --no-cache-dir         "insightface>=0.7.3" "open-clip-torch>=2.24" "Pillow>=10.0"         "qdrant-client>=1.9" "fastapi>=0.111" "uvicorn>=0.30" "pydantic>=2.0"         python-multipart aiofiles "numpy>=1.26" "torch>=2.2" "piexif>=1.1.3" tzdata
 
 COPY . .
 

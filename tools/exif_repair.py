@@ -10,6 +10,11 @@ arbeitet ueber den Index und nicht ueber das Dateisystem, damit exakt dieselbe
 Logik gilt wie beim Ingest -- eine zweite, leicht abweichende Ableitung waere
 schlimmer als keine.
 
+Der Index haelt die Uhrzeit in UTC (`...Z`). Geschrieben wird sie in Ortszeit
+mit `OffsetTimeOriginal` -- das erledigt `write_capture_time`, sobald der Wert
+eine Zone traegt (Issue #43). Die Herkunftsnotiz sagt `src=filename+mtime`,
+wenn nur der Tag aus dem Namen stammt und die Uhr aus der Dateizeit.
+
 Sicherheiten: Trockenlauf ist der Standard; vorhandene Aufnahmezeiten werden
 nie angetastet; jeder geschriebene Wert traegt eine Herkunftsnotiz und ist
 ueber `ingest.exif_writer.revert` umkehrbar.
@@ -26,24 +31,47 @@ import logging
 import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ingest.exif_writer import (
-    WRITABLE_SUFFIXES, ExifWriteError, read_capture_time, write_capture_time,
+    WRITABLE_SUFFIXES,
+    ExifWriteError,
+    read_capture_time,
+    write_capture_time,
 )
+from ingest.localtime import parse_utc, to_local
 from ingest.netfs import retry_io
 
 logger = logging.getLogger(__name__)
 
 BATCH = 256
 
+#: Herkuenfte, bei denen nur der *Tag* abgeleitet ist. Die Uhrzeit kommt dann
+#: aus der Dateizeit (`Normalizer._set_taken_at`), und die Notiz sagt das.
+#: `file_time` nennt die Dateizeit schon selbst; `accepted`/`offset` sind
+#: ganze Zeitpunkte.
+CLOCK_FROM_MTIME = frozenset({"filename", "folder", "folder_name", "folder_json", "album"})
+
+
+def note_source(date_source: str | None) -> str:
+    """Herkunft fuer die Notiz: `filename+mtime` statt `filename`."""
+    src = date_source or "abgeleitet"
+    return f"{src}+mtime" if src in CLOCK_FROM_MTIME else src
+
 
 def _parse_taken_at(value: str | None) -> datetime | None:
-    """Nur Zeitstempel mit echter Uhrzeit. Mitternacht heisst hier: unbekannt."""
+    """Nur Zeitstempel mit echter Uhrzeit. Mitternacht heisst hier: unbekannt.
+
+    Mit Zone (`Z`) kommt eine bewusste UTC-Zeit zurueck -- der Schreiber
+    rechnet sie in Ortszeit um. Ohne Zone bleibt sie, wie sie ist.
+    """
     if not value or len(value) < 19:
         return None
     if value[11:19] == "00:00:00":
         return None
+    aware = parse_utc(value)
+    if aware is not None:
+        return aware.astimezone(timezone.utc)
     try:
         return datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
     except ValueError:
@@ -80,6 +108,12 @@ def candidate(payload: dict) -> tuple[str, datetime] | None:
     # Aus EXIF stammende Zeiten stehen schon in der Datei.
     if payload.get("date_source") == "exif":
         return None
+    # Der Tag in der Datei muss der Tag des Namens sein. Nahe Mitternacht
+    # liegt UTC auf dem Vortag; in Ortszeit muss es stimmen, sonst nichts
+    # schreiben.
+    day = str(payload.get("date") or "")
+    if len(day) == 10 and when.tzinfo is not None and to_local(when).date().isoformat() != day:
+        return None
     return path, when
 
 
@@ -93,7 +127,7 @@ def preview(client, collection: str = "photos", limit: int | None = None,
     while True:
         batch, offset = client.scroll(
             collection_name=collection, limit=BATCH, offset=offset,
-            with_payload=["file_path", "taken_at", "date_source", "folder_name"],
+            with_payload=["file_path", "taken_at", "date", "date_source", "folder_name"],
             with_vectors=False,
         )
         for point in batch:
@@ -157,7 +191,7 @@ def run(client, collection: str = "photos", apply: bool = False,
     while True:
         batch, offset = client.scroll(
             collection_name=collection, limit=BATCH, offset=offset,
-            with_payload=["file_path", "taken_at", "date_source", "folder_name"],
+            with_payload=["file_path", "taken_at", "date", "date_source", "folder_name"],
             with_vectors=False,
         )
         if not batch:
@@ -174,7 +208,7 @@ def run(client, collection: str = "photos", apply: bool = False,
                 tally["uebersprungen"] += 1
                 continue
             path, when = hit
-            work.append((path, when, payload.get("date_source") or "abgeleitet"))
+            work.append((path, when, note_source(payload.get("date_source"))))
 
         if work:
             with ThreadPoolExecutor(max_workers=workers) as pool:

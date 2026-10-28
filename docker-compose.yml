@@ -31,6 +31,10 @@ services:
       - "${API_PORT:-8000}:8000"
     environment:
       QDRANT_URL: http://qdrant:6333
+      # Ortszeit fuer DateTimeOriginal (Issue #43). Ohne TZ ist der Container
+      # UTC, und zurueckgeschriebene Aufnahmezeiten stuenden ein, zwei Stunden
+      # zu frueh in der Datei.
+      TZ: ${TZ:-Europe/Berlin}
       # Modelle ueber LiteLLM auf dem Host (Vorgabe; dort sitzt das GPU-Tor) oder,
       # mit PHOTOVAULT_LLM=ollama, Ollama direkt (ohne Tor, photovault#26).
       # Ohne beides bleibt es bei Metadaten, Gesichtern und CLIP -- Captions
