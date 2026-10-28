@@ -363,7 +363,66 @@ def rekey(sizes) -> int:
     return umbenannt
 
 
-def warm(zus, sizes) -> int:
+def start_job(q=None):
+    """Den Lauf auf der Jobs-Seite anmelden -- bevor er irgendetwas zaehlt.
+
+    `thumbs` war der einzige startbare Lauf ohne Eintrag: kein Fortschritt
+    ueber 5.027 Dateien, `busy` nie wahr, der Knopf also ein Doppelklick von
+    zwei gleichzeitigen Laeufen entfernt, und hinterher nichts in der
+    Historie (photovault#31). Angemeldet wird vor `report()`: die
+    Bestandsaufnahme liest den ganzen Index und den Cache, und solange sie
+    laeuft, stuende der Knopf sonst noch auf "Starten".
+    """
+    try:
+        from ingest.jobs import JobTracker
+
+        job = JobTracker(q if q is not None else client(), kind="thumbs", source=str(CACHE_DIR))
+        job.update(phase="Bestandsaufnahme", force=True)
+        return job
+    except Exception as e:  # Tracking darf den Lauf nie stoppen.
+        logger.debug("Job-Tracking nicht verfuegbar: %s", e)
+        return None
+
+
+class Meldung:
+    """Fortschritt fuer die Jobs-Seite, ueber beide Phasen von `--warm`.
+
+    Kacheln und Gesichtsausschnitte zaehlen je Phase von vorn -- die Zahl der
+    Ausschnitte steht erst fest, wenn die Kacheln durch sind, und ein
+    nachtraeglich wachsendes `total` liesse den Balken zurueckspringen. Die
+    Fehler dagegen laufen durch: am Ende soll dastehen, wie viele es *im Lauf*
+    waren, nicht nur in der letzten Phase.
+
+    Ohne Job (kein Qdrant, Tests) tut sie nichts. Melden darf den Lauf nie
+    stoppen.
+    """
+
+    def __init__(self, job=None):
+        self.job = job
+        self.fehler = 0
+
+    def _update(self, **fields) -> None:
+        if self.job is None:
+            return
+        try:
+            self.job.update(**fields)
+        except Exception as e:
+            logger.debug("Job-Meldung fehlgeschlagen: %s", e)
+
+    def phase(self, name: str, total: int) -> None:
+        self._update(phase=name, total=total, processed=0, errors=self.fehler, force=True)
+
+    def schritt(self, processed: int, force: bool = False) -> None:
+        self._update(processed=processed, errors=self.fehler, force=force)
+
+    def fehlschlag(self, path, reason) -> None:
+        self.fehler += 1
+        if self.job is not None:
+            self.job.fail(path, reason)
+
+
+def warm(zus, sizes, meldung: Meldung | None = None) -> int:
+    meldung = meldung or Meldung()
     q = client()
     # Mit Inhalts-Hash, nicht nur mit Pfad: sonst legt gerade dieser Lauf --
     # der Job "Vorschaubilder anlegen" -- wieder Kacheln unter dem alten
@@ -403,6 +462,7 @@ def warm(zus, sizes) -> int:
         return 0
     print(f"{len(todo)} Kacheln erzeugen. Jede liest das Original einmal;")
     print("ueber ein Netzlaufwerk ist das der langsame Teil.")
+    meldung.phase("Kacheln", len(todo))
     fertig = 0
     for i, (p, s, h) in enumerate(todo, 1):
         try:
@@ -410,8 +470,11 @@ def warm(zus, sizes) -> int:
             fertig += 1
         except Exception as e:
             logger.debug("%s (%s px): %s", p, s, e)
+            meldung.fehlschlag(p, e)
+        meldung.schritt(i)
         if i % 200 == 0:
             print(f"  {i}/{len(todo)}", flush=True)
+    meldung.schritt(len(todo), force=True)
     print(f"{fertig} von {len(todo)} erzeugt.")
     return fertig
 
@@ -422,7 +485,7 @@ def warm(zus, sizes) -> int:
 FACE_SIZE = 160
 
 
-def warm_faces(sizes=(FACE_SIZE,)) -> int:
+def warm_faces(sizes=(FACE_SIZE,), meldung: Meldung | None = None) -> int:
     """Die Gesichtsausschnitte vorerzeugen, nicht nur die Ganzbild-Kacheln.
 
     `cache_keys` nimmt den Kasten in den Schluessel auf -- eine Ganzbild-Kachel
@@ -443,6 +506,7 @@ def warm_faces(sizes=(FACE_SIZE,)) -> int:
     from api.thumbs import cache_keys
     from ingest.media import is_video
 
+    meldung = meldung or Meldung()
     q = client()
     da = scan(CACHE_DIR, sizes)
     nach_datei: dict[tuple, list] = defaultdict(list)
@@ -483,8 +547,9 @@ def warm_faces(sizes=(FACE_SIZE,)) -> int:
         return 0
     print(f"{fehlend} Gesichtsausschnitte aus {len(nach_datei)} Dateien erzeugen.")
     print("Jede Datei wird einmal gelesen, nicht einmal je Gesicht.")
+    meldung.phase("Gesichter", fehlend)
 
-    fertig = 0
+    fertig = erledigt = 0
     for i, ((fp, extra, h), posten) in enumerate(nach_datei.items(), 1):
         bild = None
         # Nur Standbilder lassen sich teilen. Ein Video-Frame haengt am
@@ -506,10 +571,14 @@ def warm_faces(sizes=(FACE_SIZE,)) -> int:
                 fertig += 1
             except Exception as e:
                 logger.debug("%s %s (%s px): %s", fp, box, s, e)
+                meldung.fehlschlag(fp, e)
+            erledigt += 1
         if bild is not None:
             bild.close()
+        meldung.schritt(erledigt)
         if i % 100 == 0:
             print(f"  {i}/{len(nach_datei)} Dateien", flush=True)
+    meldung.schritt(erledigt, force=True)
     print(f"{fertig} von {fehlend} erzeugt.")
     return fertig
 
@@ -541,24 +610,47 @@ def main(argv=None) -> int:
         print(f"Cache: {CACHE_DIR}")
         print()
 
-    if args.move:
-        move()
-        print()
-    if args.rekey:
-        rekey(sizes)
-        print()
-    zus = report(sizes)
-    if args.prune:
-        print()
-        prune(zus)
-    if args.warm:
-        print()
-        warm(zus, sizes)
-        # Die Gesichtsausschnitte gehoeren dazu: ohne sie laesst der Lauf
-        # ausgerechnet die Seite kalt, auf der es am meisten weh tut.
-        if not args.no_faces:
+    # Nur `--warm` ist der Lauf hinter dem Knopf "Vorschaubilder anlegen".
+    # Nachsehen, Umziehen, Aufraeumen sind Sekunden und gehoeren nicht in die
+    # Historie.
+    job = start_job() if args.warm else None
+    meldung = Meldung(job)
+    try:
+        if args.move:
+            move()
             print()
-            warm_faces()
+        if args.rekey:
+            rekey(sizes)
+            print()
+        zus = report(sizes)
+        if args.prune:
+            print()
+            prune(zus)
+        kacheln = gesichter = 0
+        if args.warm:
+            print()
+            kacheln = warm(zus, sizes, meldung)
+            # Die Gesichtsausschnitte gehoeren dazu: ohne sie laesst der Lauf
+            # ausgerechnet die Seite kalt, auf der es am meisten weh tut.
+            if not args.no_faces:
+                print()
+                gesichter = warm_faces(meldung=meldung)
+    except BaseException as e:
+        # Auch KeyboardInterrupt und SystemExit: ein abgebrochener Lauf soll
+        # nicht zwei Minuten lang als "laeuft" stehen, bis er "stale" wird.
+        if job is not None:
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                # Wie der SIGTERM-Handler des Trackers; `str(SystemExit(143))`
+                # ist nur die Zahl.
+                job.finish("aborted", phase="aborted", errors=meldung.fehler)
+            else:
+                job.finish("error", errors=meldung.fehler,
+                           phase=(str(e).splitlines() or [""])[0][:200] or type(e).__name__)
+        raise
+    if job is not None:
+        job.finish("done-with-errors" if meldung.fehler else "done",
+                   errors=meldung.fehler,
+                   phase=f"{kacheln} Kacheln, {gesichter} Gesichtsausschnitte erzeugt")
     return 0
 
 
