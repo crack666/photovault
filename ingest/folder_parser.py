@@ -5,7 +5,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 RE_SEQUENCE = re.compile(r"(IMG|DSCF|DSC|DSCI|PICT|IMGP|PANO|DJI|VID|P)[-_]?(\d{3,6})(?!\d)", re.IGNORECASE)
-RE_DATE_IN_NAME = re.compile(r"(\d{4})[-_](\d{2})[-_](\d{2})")
+# Getrennt: 2019-03-15_Geburtstag.jpg / VID_..._2025-05-08_22-08-49.jpg.
+# Dieselben Schranken wie RE_COMPACT_DATE: ohne (?<!\d)/(?!\d) und
+# Wertebereiche griff das Muster mitten in eine Uhrzeit -- aus
+# VID_20250509_173920_00_031 wurde das Jahr 3920, Monat 00 (#47).
+RE_DATE_IN_NAME = re.compile(
+    r"(?<!\d)(19\d{2}|20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])(?!\d)"
+)
 # WhatsApp: IMG-20181021-WA0120.jpg / VID-20181021-WA0001.mp4
 RE_WHATSAPP = re.compile(r"(?:IMG|VID)-(\d{4})(\d{2})(\d{2})-WA(\d+)", re.IGNORECASE)
 # Kompakt: 20130515_223527.jpg / IMG_20160423_101500.jpg -> 2013-05-15
@@ -143,15 +149,15 @@ class FolderParser:
         if sm:
             result["sequence"] = int(sm.group(2))
         if not result["date_hint"]:
-            dm = RE_DATE_IN_NAME.search(filename)
-            if dm:
+            # Beide Schreibweisen fragen und die nehmen, die *vorne* im Namen
+            # steht: dort steht das Aufnahmedatum, dahinter haengen Kopien,
+            # Screenshots und Exporte ihr eigenes an (#47).
+            found = [m for m in (RE_DATE_IN_NAME.search(filename),
+                                 RE_COMPACT_DATE.search(filename)) if m]
+            if found:
+                dm = min(found, key=lambda m: m.start())
                 result["date_hint"] = f"{dm.group(1)}-{dm.group(2)}-{dm.group(3)}"
                 result["date_hint_source"] = "filename"
-            else:
-                cm = RE_COMPACT_DATE.search(filename)
-                if cm:
-                    result["date_hint"] = f"{cm.group(1)}-{cm.group(2)}-{cm.group(3)}"
-                    result["date_hint_source"] = "filename"
         return result
 
     def _find_folder_json(self, path: Path) -> dict | None:
