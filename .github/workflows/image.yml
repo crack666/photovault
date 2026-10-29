@@ -10,6 +10,8 @@
 #   cuda  amd64, Tag `cuda`: torch aus dem cu130-Index, onnxruntime-gpu --
 #         fuer Rechner mit NVIDIA-Karte (Treiber ab 580), Gesichter und
 #         CLIP ~10x schneller. Gemessen auf einer RTX 5090 (Blackwell).
+# Alle drei bauen auf master, bei Tags und per Hand; ein PR baut nur cpu
+# amd64 als Rauchtest (#52).
 # Vor dem Push importiert ein Rauchtest im frischen Image alles, was die
 # Pipeline braucht -- ein Image, das erst beim Nutzer "ModuleNotFoundError"
 # sagt, hilft niemandem.
@@ -30,30 +32,44 @@ on:
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/photovault
 
+# Mehrere Merges kurz hintereinander starteten je einen vollen Lauf (drei
+# Builds, cuda allein ~15 min), und alle liefen zu Ende, obwohl nur der
+# letzte Stand zaehlt (#52). Je Ref laeuft deshalb nur der neueste Lauf;
+# Tags haben jeder einen eigenen Ref und werden nie abgebrochen.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Ein PR veroeffentlicht nichts, er soll nur zeigen, dass das Image baut
+  # und importiert. Dafuer reicht cpu amd64; arm64 und cuda bauen erst auf
+  # master, bei Tags und per Hand (#52). Die Liste steht hier, weil eine
+  # Matrix sich nicht per `if` je Eintrag ausduennen laesst.
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          alle='[
+            {"variant":"cpu","runner":"ubuntu-24.04","platform":"linux/amd64","arch":"amd64","torch_index":"https://download.pytorch.org/whl/cpu","ort":"onnxruntime"},
+            {"variant":"cpu","runner":"ubuntu-24.04-arm","platform":"linux/arm64","arch":"arm64","torch_index":"https://download.pytorch.org/whl/cpu","ort":"onnxruntime"},
+            {"variant":"cuda","runner":"ubuntu-24.04","platform":"linux/amd64","arch":"amd64","torch_index":"https://download.pytorch.org/whl/cu130","ort":"onnxruntime-gpu"}
+          ]'
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            filter='[.[] | select(.variant == "cpu" and .arch == "amd64")]'
+          else
+            filter='.'
+          fi
+          echo "matrix=$(jq -c "$filter" <<<"$alle")" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - variant: cpu
-            runner: ubuntu-24.04
-            platform: linux/amd64
-            arch: amd64
-            torch_index: https://download.pytorch.org/whl/cpu
-            ort: onnxruntime
-          - variant: cpu
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            arch: arm64
-            torch_index: https://download.pytorch.org/whl/cpu
-            ort: onnxruntime
-          - variant: cuda
-            runner: ubuntu-24.04
-            platform: linux/amd64
-            arch: amd64
-            torch_index: https://download.pytorch.org/whl/cu130
-            ort: onnxruntime-gpu
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
