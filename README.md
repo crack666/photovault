@@ -664,6 +664,10 @@ python -m venv ~/.venvs/photovault
 ~/.venvs/photovault/bin/pip install -e ".[dev]" onnxruntime-gpu
 ```
 
+`insightface` steht in `pyproject.toml` fest auf **1.0.1**: die Gesichtsvektoren
+im Index sind damit gerechnet, und eine andere Version kann einen anderen
+Einbettungsraum liefern. Ob 2.x dasselbe liefert, ist offen (#30).
+
 Prüfen, dass die Gesichtserkennung wirklich auf der GPU landet — ohne
 `CUDAExecutionProvider` läuft insightface auf der CPU und kostet ~860 ms statt ~30 ms pro Foto:
 
