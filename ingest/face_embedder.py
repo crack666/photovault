@@ -18,11 +18,9 @@ logger = logging.getLogger(__name__)
 # Lese-, GPU- und Schreib-Arbeitern, die sich die Warn-Registry nicht teilen.
 # Der Filter steht deshalb im Modul, das jeder dieser Arbeiter importiert.
 #
-# Bewusst nicht behoben, sondern stummgeschaltet: der Aufruf funktioniert, der
-# Code gehoert uns nicht, und das Update auf insightface 2.x waere kein
-# Fehlerbehebung sondern ein Modellwechsel -- ob buffalo_l dort denselben
-# Einbettungsraum liefert, ist unbelegt, und 35.051 vorhandene Gesichtsvektoren
-# samt 119 benannter Personen haengen daran.
+# Bewusst nicht behoben, sondern stummgeschaltet: der Aufruf funktioniert und
+# der Code gehoert uns nicht. Ein Update hilft nicht -- insightface 2.0 und 2.1
+# haben `face_align.py` unveraendert uebernommen (gemessen 29.10.2026, #30).
 #
 # Der Filter ist eng gefasst: nur diese Kategorie aus diesem Modul. Ein
 # `simplefilter("ignore")` wuerde auch die Abkuendigung verschlucken, die uns
