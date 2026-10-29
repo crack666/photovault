@@ -6,14 +6,20 @@
 #    Cython-Erweiterung -- auf python:3.11-slim ohne g++ brach der Bau ab
 #    ("No such file or directory: 'g++'"). Der Compiler gehoert in die
 #    Baustufe, nicht ins Image, das jeder laedt.
+#    Seit der Spanne aus #30 zieht der Bau insightface 2.1, und das kommt als
+#    fertiges Wheel (`py3-none-any`, CI-Lauf 29.10.2026). Ob die Baustufe
+#    ohne Compiler auskommt, ist nicht gemessen; sie bleibt, solange 1.0.1 in
+#    der Spanne liegt.
 # 2. `pip install torch` zieht unter Linux die CUDA-Fassung samt
 #    NVIDIA-Bibliotheken, rund 3 GB -- fuer die meisten Rechner Ballast.
 #    Deshalb zwei Varianten (unten): `cpu` als Vorgabe, `cuda` fuer Rechner
 #    mit NVIDIA-Karte, die start.bat waehlt, wenn es eine misst.
 #
 # Dazu, was der Code zur Laufzeit braucht und pyproject nicht nennt:
-# onnxruntime (insightface laedt es selbst, erklaert es aber nicht als
-# Abhaengigkeit), ffmpeg/ffprobe fuer Videos, libgl/libglib fuer OpenCV,
+# onnxruntime in der passenden Fassung (insightface 1.0.1 und 2.1 erklaeren
+# die CPU-Fassung `onnxruntime` als Abhaengigkeit, `pip show` 29.10.2026 --
+# hier stand vorher, sie fehle; die cuda-Variante braucht aber
+# `onnxruntime-gpu` an ihrer Stelle), ffmpeg/ffprobe fuer Videos, libgl/libglib fuer OpenCV,
 # und das Extra [atlas], damit die Jobs-Seite die Karte rechnen kann.
 
 FROM python:3.11-slim AS builder
