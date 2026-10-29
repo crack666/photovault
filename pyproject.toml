@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Lokale Foto-Suche: Personen, Zeit, Ort, Szene"
 requires-python = ">=3.11"
 dependencies = [
-    "insightface>=0.7.3",
+    # Festgenagelt, nicht nur nach unten begrenzt (photovault#30): der
+    # Gesichts-Einbettungsraum haengt an dieser Version, und mit ">=" bekam
+    # jede Installation, was am Installationstag aktuell war -- heute 2.1,
+    # im Mai 1.0.1. 35.051 Vektoren und 119 Namen sind mit 1.0.1 gerechnet.
+    # Ein Wechsel auf 2.x erst nach dem Vergleich der Vektoren (#30).
+    "insightface==1.0.1",
     "open-clip-torch>=2.24",
     "Pillow>=10.0",
     "qdrant-client>=1.9",
