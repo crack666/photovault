@@ -1,13 +1,18 @@
 """Schmaler HTTP-Client fuer LiteLLM, wahlweise Ollama direkt (stdlib).
 
-Zwei Wege zu den Modellen, und welcher gilt, entscheidet allein der Schalter
-``PHOTOVAULT_LLM``:
+Zwei Wege zu den Modellen, und welcher gilt, entscheidet ``llm_mode()``:
 
 - ``litellm`` (Vorgabe): LiteLLM, Pools ``local`` / ``embedder``. Nur dort sitzt
   das GPU-Tor (photovault#19, ``ingest/gpu_tor.py``); auf crackdesk ist das
-  der Weg.
-- ``ollama``: Ollama direkt unter ``OLLAMA_URL``, fuer Installationen ohne
-  LiteLLM (photovault#26). Kennt kein GPU-Tor.
+  der Weg. Ein OpenAI-kompatibler Anbieter, im Setup-Wizard eingetragen,
+  geht denselben Weg.
+- ``ollama``: Ollama direkt, fuer Installationen ohne LiteLLM (photovault#26).
+  Kennt kein GPU-Tor.
+
+Ollama ist immer eine ausdrueckliche Wahl: entweder ``PHOTOVAULT_LLM=ollama``
+in der Umgebung, oder die Wahl "Ollama" im Setup-Wizard, die in
+``data/settings.json`` steht (``ingest/settings.py``). Vorrang wie ueberall:
+Umgebung > Datei > Vorgabe.
 
 Es gibt keinen stillen Rueckfall: ein gesetztes ``OLLAMA_URL`` allein schaltet
 nicht um (alte ``.env``-Dateien tragen es), und ein leeres ``LITELLM_URL``
@@ -33,20 +38,39 @@ DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 
 def llm_mode() -> str:
-    """``litellm`` (Vorgabe) oder ``ollama`` -- Ollama nur ausdruecklich gewaehlt."""
-    mode = (os.environ.get("PHOTOVAULT_LLM") or "").strip().lower()
-    return "ollama" if mode == "ollama" else "litellm"
+    """``litellm`` (Vorgabe) oder ``ollama`` -- Ollama nur ausdruecklich gewaehlt.
+
+    1. ``PHOTOVAULT_LLM`` gesetzt: das gilt, und nur ``ollama`` heisst Ollama.
+    2. ``LITELLM_URL`` / ``PHOTOVAULT_EMBED_URL`` gesetzt: ein Pool ist da.
+    3. Sonst die Wahl im Setup-Wizard: "Ollama" dort ist dasselbe wie
+       ``PHOTOVAULT_LLM=ollama`` (photovault#18). Keine Wahl: LiteLLM.
+    """
+    raw = (os.environ.get("PHOTOVAULT_LLM") or "").strip().lower()
+    if raw:
+        return "ollama" if raw == "ollama" else "litellm"
+    if (os.environ.get("LITELLM_URL") or "").strip() or (
+            os.environ.get("PHOTOVAULT_EMBED_URL") or "").strip():
+        return "litellm"
+    from ingest.settings import chosen_mode
+
+    return "ollama" if chosen_mode() == "ollama" else "litellm"
 
 
+#: Stand beim Import -- fuer alte Aufrufer und Tests. Wer wissen will, was
+#: *jetzt* gilt, fragt `caption_model()` / `embed_model()`: die lesen die
+#: Umgebung und darunter `data/settings.json`, das der Setup-Wizard schreibt.
+#: Ein Modellwechsel im Wizard darf keinen Neustart kosten.
+#:
 #: Mit LiteLLM Pool-Aliase (`local` / `embedder`): welches Gewicht dahinter
 #: liegt, steht nur in der LiteLLM-Config. Mit Ollama direkt Ollama-Tags; die
 #: Vorgaben sind die Modelle aus dem README, 2560 Dimensionen wie der Pool.
-_OLLAMA_AT_IMPORT = llm_mode() == "ollama"
+_OLLAMA_AT_IMPORT = (os.environ.get("PHOTOVAULT_LLM") or "").strip().lower() == "ollama"
 #: Ein leerer Wert (Compose reicht `${X:-}` durch) heisst: Vorgabe des Modus.
 CAPTION_MODEL = os.environ.get("PHOTOVAULT_CAPTION_MODEL") or (
     "qwen3.8:27b" if _OLLAMA_AT_IMPORT else "local")
 EMBED_MODEL = os.environ.get("PHOTOVAULT_EMBED_MODEL") or (
     "qwen3-embedding:4b" if _OLLAMA_AT_IMPORT else "embedder")
+#: Ebenso: Stand beim Import. Die Collection fragt `text_vector_size()`.
 TEXT_VECTOR_SIZE = 2560
 #: Kontextgroesse fuer Caption-Anfragen. ``0`` bedeutet: gar kein ``num_ctx``
 #: mitschicken -- dann gilt, was das Modellprofil selbst festlegt.
@@ -64,27 +88,64 @@ CAPTION_NUM_CTX = int(os.environ.get("PHOTOVAULT_CAPTION_NUM_CTX", "8192"))
 
 
 def litellm_url() -> str:
-    """Adresse von LiteLLM; ohne Angabe der lokale Proxy auf crackdesk.
+    """Adresse von LiteLLM bzw. des OpenAI-kompatiblen Anbieters.
 
-    Bis photovault#19 hiess ein leerer Wert „Ollama direkt“. Diesen stillen
-    Rueckfall gibt es nicht mehr: er ging am GPU-Tor vorbei. Ollama direkt
-    gibt es nur noch per ``PHOTOVAULT_LLM=ollama``.
+    Umgebung, sonst die im Wizard eingetragene (Modus ``openai``), sonst der
+    lokale Proxy auf crackdesk. Bis photovault#19 hiess ein leerer Wert
+    „Ollama direkt“. Diesen stillen Rueckfall gibt es nicht mehr: er ging am
+    GPU-Tor vorbei. Ollama direkt gibt es nur ueber ``llm_mode()``.
     """
-    return (
-        os.environ.get("LITELLM_URL")
-        or os.environ.get("PHOTOVAULT_EMBED_URL")
-        or DEFAULT_LITELLM_URL
-    ).rstrip("/")
+    from ingest.settings import pool_url
+
+    return (pool_url() or DEFAULT_LITELLM_URL).rstrip("/")
 
 
 def ollama_url() -> str:
-    """Adresse von Ollama, nur im Modus ``ollama`` benutzt."""
-    return (os.environ.get("OLLAMA_URL") or DEFAULT_OLLAMA_URL).rstrip("/")
+    """Adresse von Ollama, nur im Modus ``ollama`` benutzt.
+
+    ``OLLAMA_URL`` nagelt sie fest; sonst die im Wizard eingetragene (Modus
+    ``ollama``); sonst ``PHOTOVAULT_OLLAMA_DEFAULT`` -- die Compose setzt
+    darueber das Ollama aus dem Buendel, ohne dem Wizard die Wahl zu nehmen;
+    sonst der Rechner selbst.
+    """
+    from ingest.settings import wizard_ollama_url
+
+    raw = (
+        (os.environ.get("OLLAMA_URL") or "").strip()
+        or wizard_ollama_url()
+        or (os.environ.get("PHOTOVAULT_OLLAMA_DEFAULT") or "").strip()
+        or DEFAULT_OLLAMA_URL
+    )
+    return raw.rstrip("/")
+
+
+def ollama_url_from_env() -> bool:
+    """Nagelt die Umgebung die Ollama-Adresse fest? Dann kann der Wizard sie nicht aendern."""
+    return bool((os.environ.get("OLLAMA_URL") or "").strip())
 
 
 def llm_target() -> str:
     """Wohin Modellanfragen gerade gehen -- fuer Meldungen und die Jobs-Seite."""
     return ollama_url() if llm_mode() == "ollama" else litellm_url()
+
+
+def caption_model() -> str:
+    """Das Caption-Modell, wie es jetzt gilt; leer = Beschreibungen aus."""
+    from ingest.settings import caption_model as _resolve
+
+    return _resolve()
+
+
+def embed_model() -> str:
+    from ingest.settings import embed_model as _resolve
+
+    return _resolve()
+
+
+def text_vector_size() -> int:
+    from ingest.settings import text_vector_size as _resolve
+
+    return _resolve()
 
 
 def ollama_post(endpoint: str, payload: dict[str, Any], timeout: int = 180) -> dict[str, Any]:
@@ -106,8 +167,33 @@ def ollama_models() -> set[str] | None:
     return {str(m.get("name") or "") for m in data.get("models", [])}
 
 
+def ollama_tags(timeout: int = 5) -> list[dict[str, Any]]:
+    """Installierte Modelle mit Groesse, fuer den Setup-Wizard.
+
+    Anders als ``ollama_models``: Fehler kommen als Ausnahme, denn der
+    Wizard zeigt den Grund an.
+    """
+    with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=timeout) as resp:
+        data = json.loads(resp.read())
+    return list(data.get("models", []))
+
+
+def ollama_pull(name: str, timeout: int = 30):
+    """Ein Modell ziehen (Setup-Wizard); die offene Antwort streamt NDJSON.
+
+    Der Aufrufer liest sie zeilenweise und schliesst sie selbst.
+    """
+    body = json.dumps({"name": name, "stream": True}).encode("utf-8")
+    request = urllib.request.Request(f"{ollama_url()}/api/pull", data=body,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def litellm_headers() -> dict[str, str]:
-    key = os.environ.get("LITELLM_MASTER_KEY") or ""
+    from ingest.settings import pool_key
+
+    key = pool_key()
     if not key:
         return {}
     return {"Authorization": f"Bearer {key}"}
@@ -120,8 +206,8 @@ def apply_llm_env() -> None:
     `.env` geladen wird -- und LiteLLM lehnt jede Anfrage ab.
     Der Key kommt aus dem ai-stack-Hub, nicht aus diesem Repo.
 
-    Mit ``PHOTOVAULT_LLM=ollama`` gibt es nichts zu setzen: Modellnamen und
-    Kontextgroesse behalten ihre Ollama-Vorgaben.
+    Im Modus ``ollama`` gibt es nichts zu setzen: Modellnamen und
+    Kontextgroesse behalten ihre Ollama-Vorgaben bzw. die Wahl im Wizard.
     """
     if llm_mode() == "ollama":
         return

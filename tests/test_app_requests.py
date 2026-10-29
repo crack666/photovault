@@ -361,7 +361,10 @@ class TestQuellen:
         monkeypatch.setattr("ingest.spaces.photo_root", lambda: "")
         r = client.post("/api/sources/add", json={"path": str(ordner), "exclude": False})
         assert r.status_code == 200
-        assert quellen.read_text(encoding="utf-8") == f"{ordner}\n"
+        # Die neue Datei bekommt die erklaerenden Kopfzeilen des Wizards (#18);
+        # die einzige wirksame Zeile ist der Ordner.
+        zeilen = quellen.read_text(encoding="utf-8").splitlines()
+        assert [z for z in zeilen if z.strip() and not z.startswith("#")] == [str(ordner)]
 
 
 class TestKarte:

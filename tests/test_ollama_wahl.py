@@ -107,3 +107,96 @@ def test_jobs_seite_fragt_im_ollama_modus_ollama(monkeypatch):
     monkeypatch.setenv("OLLAMA_URL", "http://ollama.test:11434")
     msg = capab.missing(models=("egal:1b",), have_models=None)
     assert "http://ollama.test:11434" in msg
+
+
+# --------------------------------------------------------------------------
+# Die Wahl im Setup-Wizard (photovault#18) ist derselbe Schalter
+# --------------------------------------------------------------------------
+
+def _ohne_umgebung(monkeypatch):
+    for name in ("PHOTOVAULT_LLM", "LITELLM_URL", "PHOTOVAULT_EMBED_URL", "OLLAMA_URL",
+                 "PHOTOVAULT_CAPTION_MODEL", "PHOTOVAULT_EMBED_MODEL",
+                 "PHOTOVAULT_OLLAMA_DEFAULT", "LITELLM_MASTER_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _wizard_waehlt(**llm):
+    """Wie der Wizard speichert: ueber die Route, nicht an ihr vorbei."""
+    import api.capabilities as capab
+    from api.routes import setup as su
+
+    capab.forget()
+    su.save_llm(su.LlmRequest(**llm))
+
+
+def test_wizard_ollama_ist_dasselbe_wie_der_schalter(monkeypatch, calls):
+    """"Ollama" im Wizard schaltet llm_mode() um -- Captions, Textvektoren und
+    Aufwaermen gehen an das dort eingetragene Ollama, mit den dort gewaehlten
+    Modellen, nicht an einen leeren Pool."""
+    _ohne_umgebung(monkeypatch)
+    assert oc.llm_mode() == "litellm"          # vor der Wahl: Vorgabe
+
+    _wizard_waehlt(mode="ollama", url="http://nas.test:11434/",
+                   caption_model="gemma4:12b", embed_model="qwen3-embedding:4b")
+
+    assert oc.llm_mode() == "ollama"
+    assert oc.ollama_url() == "http://nas.test:11434"
+    assert oc.llm_target() == "http://nas.test:11434"
+    _all_paths(monkeypatch)
+    urls = [u for u, _ in calls]
+    assert urls == [
+        "http://nas.test:11434/api/chat",
+        "http://nas.test:11434/api/embed",
+        "http://nas.test:11434/api/generate",
+        "http://nas.test:11434/api/embed",
+    ]
+    assert calls[0][1]["model"] == "gemma4:12b"
+    assert calls[2][1]["model"] == "gemma4:12b"
+    assert calls[1][1]["model"] == "qwen3-embedding:4b"
+
+
+def test_wizard_ollama_ohne_adresse_nimmt_das_ollama_aus_dem_buendel(monkeypatch):
+    _ohne_umgebung(monkeypatch)
+    monkeypatch.setenv("PHOTOVAULT_OLLAMA_DEFAULT", "http://ollama:11434")
+    assert oc.llm_mode() == "litellm"           # das Buendel allein schaltet nicht um
+    _wizard_waehlt(mode="ollama", caption_model="gemma4:12b")
+    assert oc.llm_mode() == "ollama"
+    assert oc.ollama_url() == "http://ollama:11434"
+
+
+def test_umgebung_schlaegt_die_wahl_im_wizard(monkeypatch):
+    """Umgebung > Datei: auf crackdesk legt die .env LiteLLM fest, und eine
+    Datei daneben darf daran nichts aendern -- sonst ginge es am GPU-Tor vorbei."""
+    _ohne_umgebung(monkeypatch)
+    _wizard_waehlt(mode="ollama", caption_model="gemma4:12b")
+
+    monkeypatch.setenv("PHOTOVAULT_LLM", "litellm")
+    assert oc.llm_mode() == "litellm"
+    assert oc.caption_model() == "local"
+    monkeypatch.delenv("PHOTOVAULT_LLM")
+
+    monkeypatch.setenv("LITELLM_URL", "http://litellm.test:4000")
+    assert oc.llm_mode() == "litellm"
+    assert oc.litellm_url() == "http://litellm.test:4000"
+    assert oc.caption_model() == "local"
+
+
+def test_wizard_anbieter_und_aus_bleiben_auf_dem_litellm_weg(monkeypatch):
+    _ohne_umgebung(monkeypatch)
+    _wizard_waehlt(mode="openai", url="https://api.example.test/v1",
+                   caption_model="vision-x", embed_model="embed-x")
+    assert oc.llm_mode() == "litellm"
+    assert oc.litellm_url() == "https://api.example.test/v1"
+    assert oc.caption_model() == "vision-x"
+
+    _wizard_waehlt(mode="off", caption_model="gemma4:12b")
+    assert oc.llm_mode() == "litellm"
+    assert oc.caption_model() == ""
+    assert oc.embed_model() == ""
+
+
+def test_schalter_ollama_ohne_wizard_behaelt_die_readme_vorgaben(monkeypatch):
+    _ohne_umgebung(monkeypatch)
+    monkeypatch.setenv("PHOTOVAULT_LLM", "ollama")
+    assert oc.caption_model() == "qwen3.8:27b"
+    assert oc.embed_model() == "qwen3-embedding:4b"

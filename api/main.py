@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routes import (
@@ -21,6 +21,7 @@ from api.routes import (
     persons,
     photos,
     search,
+    setup,
     sources,
     trash,
 )
@@ -56,6 +57,7 @@ app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(capabilities.router, prefix="/api/capabilities", tags=["capabilities"])
 app.include_router(trash.router, prefix="/api/trash", tags=["trash"])
 app.include_router(atlas.router, prefix="/api/atlas", tags=["atlas"])
+app.include_router(setup.router, prefix="/api/setup", tags=["setup"])
 
 
 @app.get("/api/health")
@@ -68,7 +70,20 @@ def ui_index():
     index = WEB_DIR / "index.html"
     if not index.is_file():
         return {"status": "ok", "ui": False}
+    # Erstlauf: keine Quelle und nicht eingerichtet -> zum Wizard. Eine
+    # Installation mit Quellen kommt hier nie vorbei, ob der Wizard je lief
+    # oder nicht (api/routes/setup.py: needs_setup).
+    if (WEB_DIR / "setup.html").is_file() and setup.needs_setup():
+        return RedirectResponse("/setup", status_code=307)
     return FileResponse(index, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/setup")
+def ui_setup():
+    page = WEB_DIR / "setup.html"
+    if not page.is_file():
+        return {"status": "ok", "ui": False}
+    return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/jobs.html")

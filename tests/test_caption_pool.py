@@ -10,9 +10,14 @@ from ingest.captioner import Captioner, jpeg_b64, run_captions
 
 @pytest.fixture(autouse=True)
 def _ohne_litellm_env(monkeypatch):
-    """Ohne Angabe gilt der lokale Proxy -- einen Ollama-Rueckfall gibt es nicht mehr."""
+    """Ohne Angabe gilt der lokale Proxy -- einen Ollama-Rueckfall gibt es nicht mehr.
+
+    Mit benannten Modellen: seit die Namen zur Laufzeit aufgeloest werden
+    (Setup-Wizard), hiesse "nichts gesetzt" sonst "nichts vorzuwaermen"."""
     monkeypatch.delenv("LITELLM_URL", raising=False)
     monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
+    monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "local")
+    monkeypatch.setenv("PHOTOVAULT_EMBED_MODEL", "embedder")
 
 
 def _chat_answer(content):

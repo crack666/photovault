@@ -14,8 +14,8 @@ from typing import Any
 
 from ingest.gpu_tor import GpuBusy
 from ingest.ollama_client import (
-    CAPTION_MODEL,
     CAPTION_NUM_CTX,
+    caption_model,
     litellm_headers,
     litellm_url,
     llm_mode,
@@ -271,11 +271,15 @@ def grounded_text(context: dict[str, Any], caption: str | None = None) -> str:
 class Captioner:
     def __init__(
         self,
-        model: str = CAPTION_MODEL,
+        model: str | None = None,
         num_ctx: int | None = None,
     ):
-        """`num_ctx=0` schickt gar keine Kontextgroesse mit (kein Reload)."""
-        self._model = model
+        """`num_ctx=0` schickt gar keine Kontextgroesse mit (kein Reload).
+
+        Ohne `model` gilt, was Umgebung oder Setup jetzt sagen -- nicht der
+        Stand beim Import.
+        """
+        self._model = model or caption_model()
         self._num_ctx = num_ctx
         if llm_mode() == "ollama":
             logger.info("Captions via Ollama direkt %s model=%s (kein GPU-Tor)", llm_target(), self._model)

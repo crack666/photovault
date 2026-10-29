@@ -22,10 +22,33 @@ UNKNOWN = "?"
 
 #: Die Quellenliste, aus der sich die Wurzel ergibt. Dieselbe Datei, die auch
 #: der Ingest liest -- es soll nicht zwei Wahrheiten darüber geben, was zur
-#: Sammlung gehört.
+#: Sammlung gehört. Deshalb auch derselbe Schalter wie bei Jobs und
+#: Quellenliste: `PHOTOVAULT_SOURCES`, absolut oder relativ zur Repo-Wurzel.
+#: Vorher stand hier fest `<repo>/sources.txt`, und eine Installation mit
+#: verlegter Datei rechnete ihre Wurzel aus der falschen.
 SOURCES_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sources.txt"
 )
+
+
+def sources_file() -> str:
+    raw = os.environ.get("PHOTOVAULT_SOURCES", "").strip()
+    if not raw:
+        return SOURCES_FILE
+    if os.path.isabs(raw):
+        return raw
+    return os.path.join(os.path.dirname(SOURCES_FILE), raw)
+
+
+def browse_root() -> str:
+    """Wo der Ordnerwaehler anfaengt, solange es noch keine Quellen gibt.
+
+    Im Docker-Verbund haengen die Laufwerke des Rechners unter `/host`
+    (`PHOTOVAULT_BROWSE_ROOT`); ohne Quelle gibt es keine Bibliothekswurzel,
+    und `/` waere dann die Wahl zwischen `/etc` und `/proc`. Leer ohne
+    Umgebung: der lokale Betrieb bleibt, wie er war.
+    """
+    return _slash(os.environ.get("PHOTOVAULT_BROWSE_ROOT", "").strip()).rstrip("/")
 
 
 def photo_root() -> str:
@@ -49,7 +72,7 @@ def photo_root() -> str:
     try:
         from ingest.scanner import load_sources
 
-        include, _ = load_sources(SOURCES_FILE)
+        include, _ = load_sources(sources_file())
         return common_root([p.rstrip("/") for p in include])
     except Exception:
         return ""

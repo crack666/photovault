@@ -1,0 +1,21 @@
+# Was nicht ins Image gehoert. Ohne diese Datei kopierte `COPY . .` alles,
+# was im Ordner lag -- die .env mit Schluesseln, data/ mit Einstellungen und
+# Quellenliste, logs/, den Index-Export. Ein Image, das man weitergibt,
+# darf davon nichts enthalten.
+.git
+.env
+.env.*
+!.env.example
+data/
+logs/
+docker-compose.override.yml
+sources.txt
+_smoke_data/
+_*.py
+tests/
+docs/
+__pycache__/
+*.pyc
+.pytest_cache/
+web/static/atlas/atlas.json
+frontend/node_modules/

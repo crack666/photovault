@@ -826,12 +826,16 @@ class IngestPipeline:
         """
         from ingest.gpu_tor import GpuBusy
         from ingest.ollama_client import (
-            CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, litellm_headers,
-            litellm_url, llm_mode, ollama_post, post_json,
+            CAPTION_NUM_CTX, caption_model, embed_model, litellm_headers,
+            litellm_url, llm_mode, post_json,
         )
 
+        CAPTION_MODEL, EMBED_MODEL = caption_model(), embed_model()
+        if not CAPTION_MODEL:
+            logger.info("Kein Caption-Modell gewaehlt -- nichts vorzuwaermen.")
+            return
         if llm_mode() == "ollama":
-            self._warm_ollama()
+            self._warm_ollama(CAPTION_MODEL, EMBED_MODEL)
             return
 
         started = time.time()
@@ -870,15 +874,16 @@ class IngestPipeline:
         except Exception as e:
             logger.warning("Could not re-pin %s: %s", EMBED_MODEL, e)
 
-    def _warm_ollama(self) -> None:
-        """Dasselbe Aufwaermen mit Ollama direkt (``PHOTOVAULT_LLM=ollama``).
+    def _warm_ollama(self, CAPTION_MODEL: str, EMBED_MODEL: str) -> None:
+        """Dasselbe Aufwaermen mit Ollama direkt (``PHOTOVAULT_LLM=ollama``
+        oder die Wahl "Ollama" im Setup-Wizard).
 
         Hier laesst sich die Kontextgroesse pro Anfrage setzen und das Modell
         anheften (`keep_alive: -1`); erst das grosse Modell, dann den Embedder
         zurueckholen, aus demselben Grund wie oben.
         """
         from ingest.captioner import caption_options
-        from ingest.ollama_client import CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL, ollama_post
+        from ingest.ollama_client import CAPTION_NUM_CTX, ollama_post
 
         started = time.time()
         options = dict(caption_options())
@@ -894,6 +899,8 @@ class IngestPipeline:
             f"num_ctx={CAPTION_NUM_CTX}" if CAPTION_NUM_CTX else "Kontext laut Profil",
             time.time() - started,
         )
+        if not EMBED_MODEL:
+            return
         try:
             ollama_post("embed", {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1}, timeout=300)
         except Exception as e:
