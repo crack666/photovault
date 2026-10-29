@@ -197,13 +197,21 @@ class TestTagesuebergang:
         write_capture_time(p, hit[1], source="filename+mtime", dry_run=False)
         assert read_capture_time(p) == datetime(2022, 11, 18, 0, 15, 0)
 
-    def test_tag_der_nicht_zum_namen_passt_wird_nicht_geschrieben(self):
-        from tools.exif_repair import candidate
+    def test_tag_der_nicht_zum_namen_passt_bekommt_mittag(self, tmp_path):
+        """Ortszeit 2022-07-05 00:30, Name sagt 2022-07-04: die Uhr gehoert nicht
+        dazu. Statt nichts: 12:00:00 Ortszeit am Tag des Namens, so vermerkt."""
+        from tools.exif_repair import NOON_SOURCE, candidate
 
-        # Ortszeit 2022-07-05 00:30, Name sagt 2022-07-04: Uhr gehoert nicht dazu.
-        assert candidate({"file_path": "/x/IMG-20220704-WA0001.jpg",
-                          "taken_at": "2022-07-04T22:30:00Z", "date": "2022-07-04",
-                          "date_source": "filename"}) is None
+        mtime = datetime(2022, 7, 4, 22, 30, 0, tzinfo=UTC)
+        p = _jpeg(tmp_path / "IMG-20220704-WA0001.jpg", mtime)
+        hit = candidate({"file_path": p, "taken_at": "2022-07-04T22:30:00Z",
+                         "date": "2022-07-04", "date_source": "filename"})
+        assert hit == (p, datetime(2022, 7, 4, 12, 0, 0), NOON_SOURCE)
+        write_capture_time(p, hit[1], source=hit[2], dry_run=False)
+        assert read_capture_time(p) == datetime(2022, 7, 4, 12, 0, 0)
+        assert _offset(p) is None, "Mittag ist Ortszeit, kein umgerechneter Zeitpunkt"
+        assert _note(p)["src"] == "filename+noon"
+        assert ExifExtractor().extract(p)["date_source"] == "filename"
 
     def test_utc_tag_passt_ortszeit_nicht_dann_bleibt_mitternacht(self, tmp_path):
         """Name 2022-07-04, mtime 2022-07-04 22:30 UTC = 07-05 00:30 Berlin."""
@@ -296,12 +304,40 @@ class TestKorrekturSkript:
         again = run([str(tmp_path)], apply=True, workers=1)
         assert again["schon im neuen Format"] == 1
 
-    def test_tageswechsel_bleibt_fuer_den_menschen(self, tmp_path):
-        from tools.exif_tz_fix import classify
+    def test_tageswechsel_mit_tag_aus_dem_namen_wird_mittag(self, tmp_path):
+        """Name 2022-07-04, Uhr 22:30 UTC = 07-05 00:30 Berlin: die Uhr gehoert
+        nicht zum Tag des Namens. Der Tag bleibt, die Uhr wird 12:00 Ortszeit."""
+        from tools.exif_tz_fix import DONE, NOON, classify, run
 
-        p = self._alt_geschrieben(tmp_path / "IMG-20220704-WA0001.jpg",
-                                  datetime(2022, 7, 4, 22, 30, 0, tzinfo=UTC))
-        assert classify(p)[0] == "Tag wuerde wechseln (von Hand)"
+        utc = datetime(2022, 7, 4, 22, 30, 0, tzinfo=UTC)
+        p = self._alt_geschrieben(tmp_path / "IMG-20220704-WA0001.jpg", utc)
+        verdict, when, src = classify(p)
+        assert (verdict, when, src) == (NOON, datetime(2022, 7, 4, 12, 0, 0), "filename+noon")
+
+        before = open(p, "rb").read()
+        assert run([str(tmp_path)], apply=False, workers=1)[NOON] == 1
+        assert open(p, "rb").read() == before, "Trockenlauf aendert kein Byte"
+
+        assert run([str(tmp_path)], apply=True, workers=1)[DONE] == 1
+        assert read_capture_time(p) == datetime(2022, 7, 4, 12, 0, 0)
+        assert _offset(p) is None
+        assert _note(p)["src"] == "filename+noon"
+        assert abs(os.path.getmtime(p) - utc.timestamp()) < 1, "Dateizeit bleibt"
+        assert run([str(tmp_path)], apply=True, workers=1)["schon im neuen Format"] == 1
+
+    def test_tageswechsel_ohne_namensdatum_bleibt_fuer_den_menschen(self, tmp_path):
+        from tools.exif_tz_fix import DAY_CHANGE, classify
+
+        utc = datetime(2022, 7, 4, 22, 30, 0, tzinfo=UTC)
+        # Ordnerdatum: der Tag selbst ist geraten -- kein Mittag.
+        folder = self._alt_geschrieben(tmp_path / "scan.jpg", utc, src="folder")
+        assert classify(folder)[0] == DAY_CHANGE
+        # Name traegt eine eigene Uhr: kein Mittag darueber.
+        clock = self._alt_geschrieben(tmp_path / "IMG_20220704_235900.jpg", utc)
+        assert classify(clock)[0] == DAY_CHANGE
+        # Name nennt einen anderen Tag als den geschriebenen: Herkunft unklar.
+        other = self._alt_geschrieben(tmp_path / "IMG-20220701-WA0001.jpg", utc)
+        assert classify(other)[0] == DAY_CHANGE
 
     def test_kamera_und_fremde_dateien_bleiben(self, tmp_path):
         from tools.exif_tz_fix import classify
