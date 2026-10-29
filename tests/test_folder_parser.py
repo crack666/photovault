@@ -63,3 +63,27 @@ class TestFolderParser:
         result = self.parser.parse("/photos/Silvester 2012-2013/DSCF0042.jpg")
         assert result["date_hint"] == "2012"
         assert result["date_hint_source"] == "folder_name"
+
+    # --- #47: das Muster mit Trennzeichen griff mitten in eine Uhrzeit -------
+
+    def test_uhrzeit_im_namen_wird_kein_jahr(self):
+        """Aus ...1739_20_00_03_1 wurde das Jahr 3920, Monat 00 (#47)."""
+        result = self.parser.parse("/photos/Handy/VID_20250509_173920_00_031.mp4")
+        assert result["date_hint"] == "2025-05-09"
+        assert result["date_hint_source"] == "filename"
+
+    def test_screenshot_mit_zwei_daten_nimmt_das_vordere(self):
+        result = self.parser.parse(
+            "/photos/Handy/VID_20250508_124351_00_017_2025-05-08_22-08-49_screenshot.jpg")
+        assert result["date_hint"] == "2025-05-08"
+
+    def test_vorderes_datum_gewinnt_auch_gegen_die_getrennte_schreibweise(self):
+        """Kopien und Exporte haengen ihr eigenes Datum hinten an."""
+        result = self.parser.parse("/photos/Handy/IMG_20190315_101500_export_2024-01-02.jpg")
+        assert result["date_hint"] == "2019-03-15"
+
+    def test_getrennte_schreibweise_nur_mit_gueltigen_werten(self):
+        for name in ("3920_00_03.jpg", "2019-13-01.jpg", "2019-02-00.jpg", "12019-03-15.jpg",
+                     "2019-03-151.jpg"):
+            result = self.parser.parse(f"/photos/Misc/{name}")
+            assert result["date_hint"] is None, name
