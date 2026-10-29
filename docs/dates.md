@@ -185,11 +185,18 @@ Sicherheiten, jede gegen einen konkreten Schaden:
 
 - Standard ist Trockenlauf. `--apply` ist absichtlich extra.
 - `date_source=exif` wird nie angefasst. Eine Kamera bleibt eine Kamera.
-- Mitternacht im Index heißt „Uhr unbekannt“ — nichts schreiben, keine
-  erfundene Präzision.
+- Mitternacht im Index heißt „Uhr unbekannt“. Kennt der **Dateiname** den
+  Tag, wird dann **12:00:00 Ortszeit** geschrieben (`src=filename+noon`),
+  ebenso, wenn die Dateizeit in Ortszeit auf einen anderen Tag fällt als der
+  Name: Mittag ist erkennbar gesetzt, liegt in jeder Zone auf demselben Tag
+  und sortiert den Tag richtig ein. Nicht bei Ordnerdaten (`folder`, oft nur
+  ein Jahr als 1. Januar — da wäre schon der Tag erfunden) und nicht bei
+  Namen mit eigener Uhrzeit (`20130515_223527`). Der Index bleibt bei
+  Mitternacht (Issue #43).
 - Herkunftsnotiz `photovault:src=filename+mtime` (oder `folder+mtime`,
   `file_time`). `+mtime` heißt: nur der Tag kommt aus dem Namen, die Uhrzeit
-  aus der Dateizeit — der Name kennt keine Uhr. `src=filename` ohne Zusatz
+  aus der Dateizeit — der Name kennt keine Uhr. `+noon`: Tag aus dem Namen,
+  Uhr gesetzt auf 12:00 Ortszeit. `src=filename` ohne Zusatz
   hieße „alles aus dem Namen“. Der nächste Ingest liest die Notiz und gibt
   nicht Vertrauen 1,0 wie bei einer Messung; `date_source` bleibt `filename`.
 - **Ortszeit, nicht UTC.** Der Index hält die Uhr in UTC (`…Z`).
@@ -213,9 +220,11 @@ python -m tools.exif_repair --apply --limit 200
 
 Vor dem Fix für #43 wurde die UTC-Uhr unverändert geschrieben (Notiz
 `src=filename;mtime=…` ohne `+mtime`, `DateTimeOriginal` = Notiz-mtime).
-Diese Dateien korrigiert `tools/exif_tz_fix.py` — Trockenlauf zählt, erst
-`--apply` schreibt; Dateien, bei denen die Ortszeit auf einen anderen Tag
-fiele, bleiben liegen und werden gelistet:
+Diese Dateien korrigiert `tools/exif_tz_fix.py` — Trockenlauf (`--dry-run`,
+Standard) zählt, erst `--apply` schreibt. Fiele die Ortszeit auf einen
+anderen Tag, bekommt eine Datei mit `src=filename`, deren Name genau diesen
+Tag und keine eigene Uhr trägt, 12:00:00 Ortszeit (`src=filename+noon`);
+alle übrigen bleiben liegen und werden gelistet:
 
 ```bash
 TZ=Europe/Berlin python -m tools.exif_tz_fix /mnt/photo --sample 5
@@ -240,7 +249,9 @@ Importnacht ist. 306 gilt nur, wenn Original fehlt.
 `tests/test_probe_dates.py`: die Probe-Datei liest dieselben Tags.
 
 `tests/test_exif_repair.py`: Kamera-EXIF ist kein Kandidat; WhatsApp mit
-Dateiname und Uhrzeit ist einer; Mitternacht nicht.
+Dateiname und Uhrzeit ist einer; Mitternacht mit Tag aus dem Namen wird
+12:00 (`+noon`), mit Ordnerdatum oder Namens-Uhr nicht; ein Lauf auf einer
+temporären Datei schreibt im Trockenlauf kein Byte.
 
 `tests/test_exif_timezone.py`: Sommer und Winter in `Europe/Berlin`,
 Tagesübergang um 00:30, Gegenprobe auf den Zeitpunkt, `+mtime` in der Notiz,

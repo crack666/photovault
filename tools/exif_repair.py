@@ -15,6 +15,11 @@ mit `OffsetTimeOriginal` -- das erledigt `write_capture_time`, sobald der Wert
 eine Zone traegt (Issue #43). Die Herkunftsnotiz sagt `src=filename+mtime`,
 wenn nur der Tag aus dem Namen stammt und die Uhr aus der Dateizeit.
 
+Kennt der Dateiname nur den Tag und faellt die Dateizeit in Ortszeit nicht
+auf diesen Tag (oder ist gar keine Uhr bekannt), wird 12:00:00 Ortszeit
+geschrieben, mit `src=filename+noon`: Mittag liegt in jeder Zeitzone auf
+demselben Tag, Mitternacht kippt beim naechsten Umrechnen auf den Vortag.
+
 Sicherheiten: Trockenlauf ist der Standard; vorhandene Aufnahmezeiten werden
 nie angetastet; jeder geschriebene Wert traegt eine Herkunftsnotiz und ist
 ueber `ingest.exif_writer.revert` umkehrbar.
@@ -29,9 +34,10 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from ingest.exif_writer import (
     WRITABLE_SUFFIXES,
@@ -51,6 +57,19 @@ BATCH = 256
 #: `file_time` nennt die Dateizeit schon selbst; `accepted`/`offset` sind
 #: ganze Zeitpunkte.
 CLOCK_FROM_MTIME = frozenset({"filename", "folder", "folder_name", "folder_json", "album"})
+
+
+#: Notiz fuer "Tag aus dem Namen, Uhr unbekannt, 12:00:00 Ortszeit gesetzt".
+NOON_SOURCE = "filename+noon"
+NOON = time(12, 0, 0)
+
+#: Ein Name, der selbst eine Uhrzeit traegt (`20130515_223527`). Dem wird
+#: kein Mittag untergeschoben -- er kennt mehr als den Tag; ob seine Uhr
+#: gilt, ist eine eigene Frage.
+_RE_NAME_WITH_CLOCK = re.compile(
+    r"(?<!\d)(?:19|20)\d{2}[-_]?(?:0[1-9]|1[0-2])[-_]?(?:0[1-9]|[12]\d|3[01])"
+    r"[-_ T]?(?:[01]\d|2[0-3])[-_.:]?[0-5]\d[-_.:]?[0-5]\d(?!\d)"
+)
 
 
 def note_source(date_source: str | None) -> str:
@@ -97,24 +116,50 @@ def in_folders(payload: dict, folders: set[str] | None) -> bool:
     return (payload.get("folder_name") or "") in folders
 
 
-def candidate(payload: dict) -> tuple[str, datetime] | None:
-    """Kommt dieses Foto in Frage? Gibt `(pfad, zeitstempel)` zurueck."""
+def noon_of(path: str, payload: dict) -> datetime | None:
+    """12:00:00 Ortszeit am Tag aus dem Dateinamen -- wo das die ehrliche Uhr ist.
+
+    Nur fuer `date_source=filename` mit vollem Tag, und nur, wenn der Name
+    keine eigene Uhrzeit traegt. Ein Ordnerdatum (`folder`, oft nur ein Jahr
+    als 1. Januar) bekommt keinen Mittag: dort waere schon der Tag erfunden.
+    Ohne Zone, also Ortszeit; der Schreiber setzt dann kein Offset.
+    """
+    if payload.get("date_source") != "filename":
+        return None
+    day = str(payload.get("date") or "")
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        return None
+    if _RE_NAME_WITH_CLOCK.search(os.path.basename(path)):
+        return None
+    return datetime.combine(d, NOON)
+
+
+def candidate(payload: dict) -> tuple[str, datetime, str] | None:
+    """Kommt dieses Foto in Frage? Gibt `(pfad, zeitstempel, herkunft)` zurueck.
+
+    Die Uhr kommt aus der Dateizeit, wenn sie in Ortszeit auf den Tag des
+    Namens faellt. Sonst -- oder ganz ohne Uhr (Mitternacht im Index) -- gilt
+    bei einem Tag aus dem Dateinamen 12:00:00 Ortszeit (`noon_of`), bei allen
+    anderen Herkuenften wird nichts geschrieben.
+    """
     path = payload.get("file_path")
     if not path or os.path.splitext(path)[1].lower() not in WRITABLE_SUFFIXES:
-        return None
-    when = _parse_taken_at(payload.get("taken_at"))
-    if when is None:
         return None
     # Aus EXIF stammende Zeiten stehen schon in der Datei.
     if payload.get("date_source") == "exif":
         return None
+    when = _parse_taken_at(payload.get("taken_at"))
     # Der Tag in der Datei muss der Tag des Namens sein. Nahe Mitternacht
-    # liegt UTC auf dem Vortag; in Ortszeit muss es stimmen, sonst nichts
-    # schreiben.
+    # liegt UTC auf dem Vortag; in Ortszeit muss es stimmen.
     day = str(payload.get("date") or "")
-    if len(day) == 10 and when.tzinfo is not None and to_local(when).date().isoformat() != day:
-        return None
-    return path, when
+    off_day = (when is not None and len(day) == 10 and when.tzinfo is not None
+               and to_local(when).date().isoformat() != day)
+    if when is None or off_day:
+        noon = noon_of(path, payload)
+        return (path, noon, NOON_SOURCE) if noon is not None else None
+    return path, when, note_source(payload.get("date_source"))
 
 
 def preview(client, collection: str = "photos", limit: int | None = None,
@@ -135,15 +180,17 @@ def preview(client, collection: str = "photos", limit: int | None = None,
             payload = point.payload or {}
             if not in_folders(payload, folders):
                 continue
-            if candidate(payload) is None:
+            hit = candidate(payload)
+            if hit is None:
                 continue
-            by_src[payload.get("date_source") or "abgeleitet"] += 1
+            by_src[hit[2]] += 1
             by_folder[payload.get("folder_name") or "?"] += 1
         if offset is None or (limit and seen >= limit):
             break
     schranke = f", eingeschraenkt auf {len(folders)} Ordner" if folders else ""
     print(f"{seen} Fotos im Index, {sum(by_src.values())} ohne Kameradatum "
-          f"(date_source != exif, Uhrzeit bekannt, JPEG/TIFF{schranke}).")
+          f"(date_source != exif, Uhrzeit bekannt oder Tag aus dem Namen, "
+          f"JPEG/TIFF{schranke}).")
     print("Herkunft der Ableitung:")
     for k, n in by_src.most_common():
         print(f"  {n:6d}  {k}")
@@ -207,8 +254,7 @@ def run(client, collection: str = "photos", apply: bool = False,
             if hit is None:
                 tally["uebersprungen"] += 1
                 continue
-            path, when = hit
-            work.append((path, when, note_source(payload.get("date_source"))))
+            work.append(hit)
 
         if work:
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -232,8 +278,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qdrant-url", default=os.environ.get("QDRANT_URL", "http://localhost:6333"))
     parser.add_argument("--collection", default=os.environ.get("PHOTOVAULT_COLLECTION", "photos"))
-    parser.add_argument("--apply", action="store_true",
-                        help="Tatsaechlich schreiben. Ohne das nur berichten.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", default=True,
+                      help="Nur berichten, nichts schreiben (Standard).")
+    mode.add_argument("--apply", action="store_true",
+                      help="Tatsaechlich schreiben. Ohne das nur berichten.")
     parser.add_argument("--preview", action="store_true",
                         help="Nur zaehlen (Index), Dateien nicht oeffnen")
     parser.add_argument("--folder", action="append", dest="folders", metavar="NAME",

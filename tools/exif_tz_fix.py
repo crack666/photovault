@@ -19,8 +19,12 @@ Dateizeit stammt und in UTC geschrieben wurde. Alles andere bleibt liegen:
 - Notiz schon im neuen Format (`+mtime`) oder mit `OffsetTimeOriginal`
 - `DateTimeOriginal` ungleich Notiz-mtime -- Herkunft der Uhr unklar
 - Ortszeit laege auf einem anderen Tag als der geschriebene (nahe
-  Mitternacht) -- dann gehoert die Uhr nicht zu dem Tag aus dem Namen;
-  das ist eine Entscheidung fuer einen Menschen, kein Umrechnen
+  Mitternacht) -- dann gehoert die Uhr nicht zu dem Tag aus dem Namen.
+  Bei `src=filename`, wenn der Name genau diesen Tag und keine eigene Uhr
+  traegt, wird 12:00:00 Ortszeit an diesem Tag geschrieben
+  (`src=filename+noon`, wie `exif_repair` es heute tut). Alles andere
+  (Ordnerdatum, Name mit Uhrzeit, Name nennt einen anderen Tag) bleibt fuer
+  einen Menschen liegen.
 
 Korrigiert wird mit `write_capture_time` (Ortszeit + `OffsetTimeOriginal`,
 Dateizeit bleibt, Gegenprobe auf den Zeitpunkt). Der `prev`-Eintrag der Notiz
@@ -30,6 +34,7 @@ bleibt der urspruengliche -- unser eigener Fehler wird nicht zum
 Der Index muss danach nicht nachgezogen werden: `taken_at` war und bleibt UTC.
 
     python -m tools.exif_tz_fix /mnt/photo                    # Trockenlauf, zaehlen
+    python -m tools.exif_tz_fix /mnt/photo --dry-run          # dasselbe, ausdruecklich
     python -m tools.exif_tz_fix /mnt/photo --sample 5         # mit Beispielen
     python -m tools.exif_tz_fix /mnt/photo --apply --limit 50 # erst eine Handvoll
     python -m tools.exif_tz_fix /mnt/photo --apply
@@ -59,7 +64,7 @@ from ingest.exif_writer import (
 )
 from ingest.localtime import to_local, zone
 from ingest.netfs import retry_io
-from tools.exif_repair import CLOCK_FROM_MTIME, note_source
+from tools.exif_repair import CLOCK_FROM_MTIME, NOON_SOURCE, note_source, noon_of
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +73,9 @@ logger = logging.getLogger(__name__)
 FIXABLE = CLOCK_FROM_MTIME | {"file_time", "abgeleitet"}
 
 FIX = "wird korrigiert"
+NOON = "wird auf 12:00 Ortszeit gesetzt"
 DONE = "korrigiert"
+DAY_CHANGE = "Tag wuerde wechseln (von Hand)"
 
 
 def classify(path: str) -> tuple[str, datetime | None, str]:
@@ -107,8 +114,25 @@ def classify(path: str) -> tuple[str, datetime | None, str]:
     if local == written:
         return "Ortszeit = UTC", None, ""
     if src != "file_time" and local.date() != written.date():
-        return "Tag wuerde wechseln (von Hand)", None, ""
+        noon = _noon_from_name(path, src, written)
+        if noon is None:
+            return DAY_CHANGE, None, ""
+        return NOON, noon, NOON_SOURCE
     return FIX, when, note_source(src)
+
+
+def _noon_from_name(path: str, src: str, written: datetime) -> datetime | None:
+    """12:00 Ortszeit am Tag des Namens -- nur, wenn der Name genau den
+    geschriebenen Tag nennt (der alte Normalizer hat den UTC-Tag mit dem Namen
+    verglichen, also muss das so sein) und keine eigene Uhr traegt."""
+    if src != "filename":
+        return None
+    from ingest.folder_parser import FolderParser
+
+    hint = FolderParser().parse(path).get("date_hint") or ""
+    if hint != written.date().isoformat():
+        return None
+    return noon_of(path, {"date_source": "filename", "date": hint})
 
 
 def _walk(roots: list[str]):
@@ -130,7 +154,7 @@ def _process(path: str, apply: bool) -> tuple[str, str, str]:
     except Exception as e:
         logger.debug("nicht lesbar (%s): %s", path, e)
         return path, "nicht lesbar", ""
-    if verdict != FIX or when is None:
+    if verdict not in (FIX, NOON) or when is None:
         return path, verdict, ""
     try:
         out = retry_io(
@@ -147,7 +171,7 @@ def _process(path: str, apply: bool) -> tuple[str, str, str]:
     detail = f"{out.get('previous')} -> {out.get('new')} {out.get('offset') or ''}".strip()
     if out["written"]:
         return path, DONE, detail
-    return path, (FIX if not apply else out["reason"]), detail
+    return path, (verdict if not apply else out["reason"]), detail
 
 
 def run(roots: list[str], apply: bool = False, workers: int = 8,
@@ -171,8 +195,9 @@ def run(roots: list[str], apply: bool = False, workers: int = 8,
         logger.info("   %-34s %6d", key, n)
         for line in examples.get(key, []):
             logger.info("        %s", line)
-    if not apply and tally.get(FIX):
-        logger.info("Mit --apply werden diese %d Dateien geaendert.", tally[FIX])
+    todo = tally.get(FIX, 0) + tally.get(NOON, 0)
+    if not apply and todo:
+        logger.info("Mit --apply werden diese %d Dateien geaendert.", todo)
     return tally
 
 
@@ -180,8 +205,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("roots", nargs="+", help="Ordner oder Dateien")
-    parser.add_argument("--apply", action="store_true",
-                        help="Tatsaechlich schreiben. Ohne das nur zaehlen.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", default=True,
+                      help="Nur zaehlen, nichts schreiben (Standard).")
+    mode.add_argument("--apply", action="store_true",
+                      help="Tatsaechlich schreiben. Ohne das nur zaehlen.")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--limit", type=int, default=None,
                         help="Hoechstens so viele Dateien ansehen")
