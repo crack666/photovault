@@ -1,24 +1,31 @@
 """Gesichter auf gedrehten Fotos neu erkennen, Namen per Kasten-Ueberlappung mitnehmen.
 
 Bis photovault#37 sah der Detektor das rohe Bild, die Oberflaeche das nach
-EXIF-Ausrichtung gedrehte. Auf Fotos mit Ausrichtung != 1 sitzen die
-gespeicherten Kaesten deshalb in Roh-Koordinaten -- der Zuschnitt zeigte einen
-Zaun statt eines Kindes, und ein kopfstehendes Gesicht fand der Detektor oft
-gar nicht. Seit dem Fix (#38) dreht der Ingest vorher; die schon indizierten
-Fotos (Stichprobe 27.10.2026: ~3,7 % der Fotos mit Gesichtern, ~425) tragen
-aber noch die alten Kaesten.
+EXIF-Ausrichtung gedrehte. Auf Fotos mit Ausrichtung != 1 konnten die
+gespeicherten Kaesten deshalb in Roh-Koordinaten liegen -- der Zuschnitt zeigte
+einen Zaun statt eines Kindes, und ein kopfstehendes Gesicht fand der Detektor
+oft gar nicht. Seit dem Fix (#38) dreht der Ingest vorher.
+
+Ob ein Foto rohe Kaesten traegt, steht nirgends -- und die Annahme "alle
+gedrehten Fotos" war falsch: der Trockenlauf vom 29.10.2026 fand die Kaesten
+auf allen 945 solchen Fotos schon aufrecht. Deshalb wird es je Foto gemessen
+(`choose_frame`). Was bleibt, sind Fotos, auf denen frueher kein Gesicht
+gefunden wurde und heute eines.
 
 Was der Lauf je Foto tut:
 
 1. Ausrichtung aus der Datei lesen (nur der Kopf). 1 oder keine: nichts tun.
 2. Gesichter neu erkennen -- auf dem aufrechten Bild, wie der Ingest heute.
-3. Die alten Kaesten aus Roh- in aufrechte Koordinaten umrechnen und mit den
-   neuen per IoU (Ueberlappung) paaren, gierig nach groesster Ueberlappung,
-   jedes Gesicht hoechstens einmal. Ab `--min-iou` (Vorgabe 0,3) wandert
+3. Die alten Kaesten einmal so, wie sie sind, und einmal aus Roh- in aufrechte
+   Koordinaten umgerechnet mit den neuen per IoU (Ueberlappung) paaren,
+   gierig nach groesster Ueberlappung, jedes Gesicht hoechstens einmal. Die
+   Lesart mit mehr Paaren gilt. Ab `--min-iou` (Vorgabe 0,3) wandert
    `person_id`/`person_name` auf das neue Gesicht.
-4. Neue Gesichter schreiben, die alten Punkte dieses Fotos loeschen, auf dem
-   Foto `face_count`, `face_boxes`, `person_ids`/`person_names` neu setzen
-   und `face_orientation_fixed` stempeln (ein zweiter Lauf ueberspringt es).
+4. Decken sich alte und neue Kaesten eins zu eins, wird nur gestempelt.
+   Sonst: neue Gesichter schreiben, die alten Punkte dieses Fotos loeschen,
+   auf dem Foto `face_count`, `face_boxes`, `person_ids`/`person_names` neu
+   setzen. Beides stempelt `face_orientation_fixed` (ein zweiter Lauf
+   ueberspringt das Foto).
 
 Benannte Gesichter sind der heikle Teil. Findet ein benanntes altes Gesicht
 keinen Partner, verliert es seinen Namen -- solche Fotos werden **nicht**
@@ -136,6 +143,36 @@ def pair_by_iou(old: list[list[int]], new: list[list[int]],
     return pairs
 
 
+#: Die gespeicherten Kaesten liegen schon aufrecht / noch roh.
+AS_IS = "schon aufrecht"
+RAW = "roh"
+
+
+def choose_frame(stored: list[list[int]], new: list[list[int]], orientation: int,
+                 width: int, height: int, min_iou: float = MIN_IOU,
+                 ) -> tuple[str, dict[int, tuple[int, float]]]:
+    """In welchem Raum liegen die gespeicherten Kaesten? `(raum, paare)`.
+
+    Nicht jedes Foto mit Ausrichtung != 1 traegt rohe Kaesten: der
+    Trockenlauf vom 29.10.2026 fand auf allen 945 solchen Fotos die Kaesten
+    schon aufrecht (752 von 752 gepaart, 408 Fotos pixelgleich), gedreht
+    passten nur 69. Blind gedreht fielen 8 Namen auf 7 Fotos still auf das
+    falsche Gesicht. Deshalb wird je Foto gemessen: beide Lesarten gegen die
+    neue Erkennung paaren, gedreht wird nur, wenn das mehr Paare ergibt
+    (bei Gleichstand die groessere Summe der Ueberlappung).
+    """
+    as_is = pair_by_iou(stored, new, min_iou)
+    turned = pair_by_iou([upright_box(b, orientation, width, height) for b in stored],
+                         new, min_iou)
+
+    def score(pairs):
+        return len(pairs), sum(s for _, s in pairs.values())
+
+    if score(turned) > score(as_is):
+        return RAW, turned
+    return AS_IS, as_is
+
+
 # --------------------------------------------------------------------------
 # Ein Foto
 # --------------------------------------------------------------------------
@@ -168,6 +205,10 @@ class Plan:
     named_old: int = 0
     transferred: list[tuple[str, float]] = field(default_factory=list)
     lost: list[str] = field(default_factory=list)
+    #: In welchem Raum die gespeicherten Kaesten lagen (`choose_frame`).
+    frame: str = ""
+    #: Alte und neue Kaesten decken sich eins zu eins: nur stempeln.
+    stamp_only: bool = False
 
 
 def old_faces(client, faces_collection: str, photo_id: str) -> list:
@@ -212,14 +253,24 @@ def plan_photo(client, embedder, point, faces_collection: str = "faces",
     plan.new_faces = [dict(f) for f in detected]
     plan.old_ids = [str(p.id) for p in old]
 
-    named = [p for p in old if (p.payload or {}).get("person_id")]
-    plan.named_old = len(named)
-    old_boxes = [upright_box((p.payload or {}).get("box") or [0, 0, 0, 0],
-                             orientation, width, height) for p in named]
-    pairs = pair_by_iou(old_boxes, [f.get("box") or [0, 0, 0, 0] for f in plan.new_faces],
-                        min_iou)
-    for i, p in enumerate(named):
+    # Alle alten Gesichter paaren, nicht nur die benannten: sonst greift ein
+    # benanntes nach dem Kasten seines unbenannten Nachbarn.
+    stored = [(p.payload or {}).get("box") or [0, 0, 0, 0] for p in old]
+    new_boxes = [f.get("box") or [0, 0, 0, 0] for f in plan.new_faces]
+    plan.frame, pairs = choose_frame(stored, new_boxes, orientation, width, height, min_iou)
+    plan.named_old = sum(1 for p in old if (p.payload or {}).get("person_id"))
+    if plan.frame == AS_IS and len(pairs) == len(old) == len(plan.new_faces):
+        # Jeder alte Kasten hat seinen neuen, keiner kommt dazu: der Index
+        # stimmt schon, nur der Stempel fehlt. Nichts neu schreiben.
+        plan.stamp_only = True
+        plan.transferred = [((p.payload or {}).get("person_name")
+                             or (p.payload or {}).get("person_id"), pairs[i][1])
+                            for i, p in enumerate(old) if (p.payload or {}).get("person_id")]
+        return "Kaesten stimmen schon", plan
+    for i, p in enumerate(old):
         pl = p.payload or {}
+        if not pl.get("person_id"):
+            continue
         hit = pairs.get(i)
         if hit is None:
             plan.lost.append(pl.get("person_name") or pl.get("person_id"))
@@ -235,6 +286,11 @@ def apply_plan(client, plan: Plan, collection: str = "photos",
                faces_collection: str = "faces") -> None:
     """Neue Gesichter schreiben, alte loeschen, Foto nachziehen."""
     from qdrant_client.models import PointIdsList
+
+    if plan.stamp_only:
+        client.set_payload(collection_name=collection, payload={MARKER: plan.orientation},
+                           points=[plan.point_id], wait=True)
+        return
 
     writer = QdrantWriter.on(client, collection, faces_collection)
     record = SimpleNamespace(photo_id=plan.photo_id, file_path=plan.path,
@@ -309,7 +365,9 @@ def run(client, embedder, apply: bool = False, collection: str = "photos",
                 continue
             tally["Namen uebertragen"] += len(plan.transferred)
             tally["Namen ohne Partner"] += len(plan.lost)
-            line = (f"{plan.path}  Ausrichtung {plan.orientation}: "
+            if plan.old_ids:
+                tally[f"alte Kaesten {plan.frame}"] += 1
+            line = (f"{plan.path}  Ausrichtung {plan.orientation}, Kaesten {plan.frame}: "
                     f"{len(plan.old_ids)} -> {len(plan.new_faces)} Gesichter, "
                     f"{len(plan.transferred)}/{plan.named_old} Namen")
             if plan.lost:
@@ -322,6 +380,9 @@ def run(client, embedder, apply: bool = False, collection: str = "photos",
                 tally["nicht geschrieben (Namen)"] += 1
                 continue
             apply_plan(client, plan, collection, faces_collection)
+            if plan.stamp_only:
+                tally["nur gestempelt"] += 1
+                continue
             tally["geschrieben"] += 1
             if limit and tally["geschrieben"] >= limit:
                 stop = True
@@ -335,7 +396,8 @@ def run(client, embedder, apply: bool = False, collection: str = "photos",
     for line in examples:
         logger.info("     %s", line)
     if not apply and tally.get("neu erkannt", 0) + tally.get("Namen gingen verloren", 0):
-        logger.info("Mit --apply werden die Fotos unter \"neu erkannt\" geschrieben; "
+        logger.info("Mit --apply werden die Fotos unter \"neu erkannt\" geschrieben, "
+                    "\"Kaesten stimmen schon\" nur gestempelt; "
                     "\"Namen gingen verloren\" nur mit --allow-lost-names.")
     return tally
 

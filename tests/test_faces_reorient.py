@@ -174,7 +174,7 @@ def test_apply_ersetzt_die_kaesten_und_nimmt_den_namen_mit(tmp_path, qdrant):
 def test_name_ohne_partner_wird_nicht_still_verloren(tmp_path, qdrant):
     p = _bild(tmp_path / "kopf.jpg", 3)
     point_id, old_ids = _foto(qdrant, p, [(ROH, "p1", "Kind")])
-    det = Detektor([{"box": [2, 2, 12, 12], "embedding": _vec(0.2), "score": 0.8}])
+    det = Detektor([{"box": [25, 15, 35, 25], "embedding": _vec(0.2), "score": 0.8}])
 
     tally = fr.run(qdrant, det, apply=True)
 
@@ -186,6 +186,43 @@ def test_name_ohne_partner_wird_nicht_still_verloren(tmp_path, qdrant):
     tally = fr.run(qdrant, det, apply=True, allow_lost_names=True)
     assert tally["geschrieben"] == 1
     assert _photo(qdrant, point_id)["person_ids"] == []
+
+
+def test_schon_aufrechte_kaesten_werden_nur_gestempelt(tmp_path, qdrant):
+    """Der Fall aus dem Trockenlauf vom 29.10.2026: die Kaesten liegen schon
+    aufrecht. Hier ist das gedrehte Bild von A genau B -- blind gedreht fiele
+    der Name von A still auf B."""
+    p = _bild(tmp_path / "kopf.jpg", 3)
+    point_id, old_ids = _foto(qdrant, p, [(ROH, "p1", "Kind"), (AUFRECHT, None, None)])
+    det = Detektor([{"box": ROH, "embedding": _vec(0.9), "score": 0.9},
+                    {"box": AUFRECHT, "embedding": _vec(0.2), "score": 0.8}])
+
+    tally = fr.run(qdrant, det, apply=True)
+
+    assert tally["Kaesten stimmen schon"] == 1 and tally["nur gestempelt"] == 1
+    assert tally["geschrieben"] == 0
+    assert {str(f.id) for f in _faces(qdrant)} == set(old_ids), "nichts neu geschrieben"
+    benannt = [f.payload["box"] for f in _faces(qdrant) if f.payload.get("person_id")]
+    assert benannt == [ROH]
+    assert _photo(qdrant, point_id)[fr.MARKER] == 3
+
+
+def test_schon_aufrecht_mit_neuem_gesicht_behaelt_den_namen_am_richtigen(tmp_path, qdrant):
+    p = _bild(tmp_path / "kopf.jpg", 3)
+    point_id, _ = _foto(qdrant, p, [(ROH, "p1", "Kind"), (AUFRECHT, None, None)])
+    det = Detektor([{"box": ROH, "embedding": _vec(0.9), "score": 0.9},
+                    {"box": AUFRECHT, "embedding": _vec(0.2), "score": 0.8},
+                    {"box": [25, 15, 35, 25], "embedding": _vec(0.3), "score": 0.7}])
+
+    tally = fr.run(qdrant, det, apply=True)
+
+    assert tally["geschrieben"] == 1
+    faces = _faces(qdrant)
+    assert len(faces) == 3
+    benannt = [(f.payload["box"], f.payload["person_name"]) for f in faces
+               if f.payload.get("person_id")]
+    assert benannt == [(ROH, "Kind")]
+    assert _photo(qdrant, point_id)["person_ids"] == ["p1"]
 
 
 def test_aufrechte_fotos_bleiben_unberuehrt(tmp_path, qdrant):
