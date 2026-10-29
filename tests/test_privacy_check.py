@@ -1,3 +1,6 @@
+import sys
+
+from tools import privacy_check
 from tools.privacy_check import hook_script
 
 
@@ -63,3 +66,44 @@ class TestAllowedParts:
         import tools.privacy_check as pc
 
         assert pc.ALLOW_TERMS in pc.SKIP_FILES
+
+
+class TestTextPruefung:
+    """`--text` fuer Issue- und PR-Texte.
+
+    Der Commit-Hook sieht sie nie: sie gehen per `gh` direkt an GitHub, und
+    bei einem oeffentlichen Repository sind sie oeffentlich, sobald sie
+    entstehen. Am 27.10.2026 stand so ein echter Name in einem Issue-Text,
+    waehrend Code und Commits sauber waren.
+
+    Nachtraegliches Pruefen hilft dort nicht -- ein veroeffentlichter Text
+    steht auch nach dem Bearbeiten noch in der Versionsgeschichte des Issues.
+    Darum muss die Pruefung **vor** dem Absenden greifen, und darum ist der
+    Rueckgabewert das Wesentliche: `tools/gh-privat` entscheidet daran, ob es
+    `gh` ueberhaupt aufruft.
+    """
+
+    def _lauf(self, tmp_path, monkeypatch, inhalt, namen=("Erfundene Person",)):
+        datei = tmp_path / "text.md"
+        datei.write_text(inhalt, encoding="utf-8")
+        monkeypatch.setattr(privacy_check, "names_from_index",
+                            lambda *a, **k: (list(namen), "Test"))
+        monkeypatch.setattr(privacy_check, "extra_terms", lambda *a, **k: set())
+        monkeypatch.setattr(sys, "argv", ["pv", "--text", str(datei)])
+        return privacy_check.main()
+
+    def test_name_im_text_sperrt(self, tmp_path, monkeypatch, capsys):
+        rc = self._lauf(tmp_path, monkeypatch,
+                        "Gemessen an der Gruppe Erfundene Person.\n")
+        assert rc == 1, "ein Fund muss != 0 liefern, sonst sendet der Vorbau trotzdem"
+        assert "Bitte umformulieren" in capsys.readouterr().out
+
+    def test_sauberer_text_geht_durch(self, tmp_path, monkeypatch):
+        rc = self._lauf(tmp_path, monkeypatch,
+                        "Gemessen an der groessten Gruppe.\n")
+        assert rc == 0
+
+    def test_teil_eines_wortes_ist_kein_treffer(self, tmp_path, monkeypatch):
+        """Wortgrenzen: sonst meldet jeder Dateiname mit einer Silbe darin."""
+        rc = self._lauf(tmp_path, monkeypatch, "Erfundenes Verfahren.\n")
+        assert rc == 0

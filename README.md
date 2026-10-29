@@ -81,19 +81,35 @@ entwickeln](#ohne-docker-entwickeln).
 **Was ohne Grafikkarte alles funktioniert:** Datum und Herkunft, Gesichter
 finden und benennen, Serien, die Suche nach Personen, Jahr, Ort, Album und
 Tags — und der **Atlas**, denn UMAP rechnet ohnehin auf der CPU. Nur die
-Bildbeschreibungen und die *Freitextsuche* brauchen Ollama; ohne es tragen die
-Kontinente ihre Szenen-Tags als Namen statt der Captions. Was fehlt, sagt die
+Bildbeschreibungen und die *Freitextsuche* brauchen ein Sprachmodell hinter
+LiteLLM; ohne es tragen die Kontinente ihre Szenen-Tags als Namen statt der Captions. Was fehlt, sagt die
 Jobs-Seite: Läufe, deren Voraussetzung nicht da ist, sind dort gesperrt und
 nennen den Grund, statt „gestartet" zu melden und still zu sterben.
 
-**Optional — [Ollama](https://ollama.com) für deutsche Bildbeschreibungen.**
-Der Docker-Verbund bringt eines mit (Profil `ollama`, `start.bat` schaltet es
-ein; mit NVIDIA-Karte reicht das Skript die GPU durch, sonst rechnet der
-Prozessor). Wer schon ein Ollama hat, trägt im Wizard dessen Adresse ein —
-es muss dann auf allen Adressen lauschen (`OLLAMA_HOST=0.0.0.0`), sonst
-erreicht der Container es nicht. Unter macOS ist ein natives Ollama die
-bessere Wahl: Docker Desktop reicht dort keine GPU durch. Ohne Ollama fehlen
-nur die Captions; alles andere funktioniert.
+**Optional — [Ollama](https://ollama.com) für deutsche Bildbeschreibungen**,
+hinter [LiteLLM](https://docs.litellm.ai) oder direkt. Der Docker-Verbund des
+Setup-Wizards bringt eines mit (Profil `ollama`, `start.bat` schaltet es ein; mit
+NVIDIA-Karte reicht das Skript die GPU durch, sonst rechnet der Prozessor). Wer
+schon ein Ollama hat, trägt im Wizard dessen Adresse ein — es muss dann auf allen
+Adressen lauschen (`OLLAMA_HOST=0.0.0.0`), sonst erreicht der Container es nicht.
+Unter macOS ist ein natives Ollama die bessere Wahl: Docker Desktop reicht dort
+keine GPU durch. Zwei Wege, und welcher gilt, entscheidet `llm_mode()`
+(`ingest/ollama_client.py`):
+
+- **LiteLLM** (Vorgabe): Pool `local` für Captions, `embedder` für Textvektoren,
+  Adresse `LITELLM_URL`. In LiteLLM sitzt das GPU-Tor, das lokale Modelle während
+  eines Spiels oder eines Renders sperrt (siehe [Fortschritt](#fortschritt)). Ein im
+  Wizard eingetragener OpenAI-kompatibler Anbieter geht denselben Weg.
+- **Ollama direkt** (`PHOTOVAULT_LLM=ollama`, Adresse `OLLAMA_URL`, Vorgabe
+  `http://127.0.0.1:11434`): für Rechner ohne LiteLLM. Die Wahl „Ollama“ im
+  Setup-Wizard ist dasselbe wie `PHOTOVAULT_LLM=ollama`, nur in
+  `data/settings.json` statt in der Umgebung. Modelle sind dann Ollama-Tags (im
+  Wizard gewählt, sonst `qwen3.8:27b` und `qwen3-embedding:4b`). Ein GPU-Tor gibt
+  es auf diesem Weg nicht.
+
+Es gibt keinen stillen Rückfall: ein gesetztes `OLLAMA_URL` allein schaltet nicht
+um ([photovault#26](https://github.com/crack666/photovault/issues/26)). Ohne beides
+fehlen nur Captions und Freitextsuche; alles andere funktioniert.
 
 | Zweck | Empfehlung | VRAM | gemessen |
 |---|---|---|---|
@@ -635,8 +651,8 @@ Beschreibungen erzeugt.
 
 ## Ohne Docker entwickeln
 
-Wer am Code arbeitet, will die Pipeline direkt starten. Qdrant und Ollama
-laufen dann als eigene Dienste (oder aus dem Compose-Verbund oben).
+Wer am Code arbeitet, will die Pipeline direkt starten. Qdrant und LiteLLM
+(mit Ollama dahinter) laufen dann als eigene Dienste (oder aus dem Compose-Verbund oben).
 
 Eigene venv (`~/.venvs/photovault`), **nicht** die globale: PhotoVault braucht
 `onnxruntime-gpu`, das `onnxruntime` ersetzt und andere Projekte still auf die GPU
@@ -691,17 +707,17 @@ Von Windows aus reicht **`start.bat`** (erkennt die venv) oder direkt
 **`start-local.bat`**. Beenden: `stop.bat` bzw. `./start-local.sh stop`.
 
 Geprüft wird der Reihe nach: venv, der Foto-Mount, optional der Windows-SMB-
-Share, Qdrant, Ollama. Fehlt der Mount (`nofail` in `/etc/fstab`, nach einem
+Share, Qdrant, LiteLLM. Fehlt der Mount (`nofail` in `/etc/fstab`, nach einem
 WSL-Neustart ohne NAS also weg), holt das Skript ihn mit `sudo -n mount` nach
 — ohne Passwortabfrage, sofern `/etc/sudoers.d/` das erlaubt. Fehlt Qdrant,
 versucht es `docker start qdrant` — der Container gehört zum ai-stack, nicht
-zu PhotoVault. Fehlt Ollama, läuft alles außer Bildbeschreibungen und
+zu PhotoVault. Fehlt LiteLLM, läuft alles außer Bildbeschreibungen und
 Freitextsuche weiter, und das steht dann dabei.
 
 Lokale Pfade (Foto-Mount, UNC des Shares) gehören nach
 `~/.config/photovault/runtime`, Vorlage `runtime.example` — nicht ins
 Repository. Abweichende Werte sonst über Umgebungsvariablen: `PHOTO_DIR`,
-`API_PORT`, `QDRANT_URL`, `OLLAMA_URL`, `VENV`.
+`API_PORT`, `QDRANT_URL`, `LITELLM_URL`, `VENV`.
 
 Von Hand geht es weiterhin:
 
@@ -720,22 +736,37 @@ Nützliche Flags: `--limit N`, `--include TEXT` (nur passende Pfade), `--no-resu
 (auch bereits Indiziertes neu verarbeiten), `--progress-every N`. Jeder Lauf gibt am
 Ende eine Zeitverteilung pro Pipeline-Stufe aus.
 
-Läuft die Pipeline in WSL, muss der Share dort gemountet sein:
+Läuft die Pipeline in WSL, muss der Share dort gemountet sein, am besten
+nativ per `cifs` statt über den Windows-Durchreicher `drvfs`: `cifs` wartet bei
+einem kurzen NAS-Aussetzer, `drvfs` scheitert
+([docs/performance.md](docs/performance.md)).
 
 ```bash
-sudo mkdir -p /mnt/photo && sudo mount -t drvfs '\\192.0.2.10\photo' /mnt/photo
+# /etc/fstab -- die Zugangsdaten nicht hier, fstab ist fuer alle lesbar
+//192.0.2.10/photo /mnt/photo cifs credentials=/etc/smbcred-photo,vers=3.1.1,hard,uid=1000,gid=1000,iocharset=utf8,noatime,nofail 0 0
+# /etc/smbcred-photo (root, 0600): je eine Zeile username=... und password=...
+sudo mkdir -p /mnt/photo && sudo mount /mnt/photo
 ```
 
-Env: `OLLAMA_URL`, `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
+Für den Mount ein **eigenes SMB-Konto** nehmen, das nur den Foto-Share
+erreicht, und kein Konto, das auch Fernseher, Handys oder Gäste kennen. Es
+braucht Lesen, Anlegen und Löschen (der Papierkorb löscht Originale auf dem
+Share), aber keine Admin-Rechte auf der NAS.
+
+Env: `LITELLM_URL` (Vorgabe `http://127.0.0.1:4000`), `LITELLM_MASTER_KEY` (sonst aus
+`D:/ai/ai-stack/.env`), `QDRANT_URL`, `PHOTOVAULT_CAPTION_MODEL`, `PHOTOVAULT_EMBED_MODEL`.
+`PHOTOVAULT_LLM=ollama` mit `OLLAMA_URL` für Ollama direkt (photovault#26); `--ollama-url`
+gibt es seit photovault#19 nicht mehr.
 
 **Einstellungen zur Laufzeit.** Was der Setup-Wizard festlegt — Modus
 (`ollama`, `openai`-kompatibler Anbieter, `off`), Adresse, Schlüssel,
 Modellnamen, gemessene Embedding-Dimension — steht in `data/settings.json`
 (`PHOTOVAULT_SETTINGS`), nicht im Repo. Vorrang ist **Umgebung > Datei >
 Vorgabe**: eine gesetzte Variable gewinnt immer, eine Installation mit `.env`
-oder `start-local` merkt von der Datei nichts. Ohne Pool spricht PhotoVault
-Ollama-Tags, mit `LITELLM_URL` die Pool-Aliasse `local`/`embedder`. Der
-Schlüssel wird nie zurückgegeben und nie protokolliert.
+oder `start-local` merkt von der Datei nichts. `PHOTOVAULT_LLM` in der Umgebung
+schlägt also den Modus aus dem Wizard; ohne beides gilt LiteLLM. Mit Ollama
+spricht PhotoVault Ollama-Tags, mit `LITELLM_URL` die Pool-Aliasse
+`local`/`embedder`. Der Schlüssel wird nie zurückgegeben und nie protokolliert.
 
 ### Was einen Re-Ingest überlebt
 
@@ -762,8 +793,10 @@ python -m tools.thumbs --warm                         # fehlende erzeugen
 Er ist der Grund, warum der Atlas schnell ist: nach dem ersten Ansehen werden
 die Originale nicht mehr geholt. Gemessen an diesem Bestand — 14.593 Fotos,
 17,5 GB Originale — belegen die beiden Größen, die Karte und Listen brauchen,
-**295 MB**. Faktor 61. Die Großansicht (1280 px) entsteht bei Bedarf; für alle
-wären das weitere 2,4 GB.
+**295 MB**. Faktor 61. Die Großansicht zeigt zuerst die 1280-px-Kachel, die bei
+Bedarf entsteht (für alle wären das weitere 2,4 GB), und lädt danach das
+Original nach — nicht gecacht, es kommt jedes Mal vom Archiv. Ziehen aus der
+Großansicht in den Explorer legt die Originaldatei unter ihrem Namen ab.
 
 Wo er liegt, hängt am Betriebsmodus, und das ist gemessen und nicht geraten:
 
@@ -898,9 +931,45 @@ stehen. Aufgeräumt wird nach Kategorie („läuft nicht mehr"), nicht nach
 Zustandsnamen: im Bestand stehen `done`, `succeeded`, `partial` und
 `done-with-errors` aus mehreren Programmgenerationen, eine Namensliste hätte
 41 von 47 Einträgen stillschweigend nicht angefasst. Der Tracker schreibt nach
-`ingest_jobs` in Qdrant und ist über das Feld `kind` generisch — Caption-Nachläufe
-oder Re-Embeds können dieselbe Anzeige benutzen. Ein Lauf, dessen Prozess stirbt,
-erscheint nach 2 Minuten ohne Aktualisierung als `stale` statt ewig als `running`.
+`photovault_jobs` in Qdrant (`PHOTOVAULT_JOBS_COLLECTION`) und ist über das Feld
+`kind` generisch — Caption-Nachläufe oder Re-Embeds können dieselbe Anzeige
+benutzen. Ein Lauf, dessen Prozess stirbt, erscheint nach 2 Minuten ohne
+Aktualisierung als `stale` statt ewig als `running`.
+
+Scheitert eine Datei, steht sie **namentlich** im Eintrag, nicht nur in einem
+Zähler: `done-with-errors` und sonst nichts lässt ratlos zurück, und der Grund
+stand bisher allein im Terminal dessen, der den Lauf gestartet hat — wer ihn
+über die Oberfläche startet, hat keins. Mitgeführt werden höchstens 20 Dateien,
+damit ein Lauf über 50.000 den Qdrant-Punkt nicht sprengt; wie viele es
+insgesamt waren, sagt weiterhin der Zähler. Ältere Einträge, die noch vor
+dieser Änderung entstanden sind, schreiben „ohne Angabe welcher Dateien"
+dazu, statt so auszusehen, als gäbe es nichts zu sagen.
+
+Bis 26.10.2026 hieß die Collection `ingest_jobs` — generisch, und das ging
+schief: PhotoVault teilt sich das Qdrant mit dem ai-stack, dessen RAG-Ingest
+denselben Vorgabenamen benutzt. Von 44 Punkten gehörten 25 dem anderen
+Programm; sie tragen `progress.files_total` statt `total`/`processed` und
+erschienen deshalb als `0 / 0 (0.0%)`. Schlimmer als die Anzeige war, dass
+**Liste aufräumen** sie mitgelöscht hätte — die Ingest-Historie des ai-stack,
+die dort `manage.sh rag-status` ausliest. `list_jobs` überspringt seitdem
+zusätzlich jede fremde Art, falls jemand die Variable wieder auf eine geteilte
+Collection stellt; Einträge *ohne* `kind` gelten als eigene Altlast und bleiben
+([photovault#28](https://github.com/crack666/photovault/issues/28)).
+
+**GPU-Tor: Pause statt Fehler** ([photovault#19](https://github.com/crack666/photovault/issues/19)).
+LiteLLM fragt vor jeder Anfrage an ein lokales Modell das GPU-Tor (ai-stack
+`docs/LITELLM_GPU_TOR.md`). Läuft ein Spiel, rendert ComfyUI oder gilt eine fremde
+Reservierung, antwortet es sofort mit HTTP 503, einem Text ab „GPU belegt“ und
+`Retry-After`. Captions (Einlesen und Bildbeschreibungen) **pausieren** dann: der Job
+bleibt `running`, die Jobs-Seite zeigt „⏸ pausiert: GPU belegt: …“ samt Zeitpunkt des
+nächsten Versuchs, und nach `Retry-After` fragt der Lauf erneut — eine Anfrage je
+Pause, kein Wiederholsturm, keine Obergrenze. Kein Foto zählt dabei als
+fehlgeschlagen. Während einer langen Pause meldet sich der Job jede Minute, damit er
+nicht als `stale` erscheint. Eine 503 ohne „GPU belegt“ bleibt ein echter Fehler.
+Embeddings (Suche, Text-Vektoren, Re-Embed) lässt das Tor immer durch; die
+Atlas-Titel fallen bei belegter Karte auf ihre Szenen-Tags zurück. Code:
+`ingest/gpu_tor.py`, Tests `tests/test_gpu_tor.py` (mit einer LiteLLM-Attrappe, kein
+echtes Tor).
 
 ### Wenn eine Änderung nicht ankommt
 
@@ -988,12 +1057,36 @@ Beispiele, die zur Hand liegen.
 
 ```bash
 python -m tools.privacy_check           # alle versionierten Dateien
+python -m tools.privacy_check --text F  # beliebiger Text, "-" liest stdin
 python -m tools.privacy_check --install # als pre-commit-Hook einrichten
 ```
 
 Die Prüfung kennt die echten Namen, weil sie im laufenden Index stehen — eine
 handgepflegte Liste veraltet mit jedem neuen Label. Zusätzlich sucht sie nach
 Schlüsseln, privaten IP-Adressen und E-Mail-Adressen.
+
+### Issues und Pull Requests zählen mit
+
+Der Commit-Hook sieht sie nie: sie gehen per `gh` direkt an GitHub, und bei
+einem öffentlichen Repository sind sie öffentlich, sobald sie entstehen. Am
+27.10.2026 stand so ein echter Name in einem Issue-Text, während Code und
+Commits sauber waren.
+
+**Nachträglich prüfen hilft dort nicht.** Ein einmal veröffentlichter Text
+steht auch nach dem Bearbeiten noch in der Versionsgeschichte des Issues, die
+jeder lesen kann. Deshalb vorher — oder gar nicht:
+
+```bash
+tools/gh-privat issue create --title "…" --body-file text.md
+tools/gh-privat pr create --title "…" --body "…"
+```
+
+`gh-privat` sammelt `--title`, `--body` und `--body-file` ein, schickt sie
+durch dieselbe Prüfung und ruft `gh` nur auf, wenn nichts gefunden wurde.
+Lesende Befehle (`pr list`, `issue view`) reicht es ungeprüft durch.
+
+Was es **nicht** kann: einen Text abfangen, der über die GitHub-Weboberfläche
+entsteht. Dort hilft nur, die Namen gar nicht erst zu tippen.
 
 Nicht versioniert werden `sources.txt` (die Ordnernamen eines privaten Archivs
 verraten schon viel; Vorlage: `sources.example.txt`) und `.privacy-denylist`.

@@ -75,6 +75,7 @@ def _in_der_bibliothek(pfad: str) -> str:
                  f"PHOTOVAULT_PHOTO_ROOT verschiebt die Grenze.")
     return pfad
 
+
 #: Obergrenze fuer den Trockenlauf. Ein Zaehllauf ueber ein NAS kostet Zeit;
 #: mehr als das braucht niemand, um eine Entscheidung zu treffen.
 PREVIEW_CAP = 200_000
@@ -177,7 +178,13 @@ def _nas_nachziehen() -> None:
 
 
 def _read_or_new() -> src.SourcesFile:
-    """Die Datei, oder eine leere mit Kopfzeilen, wenn es sie noch nicht gibt."""
+    """Die Datei, oder eine leere mit Kopfzeilen, wenn es sie noch nicht gibt.
+
+    Fuer die Wege, auf denen man zur *ersten* Quelle kommt: den Waehler und
+    das Hinzufuegen. Ohne `sources.txt` liefen beide in einen
+    `FileNotFoundError` und damit in eine 500 (#25). Geschrieben wird die
+    Datei beim ersten `add` ohnehin.
+    """
     if Path(FILE).exists():
         return src.read(FILE)
     return src.SourcesFile(path=FILE, lines=list(NEW_FILE_HEAD))

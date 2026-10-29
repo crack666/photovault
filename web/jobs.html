@@ -17,9 +17,11 @@
   <main class="view wide">
     <h1>Jobs</h1>
     <p class="muted" style="max-width:60rem">
-      Neue Dateien: unten die Ordner, dann <b>Einlesen</b>.
-      Video-Gesichter und Bildbeschreibungen erst danach —
-      dazwischen Namen unter „Wer ist das?“.
+      Nach neuen Fotos von oben nach unten — eine <b>Empfehlung, keine
+      Kette</b>. Woran ein Schritt wirklich hängt, steht an ihm dran: Schritt 3
+      etwa braucht nur Schritt 1 und hält Schritt 4 nicht auf, man kann also
+      längst Namen vergeben, während die Vorschaubilder noch entstehen.
+      Was gerade nicht geht, sagt es am Knopf statt beim Start.
     </p>
 
     <div class="starters" id="starters"></div>
@@ -60,7 +62,7 @@
   </main>
 
 <script type="module">
-import { renderNav } from "/static/core/nav.js";
+import { renderNav, tabUrl } from "/static/core/nav.js";
 import { notify, openModal } from "/static/core/modal.js";
 
 renderNav(document.getElementById("nav"), { active: "jobs" });
@@ -106,12 +108,37 @@ function renderStarters(runnable) {
   const sig = JSON.stringify(runnable);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.innerHTML = (runnable || []).map(r => {
+  /* Schritt 4 ist keiner, den dieses Programm starten darf: Namen vergibt der
+     Mensch. Er steht trotzdem in der Reihe, weil genau er die Beschreibungen
+     in Schritt 5 gut macht -- ohne ihn liest sich die Liste, als koenne man
+     von 3 auf 5 springen, ohne etwas zu verlieren. Er gehoert in die Anzeige
+     und nicht nach RUNNABLE, denn diese Liste ist die einzige Schranke
+     dafuer, was die Seite starten kann. */
+  const HANDARBEIT = {
+    step: 4,
+    label: "Namen vergeben",
+    when: "Von Hand, unter „Wer ist das?“.",
+    gives: "Aus Gesichtern werden Personen — und Schritt 5 wird dadurch gut.",
+    note: "PhotoVault benennt nie von allein; der Abgleich ist ein Vorschlag. "
+        + "Wer schon benannt ist, kommt als eine Rückfrage je Person zurück, "
+        + "nicht als dutzende Kleingruppen.",
+    // Nicht von Hand getippt: `/index.html?tab=label` stand hier und war ein
+    // 404 -- die Anwendung liegt unter `/`.
+    href: tabUrl("label"),
+  };
+
+  const karte = (r) => {
     const off = r.busy || !r.ready;
     return `
     <div class="starter${r.ready ? "" : " blocked"}">
-      <h3>${esc(r.label)}</h3>
-      <p>${esc(r.note)}</p>
+      <div class="head">
+        ${r.step ? `<span class="step">${r.step}</span>` : ""}
+        <h3>${esc(r.label)}</h3>
+      </div>
+      ${r.when ? `<p class="when">${esc(r.when)}</p>` : ""}
+      ${r.gives ? `<p class="gives">${esc(r.gives)}</p>` : ""}
+      ${r.needs ? `<p class="needs">${esc(r.needs)}</p>` : ""}
+      <p class="note">${esc(r.note)}</p>
       ${r.gpu ? `<span class="gpu">belegt die Grafikkarte</span>` : ""}
       ${r.ready ? "" : `<span class="why">${esc(r.blocked)}</span>`}
       ${r.id === "thumbs" ? '<span class="cost" id="thumb-cost">rechnet die Kosten …</span>' : ""}
@@ -121,7 +148,24 @@ function renderStarters(runnable) {
           r.busy ? "läuft" : r.ready ? "Starten" : "nicht möglich"}</button>
       </div>
     </div>`;
-  }).join("");
+  };
+
+  const handKarte = (h) => `
+    <div class="starter manual">
+      <div class="head"><span class="step">${h.step}</span><h3>${esc(h.label)}</h3></div>
+      <p class="when">${esc(h.when)}</p>
+      <p class="gives">${esc(h.gives)}</p>
+      <p class="note">${esc(h.note)}</p>
+      <div class="row"><a class="go" href="${h.href}">Öffnen</a></div>
+    </div>`;
+
+  // Die Handarbeit wird einsortiert, nicht angehaengt -- sonst stuende der
+  // Schritt, der die Reihenfolge erklaert, hinter allem, was ihn braucht.
+  const liste = (runnable || []).slice();
+  const vor = liste.findIndex(r => (r.step || 99) > HANDARBEIT.step);
+  const teile = liste.map(karte);
+  teile.splice(vor < 0 ? teile.length : vor, 0, handKarte(HANDARBEIT));
+  box.innerHTML = teile.join("");
 }
 
 /* Was der Lauf kostet -- vor dem Knopf, nicht danach.
@@ -256,6 +300,21 @@ document.getElementById("more").onclick = () => { limit += PAGE; tick(); };
 
 /* ---- Liste ------------------------------------------------------------- */
 
+/* Welche Fehlerlisten offen stehen.
+
+   Die Jobliste wird im Zwei-Sekunden-Takt komplett neu gezeichnet. Ohne
+   dieses Gedaechtnis klappt eine aufgeklappte Fehlerliste jedes Mal wieder
+   zu -- und zwar genau waehrend man sie liest, was schlimmer ist als sie
+   gar nicht erst anzubieten. */
+const offeneFehler = new Set();
+
+document.getElementById("jobs").addEventListener("toggle", (e) => {
+  const d = e.target.closest("details[data-fails]");
+  if (!d) return;
+  if (d.open) offeneFehler.add(d.dataset.fails);
+  else offeneFehler.delete(d.dataset.fails);
+}, true);  // `toggle` steigt nicht auf, also in der Erfassungsphase abgreifen
+
 function render(data) {
   const box = document.getElementById("jobs");
   const jobs = data.jobs || [];
@@ -292,12 +351,31 @@ function render(data) {
         <div class="nums">
           <span><b>${j.processed ?? 0}</b> / ${j.total ?? 0} (${pct.toFixed(1)}%)</span>
           ${j.errors ? `<span style="color:#e88c89"><b>${j.errors}</b> Fehler</span>` : ""}
+          ${j.errors && !(j.failures || []).length ? `<span class="job-noinfo"
+            title="Der Lauf hat die Fehler nur gezählt. Welche Dateien es traf, steht im Protokoll des Prozesses.">
+            (ohne Angabe welcher Dateien)</span>` : ""}
           ${j.skipped ? `<span>${j.skipped} übersprungen</span>` : ""}
           <span><b>${(Number(j.rate_per_s) || 0).toFixed(2)}</b>/s</span>
           <span>Laufzeit ${fmtDur(j.elapsed_s)}</span>
           ${!done && j.eta_s ? `<span>ETA ${fmtDur(j.eta_s)}</span>` : ""}
           <span>${esc(j.phase || "")}</span>
         </div>
+        ${!done && j.paused ? `<div class="nums" style="color:#e8c46b">
+          <span>⏸ pausiert: ${esc(j.paused)}</span>
+          ${j.resume_at ? `<span>nächster Versuch ${fmtTime(j.resume_at)}</span>` : ""}
+        </div>` : ""}
+        ${(j.failures || []).length ? `<details class="job-fails"
+          data-fails="${esc(j.job_id)}"${offeneFehler.has(j.job_id) ? " open" : ""}>
+          <summary>Woran es lag (${j.failures.length}${
+            j.errors > j.failures.length ? ` von ${j.errors}` : ""})</summary>
+          <ul>${j.failures.map(f => `<li>
+            <code>${esc(f.path || "")}</code>
+            <span>${esc(f.reason || "")}</span></li>`).join("")}</ul>
+          ${j.errors > j.failures.length ? `<p class="rest">Die uebrigen ${
+            j.errors - j.failures.length} stehen im Protokoll des Laufs — hier
+            werden hoechstens ${j.failures.length} mitgefuehrt, damit ein Lauf
+            mit tausenden Fehlern den Eintrag nicht sprengt.</p>` : ""}
+        </details>` : ""}
         <div class="nums" style="opacity:.5">
           <span>gestartet ${fmtTime(j.started_at)}</span>
           ${j.finished_at ? `<span>fertig ${fmtTime(j.finished_at)}</span>` : ""}

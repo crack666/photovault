@@ -2,12 +2,13 @@ import { api, cropUrl } from "./core/api.js";
 import { $, escapeHtml } from "./core/dom.js";
 import { watchMedia } from "./core/images.js";
 import { faceStatsLine } from "./core/format.js";
+import { notify } from "./core/modal.js";
 import { refreshEventNames, refreshPersonNames } from "./core/names.js";
 import { rememberTab, renderNav, tabFromUrl, photoFromUrl } from "./core/nav.js";
 import { forgetPeopleList } from "./core/people.js";
 import { bindEvents, loadEventTab } from "./events/index.js";
 import { bindLightbox, showLightbox } from "./lightbox/index.js";
-import { bindPeople, loadPeople } from "./people/index.js";
+import { bindPeople, loadPeople, openPersonFromUrl } from "./people/index.js";
 import { bindSearch, loadPersonPicker } from "./search/index.js";
 import { bindUnknown, loadCandidates, loadUnknown } from "./unknown/index.js";
 
@@ -92,6 +93,17 @@ function renderCard() {
     : "Wer ist das?";
   $("name-form").classList.remove("hidden");
   $("btn-confirm-known").classList.toggle("hidden", !known);
+  /* Der gemerkte Text gehoert zur vorigen Karte und ist ab hier falsch.
+
+     `karteBusy(true)` legt die Knopfbeschriftung beiseite, um sie nach der
+     Zuordnung wiederherzustellen -- fuer den Fall, dass sie fehlschlaegt und
+     die Karte stehen bleibt. Geht sie durch, zeichnet `next()` aber die
+     naechste Karte, *bevor* das `finally` laeuft: der Knopf trug dann wieder
+     den Namen der eben zugeordneten Person, waehrend Titel und Vorschlag
+     schon die naechste zeigten. Wer hier schreibt, hat den gueltigen Text --
+     also faellt der gemerkte weg. */
+  delete $("btn-confirm-known").dataset.text;
+  delete $("btn-confirm-known").dataset.laufText;
   $("btn-confirm-known").textContent = known
     ? `Ja, ${cluster.size} Gesichter ${cluster.person_name} zuordnen`
     : "";
@@ -103,7 +115,10 @@ function renderCard() {
     chip.className = "chip";
     const pct = Math.round((s.score || 0) * 100);
     chip.innerHTML = `<strong>${escapeHtml(s.name)}</strong> · ${pct}%`;
-    chip.addEventListener("click", () => assignExisting(s.id, keptFaces(cluster)));
+    chip.addEventListener("click", () => mitRueckmeldung(
+      `${keptFaces(cluster).length} Gesichter werden ${s.name} zugeordnet …`,
+      () => assignExisting(s.id, keptFaces(cluster)),
+    ));
     $("suggestions").appendChild(chip);
   });
   $("name-input").value = "";
@@ -115,33 +130,112 @@ function renderCard() {
 
 function showCover(cluster, faceId) {
   cluster.shown = faceId;
+  // Steht dauerhaft sichtbar oben: ein Klick darauf ist die naheliegende
+  // Geste fuer "zeig mir das ganze Foto".
+  $("cover").dataset.face = faceId;
+  $("cover").title = "Ganzes Foto ansehen";
   $("cover").src = `${cropUrl(faceId)}?size=640`;
   $("thumbs").querySelectorAll("figure").forEach((f) => {
     f.classList.toggle("on", f.dataset.id === faceId);
   });
 }
 
+/* Wie viele Kacheln auf einmal in den DOM wandern.
+
+   Vorher standen alle auf einmal da -- bei einer grossen Gruppe 1.244 Stueck
+   und ein 21.000 px hohes Dokument. `loading="lazy"` half dagegen nicht
+   genug: gemessen am 27.10.2026 feuerte der Browser allein fuer den ersten
+   Bildschirm 112 Anfragen, beim Scrollen hunderte am Stueck. Jede kalte davon
+   laesst den Server das Original oeffnen (photovault#34).
+
+   Nachgelegt wird beim Scrollen, **nicht** blaetterweise: wer 1.200 Gesichter
+   mit dem Auge ueberfliegt, soll das in einem Zug tun und einmal bestaetigen.
+   Die Auswahl haengt ohnehin an `cluster.face_ids`, nicht am DOM -- was
+   gezeigt wird, aendert also nichts daran, was bestaetigt wird. */
+/* Das ganze Foto zu einem Gesicht.
+
+   Auf dieser Seite sieht man nur den Zuschnitt. Bei einem Gesicht, das halb
+   hinter einer Wand steht oder im Hintergrund verschwimmt, laesst sich daran
+   nicht entscheiden, ob es in die Gruppe gehoert -- dafuer braucht es das
+   Bild drumherum. Die Foto-Kennung kommt erst auf Klick: eine Gruppe hat bis
+   zu 1.244 Gesichter, und sie allen mitzugeben waere Last fuer einen Fall,
+   der selten eintritt. */
+async function zeigeGanzesFoto(faceId) {
+  try {
+    const d = await api(`/api/faces/${encodeURIComponent(faceId)}/photo`);
+    showLightbox([{ id: d.photo_id, kind: d.kind, file_name: d.file_name }], 0);
+  } catch (e) {
+    notify(`Foto nicht ladbar: ${e.message}`);
+  }
+}
+
+const KACHEL_STAPEL = 150;
+
+let thumbWache = null;
+
 /* Jedes Gesicht des Clusters ist anklickbar: groß ansehen, und wenn es nicht
    dazugehört, hier gleich ausschließen -- sonst zieht ein Fremder mit ein. */
 function renderThumbs(cluster) {
   const box = $("thumbs");
+  if (thumbWache) { thumbWache.disconnect(); thumbWache = null; }
   box.innerHTML = "";
-  cluster.face_ids.forEach((id) => {
+
+  const kachel = (id) => {
     const fig = document.createElement("figure");
     fig.className = "thumb";
     fig.dataset.id = id;
     fig.classList.toggle("out", cluster.excluded.has(id));
     fig.innerHTML = `<img loading="lazy" src="${cropUrl(id)}?size=160" alt="" />
-                     <button type="button" class="drop" title="Gehört nicht dazu">✕</button>`;
+                     <button type="button" class="drop" title="Gehört nicht dazu">✕</button>
+                     <button type="button" class="gross"
+                             title="Ganzes Foto ansehen (oder Doppelklick)">⤢</button>`;
     fig.querySelector("img").addEventListener("click", () => showCover(cluster, id));
+    // Einfacher Klick zeigt den Zuschnitt oben gross; das ganze Foto braucht
+    // es erst, wenn der Ausschnitt die Frage nicht beantwortet -- ein Gesicht
+    // halb hinter einer Wand etwa.
+    fig.querySelector("img").addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      zeigeGanzesFoto(id);
+    });
+    fig.querySelector(".gross").addEventListener("click", (e) => {
+      e.stopPropagation();
+      zeigeGanzesFoto(id);
+    });
     fig.querySelector(".drop").addEventListener("click", (e) => {
       e.stopPropagation();
       cluster.excluded.has(id) ? cluster.excluded.delete(id) : cluster.excluded.add(id);
       fig.classList.toggle("out", cluster.excluded.has(id));
       updateClusterCount(cluster);
     });
-    box.appendChild(fig);
-  });
+    return fig;
+  };
+
+  const wache = document.createElement("div");
+  wache.className = "thumb-wache";
+  box.appendChild(wache);
+
+  let gezeigt = 0;
+  const nachlegen = () => {
+    const bis = Math.min(gezeigt + KACHEL_STAPEL, cluster.face_ids.length);
+    const stueck = document.createDocumentFragment();
+    for (; gezeigt < bis; gezeigt++) stueck.appendChild(kachel(cluster.face_ids[gezeigt]));
+    box.insertBefore(stueck, wache);
+    if (gezeigt >= cluster.face_ids.length) {
+      thumbWache.disconnect();
+      thumbWache = null;
+      wache.remove();
+    }
+  };
+
+  // Vorlauf, damit beim Scrollen nichts leer bleibt -- aber nicht so viel,
+  // dass wieder alles auf einmal kommt.
+  thumbWache = new IntersectionObserver(
+    (eintraege) => { if (eintraege.some((e) => e.isIntersecting)) nachlegen(); },
+    { rootMargin: "800px" },
+  );
+  thumbWache.observe(wache);
+  nachlegen();
+
   updateClusterCount(cluster);
   showCover(cluster, cluster.shown || cluster.cover_face_id);
 }
@@ -158,10 +252,70 @@ function updateClusterCount(cluster) {
     + (out ? ` · ${out} ausgeschlossen` : "");
 }
 
+/* Waehrend eine Zuordnung laeuft, nimmt die Karte nichts mehr an.
+
+   Ein Klick auf "Ja, 1312 Gesichter zuordnen" kann fast eine Minute dauern:
+   die Namen selbst sitzen schnell, aber jedes betroffene Foto bekommt danach
+   einen neuen Text-Vektor (~130 ms, `_assign` in api/routes/persons.py), und
+   das sind bei einer grossen Gruppe ueber 900 Fotos. Vorher passierte
+   sichtbar nichts -- also klickt man noch einmal, und die zweite Anfrage
+   macht dieselbe Arbeit ein zweites Mal. */
+const KARTE_SPERREN = [
+  "btn-confirm-known", "btn-skip", "name-input",
+];
+
+function karteBusy(on, text) {
+  const karte = $("card");
+  karte.classList.toggle("laeuft", !!on);
+  KARTE_SPERREN.forEach((id) => { const e = $(id); if (e) e.disabled = !!on; });
+  karte.querySelectorAll("#suggestions button, #name-form button, .thumb .drop")
+    .forEach((b) => { b.disabled = !!on; });
+  const knopf = $("btn-confirm-known");
+  if (on) {
+    knopf.dataset.text = knopf.dataset.text || knopf.textContent;
+    if (text) {
+      knopf.dataset.laufText = text;
+      knopf.textContent = text;
+    }
+  } else if (knopf.dataset.text) {
+    // Nur zurueckschreiben, solange der Knopf noch den Lauftext traegt. Hat
+    // inzwischen jemand anders geschrieben -- `showCard` fuer die naechste
+    // Karte --, dann ist dessen Text der gueltige, und der gemerkte gehoert
+    // zur Person, die gerade fertig zugeordnet wurde.
+    if (!knopf.dataset.laufText || knopf.textContent === knopf.dataset.laufText) {
+      knopf.textContent = knopf.dataset.text;
+    }
+  }
+  if (!on) {
+    // Unabhaengig vom Zweig darueber: liegen bleiben darf nichts. Hat
+    // `showCard` den gemerkten Text schon weggeraeumt, lief der Zweig gar
+    // nicht -- und `laufText` waere sonst zurueckgeblieben.
+    delete knopf.dataset.text;
+    delete knopf.dataset.laufText;
+  }
+}
+
+/** Eine Zuordnung mit Rueckmeldung -- und ohne zweiten Klick dazwischen. */
+async function mitRueckmeldung(text, arbeit) {
+  if ($("card").classList.contains("laeuft")) return;
+  karteBusy(true, text);
+  try {
+    await arbeit();
+  } catch (e) {
+    notify(`Zuordnen fehlgeschlagen: ${e.message || e}`, { kind: "error" });
+  } finally {
+    karteBusy(false);
+  }
+}
+
 $("btn-confirm-known").addEventListener("click", () => {
   const cluster = state.clusters[state.index];
   if (!cluster || cluster.kind !== "known") return;
-  assignExisting(cluster.person_id, keptFaces(cluster));
+  const n = keptFaces(cluster).length;
+  mitRueckmeldung(
+    `${n} Gesichter werden ${cluster.person_name} zugeordnet …`,
+    () => assignExisting(cluster.person_id, keptFaces(cluster)),
+  );
 });
 
 async function assignExisting(personId, faceIds) {
@@ -198,7 +352,10 @@ $("name-form").addEventListener("submit", (e) => {
   const cluster = state.clusters[state.index];
   const name = $("name-input").value.trim();
   if (!cluster || !name) return;
-  assignNew(name, keptFaces(cluster));
+  mitRueckmeldung(
+    `${keptFaces(cluster).length} Gesichter werden ${name} zugeordnet …`,
+    () => assignNew(name, keptFaces(cluster)),
+  );
 });
 
 $("btn-skip").addEventListener("click", async () => {
@@ -223,6 +380,11 @@ refreshEventNames();
 // beim Auswerten von app.js, weil die Listener dort standen; jetzt sagt es
 // der Router ausdruecklich -- und zwar bevor der erste Tab aufgeht.
 bindLightbox();
+
+$("cover").addEventListener("click", () => {
+  const id = $("cover").dataset.face;
+  if (id) zeigeGanzesFoto(id);
+});
 bindEvents();
 bindUnknown();
 bindSearch();
@@ -241,6 +403,8 @@ watchMedia();
    vor dem ersten Aufruf. Die Zeile bleibt trotzdem hier unten, denn sie ist
    jetzt aus einem zweiten Grund richtig -- am Ende ist gebunden, was gebunden
    gehoert, bevor der erste Tab aufgeht. */
-showTab(tabFromUrl());
+const startTab = tabFromUrl();
+showTab(startTab);
+if (startTab === "people") openPersonFromUrl();
 const photo = photoFromUrl();
 if (photo) showLightbox([{ id: photo }], 0);

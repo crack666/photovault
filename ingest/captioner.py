@@ -1,4 +1,4 @@
-"""Deutsche Captions via Qwen 3.8 Vision (Ollama), thinking aus.
+"""Deutsche Captions via Qwen 3.8 Vision (LiteLLM-Pool `local`), thinking aus.
 
 Das Bild allein reicht nicht: Datum, Ordner, Sequenz, Face-Count und
 bekannte Namen werden als Kontext in den Prompt gelegt (Anfuettern).
@@ -12,12 +12,15 @@ import logging
 import re
 from typing import Any
 
+from ingest.gpu_tor import GpuBusy
 from ingest.ollama_client import (
     CAPTION_NUM_CTX,
     caption_model,
     litellm_headers,
     litellm_url,
-    ollama_url,
+    llm_mode,
+    llm_target,
+    ollama_post,
     post_json,
 )
 
@@ -87,7 +90,7 @@ def merge_tags(existing: list[str], extra: list[str], limit: int = MAX_TAGS) -> 
     return out
 
 
-def run_captions(items: list, caption_one, workers: int) -> None:
+def run_captions(items: list, caption_one, workers: int, on_busy=None) -> None:
     """Captions eines Stapels holen, hoechstens `workers` gleichzeitig.
 
     Ollama serialisiert die Anfragen ohnehin -- der Gewinn kommt allein daraus,
@@ -97,24 +100,45 @@ def run_captions(items: list, caption_one, workers: int) -> None:
     Ein Fehler darf nur das eine Foto kosten, nicht den Stapel -- dieselbe
     Lehre wie beim CLIP-Batch, den frueher ein einzelnes defektes Bild
     mitgerissen hat.
+
+    Lehnt das GPU-Tor ab (`GpuBusy`), ist das kein Fehler des Fotos: der Rest
+    des Stapels wird gar nicht erst geschickt, `on_busy` wartet (siehe
+    `ingest.gpu_tor.Pause`), und danach kommen genau die Fotos dran, die noch
+    keine Antwort hatten. Ohne `on_busy` geht die Ablehnung an den Aufrufer.
     """
+    pending = list(items)
+    while pending:
+        busy: list[GpuBusy] = []
+        retry: set[int] = set()
 
-    def guarded(item):
-        try:
-            caption_one(item)
-        except Exception as e:
-            logger.warning("Captioning failed for %s: %s",
-                           getattr(item, "file_path", item), e)
+        def guarded(item):
+            if busy:
+                retry.add(id(item))
+                return
+            try:
+                caption_one(item)
+            except GpuBusy as e:
+                busy.append(e)
+                retry.add(id(item))
+            except Exception as e:
+                logger.warning("Captioning failed for %s: %s",
+                               getattr(item, "file_path", item), e)
 
-    if workers <= 1 or len(items) == 1:
-        for item in items:
-            guarded(item)
-        return
+        if workers <= 1 or len(pending) == 1:
+            for item in pending:
+                guarded(item)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
 
-    from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
+                list(pool.map(guarded, pending))
 
-    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
-        list(pool.map(guarded, items))
+        if not busy:
+            return
+        if on_busy is None:
+            raise busy[0]
+        on_busy(busy[0])
+        pending = [item for item in pending if id(item) in retry]
 
 
 def caption_options(num_ctx: int | None = None) -> dict[str, Any]:
@@ -247,7 +271,6 @@ def grounded_text(context: dict[str, Any], caption: str | None = None) -> str:
 class Captioner:
     def __init__(
         self,
-        ollama: str | None = None,
         model: str | None = None,
         num_ctx: int | None = None,
     ):
@@ -256,14 +279,12 @@ class Captioner:
         Ohne `model` gilt, was Umgebung oder Setup jetzt sagen -- nicht der
         Stand beim Import.
         """
-        self._url = ollama_url(ollama)
         self._model = model or caption_model()
         self._num_ctx = num_ctx
-        pool = litellm_url()
-        if pool:
-            logger.info("Captions via LiteLLM %s model=%s", pool, self._model)
+        if llm_mode() == "ollama":
+            logger.info("Captions via Ollama direkt %s model=%s (kein GPU-Tor)", llm_target(), self._model)
         else:
-            logger.info("Captions via Ollama %s model=%s", self._url, self._model)
+            logger.info("Captions via LiteLLM %s model=%s", llm_target(), self._model)
 
     def caption(self, file_path: str, context: dict[str, Any] | None = None) -> str | None:
         result = self.caption_structured(file_path, context)
@@ -313,6 +334,9 @@ class Captioner:
             tags = parsed.get("scene_tags") or []
             parsed["scene_tags"] = [str(t).lower().strip() for t in tags if str(t).strip()][:8]
             return parsed
+        except GpuBusy:
+            # Kein Fehler des Fotos: der Lauf pausiert und fragt erneut.
+            raise
         except Exception as e:
             logger.warning("Captioning failed for %s: %s", file_path, e)
             return None
@@ -330,6 +354,9 @@ class Captioner:
         """
         try:
             raw = self._complete(prompt, [])
+        except GpuBusy as busy:
+            logger.info("Textanfrage ausgelassen, %s", busy.reason)
+            return None
         except Exception as e:
             logger.warning("Textanfrage fehlgeschlagen: %s", e)
             return None
@@ -338,15 +365,15 @@ class Captioner:
         return _parse_json(raw)
 
     def _complete(self, prompt: str, images: list[str]) -> str:
-        """LiteLLM `/v1/chat/completions`, sonst Ollama `/api/chat`.
+        """LiteLLM `/v1/chat/completions`, mit ``PHOTOVAULT_LLM=ollama`` Ollama `chat`.
 
-        Das Modell ist ein Pool-Alias (`local`). Welches Gewicht haengt, steht
-        nur in der LiteLLM-Config -- PhotoVault schickt keinen Ollama-Tag.
+        Mit LiteLLM ist das Modell ein Pool-Alias (`local`); welches Gewicht
+        haengt, steht nur in der LiteLLM-Config. Ollama direkt nur, wenn
+        ausdruecklich gewaehlt (photovault#26) -- dort gibt es kein GPU-Tor.
         """
-        pool = litellm_url()
-        if pool:
-            return _content_from_openai(self._via_litellm(pool, prompt, images))
-        return _content_from_ollama(self._via_ollama(prompt, images))
+        if llm_mode() == "ollama":
+            return _content_from_ollama(self._via_ollama(prompt, images))
+        return _content_from_openai(self._via_litellm(litellm_url(), prompt, images))
 
     def _via_litellm(self, pool: str, prompt: str, images: list[str]) -> dict[str, Any]:
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
@@ -371,9 +398,10 @@ class Captioner:
             headers=litellm_headers(),
         )
 
+
     def _via_ollama(self, prompt: str, images: list[str]) -> dict[str, Any]:
-        return post_json(
-            f"{self._url}/api/chat",
+        return ollama_post(
+            "chat",
             {
                 "model": self._model,
                 "stream": False,

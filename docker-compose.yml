@@ -64,6 +64,10 @@ services:
       - "${API_PORT:-8000}:8000"
     environment:
       QDRANT_URL: http://qdrant:6333
+      # Ortszeit fuer DateTimeOriginal (Issue #43). Ohne TZ ist der Container
+      # UTC, und zurueckgeschriebene Aufnahmezeiten stuenden ein, zwei Stunden
+      # zu frueh in der Datei.
+      TZ: ${TZ:-Europe/Berlin}
       # Quellenliste und Einstellungen liegen im gemounteten ./data, damit sie
       # einen Neubau des Containers überleben -- der Wizard erstellt ihn nach
       # der Ordnerwahl neu (beschreibbare Mounts), und start.bat liest die
@@ -81,6 +85,10 @@ services:
       # gewinnt darueber, damit ein eigenes Ollama eingetragen werden kann.
       # OLLAMA_URL in der .env dagegen naegelt es fest (Umgebung > Datei).
       PHOTOVAULT_OLLAMA_DEFAULT: http://ollama:11434
+      # LiteLLM oder Ollama direkt (photovault#26). Leer heisst: die Wahl im
+      # Wizard gilt ("Ollama" dort = PHOTOVAULT_LLM=ollama), ohne Wahl LiteLLM.
+      # Eine feste Vorgabe hier wuerde die Wahl im Wizard ueberstimmen.
+      PHOTOVAULT_LLM: ${PHOTOVAULT_LLM:-}
       OLLAMA_URL: ${OLLAMA_URL:-}
       # Nur fuer einen LiteLLM-Pool (Entwicklungsmaschine); leer heisst: keiner.
       LITELLM_URL: ${LITELLM_URL:-}

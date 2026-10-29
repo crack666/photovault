@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import timezone
 from pathlib import Path
+
+from ingest.localtime import local_day, parse_utc
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +64,10 @@ class Normalizer:
             getattr(record, "file_mtime", None),
             getattr(record, "file_ctime", None),
         ]
-        stamps = [c[:10] for c in candidates if c and len(c) >= 10]
+        # Tag in Ortszeit: die Dateizeit liegt in UTC vor, der Kalendertag,
+        # den ein Mensch dem Foto gibt, ist der vor Ort.
+        days = [local_day(c) for c in candidates if c and len(c) >= 10]
+        stamps = [d.isoformat() for d in days if d]
         if not stamps:
             return
         oldest = min(stamps)
@@ -141,9 +147,16 @@ class Normalizer:
         if len(record.date) != 10:
             record.taken_at = None
             return
+        # Der Index bleibt in UTC. Ob die Dateizeit zum Tag passt, entscheidet
+        # aber der Tag in Ortszeit -- sonst faellt eine um 00:30 empfangene
+        # Datei auf den Vortag und verliert ihre Uhrzeit (Issue #43).
         mtime = getattr(record, "file_mtime", None)
-        if mtime and str(mtime)[:10] == record.date and len(str(mtime)) >= 19:
-            record.taken_at = f"{str(mtime)[:19]}Z"
+        day = local_day(mtime) if mtime and len(str(mtime)) >= 19 else None
+        if day is not None and day.isoformat() == record.date:
+            aware = parse_utc(mtime)
+            stamp = (aware.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                     if aware else str(mtime)[:19])
+            record.taken_at = f"{stamp}Z"
             return
         record.taken_at = f"{record.date}T00:00:00Z"
 

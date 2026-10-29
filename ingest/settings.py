@@ -29,13 +29,15 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: Vorgaben fuer eine frische Installation ohne Pool: Ollama auf dem Host,
+#: Vorgaben fuer eine frische Installation ohne Pool: noch kein Weg gewaehlt,
 #: kein Caption-Modell gewaehlt (das tut der Wizard, nach gemessenem VRAM),
 #: der Embedder fest -- die Textvektor-Groesse der Collection haengt daran.
 DEFAULTS: dict[str, Any] = {
     "setup": {"done": False, "step": "sources"},
     "llm": {
-        "mode": "ollama",          # ollama | openai | off
+        # "" = noch nichts gewaehlt | ollama | openai | off. "ollama" ist
+        # dasselbe wie PHOTOVAULT_LLM=ollama (ingest.ollama_client.llm_mode).
+        "mode": "",
         "url": "",                 # leer: Vorgabe des Modus
         "key": "",                 # nur fuer openai
         "caption_model": "",
@@ -154,13 +156,37 @@ def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip()
 
 
-def llm_mode() -> str:
-    """`ollama`, `openai` oder `off`. Ein gesetzter Pool in der Umgebung ist
-    der alte Weg und zaehlt als `openai` -- LiteLLM spricht dieses Format."""
+def chosen_mode() -> str:
+    """Was im Wizard gewaehlt ist: `ollama`, `openai`, `off` -- oder leer.
+
+    Nur die Datei, nicht die Umgebung. Welcher Weg *gilt*, entscheidet
+    `ingest.ollama_client.llm_mode()` (Umgebung > diese Wahl > LiteLLM).
+    """
+    mode = str((load().get("llm") or {}).get("mode") or "")
+    return mode if mode in MODES else ""
+
+
+def _env_mode() -> str:
+    """`PHOTOVAULT_LLM` in der Umgebung, normalisiert; leer = nicht gesetzt."""
+    raw = _env("PHOTOVAULT_LLM").lower()
+    if not raw:
+        return ""
+    return "ollama" if raw == "ollama" else "litellm"
+
+
+def _env_pool() -> bool:
+    """Legt die Umgebung LiteLLM fest? Dann spricht man Pool-Aliasse.
+
+    Ja bei gesetztem ``LITELLM_URL``, und bei ``PHOTOVAULT_LLM=litellm``,
+    solange der Wizard keinen eigenen Anbieter (``openai``) eingetragen hat --
+    dessen Modellnamen gelten dann. Nie bei ``PHOTOVAULT_LLM=ollama``.
+    """
+    mode = _env_mode()
+    if mode == "ollama":
+        return False
     if _env("LITELLM_URL") or _env("PHOTOVAULT_EMBED_URL"):
-        return "openai"
-    mode = str((load().get("llm") or {}).get("mode") or "ollama")
-    return mode if mode in MODES else "ollama"
+        return True
+    return mode == "litellm" and chosen_mode() != "openai"
 
 
 def pool_url() -> str:
@@ -184,21 +210,17 @@ def pool_key() -> str:
     return ""
 
 
-def ollama_base() -> str:
-    """Adresse von Ollama.
+def wizard_ollama_url() -> str:
+    """Die im Wizard eingetragene Ollama-Adresse (nur Modus `ollama`), sonst leer.
 
-    `OLLAMA_URL` in der Umgebung nagelt sie fest; sonst die im Wizard
-    eingetragene (Modus `ollama`); sonst `PHOTOVAULT_OLLAMA_DEFAULT` -- die
-    Compose setzt darueber das Ollama aus dem Buendel, ohne dem Wizard die
-    Wahl zu nehmen; sonst der Rechner selbst.
+    Welche Adresse insgesamt gilt -- Umgebung, diese, Buendel, Vorgabe --
+    entscheidet `ingest.ollama_client.ollama_url()`; alle Ollama-Adressen
+    stehen dort (photovault#26).
     """
-    env = _env("OLLAMA_URL")
-    if env:
-        return env.rstrip("/")
     llm = load().get("llm") or {}
     if llm.get("mode") == "ollama" and llm.get("url"):
         return str(llm["url"]).rstrip("/")
-    return (_env("PHOTOVAULT_OLLAMA_DEFAULT") or "http://127.0.0.1:11434").rstrip("/")
+    return ""
 
 
 def caption_model() -> str:
@@ -212,19 +234,23 @@ def caption_model() -> str:
     env = _env("PHOTOVAULT_CAPTION_MODEL")
     if env:
         return env
-    if _env("LITELLM_URL"):
+    if _env_pool():
         return "local"
     llm = load().get("llm") or {}
     if llm.get("mode") == "off":
         return ""
-    return str(llm.get("caption_model") or "")
+    chosen = str(llm.get("caption_model") or "")
+    if chosen:
+        return chosen
+    # PHOTOVAULT_LLM=ollama ohne Wizard: die Vorgabe aus dem README (#26).
+    return "qwen3.8:27b" if _env_mode() == "ollama" else ""
 
 
 def embed_model() -> str:
     env = _env("PHOTOVAULT_EMBED_MODEL")
     if env:
         return env
-    if _env("LITELLM_URL"):
+    if _env_pool():
         return "embedder"
     llm = load().get("llm") or {}
     if llm.get("mode") == "off":

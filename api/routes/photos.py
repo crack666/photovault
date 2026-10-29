@@ -7,7 +7,7 @@ und verknuepft gleichartige Abschnitte ueber Events hinweg.
 from __future__ import annotations
 
 import logging
-import os
+import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -25,7 +25,6 @@ from ingest.reembed import apply_annotations, rebuild_text_vectors
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 
 class AnnotateRequest(BaseModel):
@@ -129,7 +128,7 @@ def set_caption(point_id: str, req: CaptionRequest) -> dict:
         points=[point_id],
         wait=True,
     )
-    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS)
     return {"id": point_id, "caption_de": text or None,
             "locked": bool(req.lock and text), "reembedded": stats.get("updated", 0)}
 
@@ -179,10 +178,16 @@ def accept_date(point_id: str) -> dict:
             logger.warning("EXIF-Datum nicht schreibbar (%s): %s", path, e)
             reason = str(e)
     stamp = when.strftime("%Y-%m-%dT%H:%M:%S")
+    if when.tzinfo is not None:
+        from ingest.localtime import to_local
+
+        day = to_local(when).strftime("%Y-%m-%d")
+    else:
+        day = when.strftime("%Y-%m-%d")
     q.set_payload(
         collection_name=PHOTOS,
         payload={
-            "date": when.strftime("%Y-%m-%d"),
+            "date": day,
             "taken_at": stamp,
             "date_source": "accepted",
             "date_confidence": 1.0,
@@ -190,10 +195,10 @@ def accept_date(point_id: str) -> dict:
         points=[point_id],
         wait=True,
     )
-    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS)
     return {
         "id": point_id,
-        "date": when.strftime("%Y-%m-%d"),
+        "date": day,
         "taken_at": stamp,
         "written": written,
         "exif_reason": reason,
@@ -265,7 +270,7 @@ def set_date(point_id: str, req: SetDateRequest) -> dict:
         points=[point_id],
         wait=True,
     )
-    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS, ollama_url=OLLAMA_URL)
+    stats = rebuild_text_vectors(q, [point_id], collection=PHOTOS)
     return {
         "id": point_id,
         "date": day,
@@ -277,8 +282,22 @@ def set_date(point_id: str, req: SetDateRequest) -> dict:
 
 
 def _when_from_payload(payload: dict) -> datetime | None:
-    raw = payload.get("taken_at") or payload.get("date") or ""
-    raw = str(raw).replace("Z", "")
+    """Zeitpunkt aus dem Index.
+
+    `taken_at` mit `Z` ist UTC und kommt mit Zone zurueck -- der EXIF-Schreiber
+    rechnet in Ortszeit um (Issue #43). Mitternacht heisst „Uhr unbekannt“
+    und bleibt der blanke Tag; umgerechnet waere daraus 02:00 geworden.
+    """
+    raw = str(payload.get("taken_at") or payload.get("date") or "")
+    if len(raw) >= 19 and raw[11:19] != "00:00:00":
+        from ingest.localtime import parse_utc
+
+        aware = parse_utc(raw)
+        if aware is not None:
+            return aware.astimezone(timezone.utc)
+    raw = raw.replace("Z", "")
+    if len(raw) >= 19 and raw[11:19] == "00:00:00":
+        raw = raw[:10]
     for fmt, n in (("%Y-%m-%dT%H:%M:%S", 19), ("%Y-%m-%d", 10)):
         try:
             return datetime.strptime(raw[:n], fmt)
@@ -315,7 +334,7 @@ def set_captions(req: BulkCaptionRequest) -> dict:
         wait=True,
     )
     stats = (
-        rebuild_text_vectors(q, req.photo_ids, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        rebuild_text_vectors(q, req.photo_ids, collection=PHOTOS)
         if req.reembed else {}
     )
     return {"updated": len(req.photo_ids), "locked": bool(req.lock),
@@ -390,8 +409,16 @@ def photo_thumb(point_id: str, size: int = 320):
 
 
 @router.get("/{point_id}/media")
-def photo_media(point_id: str):
-    """Originaldatei — bei Videos mit Range, damit der Player spulen kann."""
+@router.get("/{point_id}/media/{name}")
+def photo_media(point_id: str, name: str = ""):
+    """Originaldatei — bei Videos mit Range, damit der Player spulen kann.
+
+    Der Dateiname am Ende der Adresse wird nicht gelesen, er steht nur fuer
+    den Browser da: wer das Bild aus der Grossansicht in den Explorer zieht,
+    bekommt die Datei unter dem Namen, den die Adresse traegt. Ohne ihn hiess
+    jede Kopie `media` (vorher `thumb.jpg`, und das zweite Bild ueberschrieb
+    das erste).
+    """
     q = client()
     try:
         points = q.retrieve(
@@ -415,11 +442,18 @@ def photo_media(point_id: str):
         raise err
     from ingest.media import kind_of, video_mime
 
-    mime = video_mime(path) if kind_of(path) == "video" else "image/jpeg"
+    if kind_of(path) == "video":
+        mime = video_mime(path)
+    else:
+        # Nicht pauschal JPEG: ein PNG oder HEIC unter falschem Typ zeigt der
+        # Browser nicht an, und ein gezogenes HEIC bekaeme die falsche Endung.
+        mime = mimetypes.guess_type(src.name)[0] or "application/octet-stream"
     return FileResponse(
         path,
         media_type=mime,
         filename=src.name,
+        # inline: im neuen Tab angezeigt statt heruntergeladen.
+        content_disposition_type="inline",
         headers={"Cache-Control": "private, max-age=3600"},
     )
 
@@ -442,7 +476,7 @@ def annotate(req: AnnotateRequest) -> AnnotateResponse:
     reembedded = failed = 0
     if req.reembed and result.get("changed_ids"):
         stats = rebuild_text_vectors(
-            q, result["changed_ids"], collection=PHOTOS, ollama_url=OLLAMA_URL
+            q, result["changed_ids"], collection=PHOTOS
         )
         reembedded, failed = stats["updated"], stats["failed"]
     return AnnotateResponse(
@@ -480,7 +514,7 @@ def reembed(req: ReembedRequest) -> dict:
     if not ids:
         raise HTTPException(400, "Weder photo_ids noch ein Album mit Treffern angegeben")
     try:
-        return rebuild_text_vectors(q, ids, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        return rebuild_text_vectors(q, ids, collection=PHOTOS)
     except Exception as e:
         logger.exception("Reembed failed")
         raise HTTPException(500, f"Re-Embed fehlgeschlagen: {e}") from e

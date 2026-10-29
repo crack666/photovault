@@ -9,14 +9,25 @@ from ingest.captioner import Captioner, jpeg_b64, run_captions
 
 
 @pytest.fixture(autouse=True)
-def _ohne_litellm(monkeypatch):
-    """Bestehende Tests beschreiben den Ollama-Fallback, nicht den Pool --
-    mit benannten Modellen: seit die Namen zur Laufzeit aufgeloest werden,
-    hiesse "nichts gesetzt" sonst "nichts vorzuwaermen"."""
+def _ohne_litellm_env(monkeypatch):
+    """Ohne Angabe gilt der lokale Proxy -- einen Ollama-Rueckfall gibt es nicht mehr.
+
+    Mit benannten Modellen: seit die Namen zur Laufzeit aufgeloest werden
+    (Setup-Wizard), hiesse "nichts gesetzt" sonst "nichts vorzuwaermen"."""
     monkeypatch.delenv("LITELLM_URL", raising=False)
     monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
     monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "local")
     monkeypatch.setenv("PHOTOVAULT_EMBED_MODEL", "embedder")
+
+
+def _chat_answer(content):
+    return {"choices": [{"message": {"content": content}}]}
+
+
+def _images(payload):
+    """Die base64-Bilder einer Chat-Anfrage, in Reihenfolge."""
+    parts = payload["messages"][0]["content"]
+    return [p["image_url"]["url"].split(",", 1)[1] for p in parts if p["type"] == "image_url"]
 
 
 class _Rec:
@@ -91,23 +102,23 @@ def test_jpeg_b64_shrinks_and_accepts_a_loaded_image(tmp_path):
 def test_captioner_uses_the_given_image_and_reads_no_file(monkeypatch):
     sent = {}
 
-    def fake_post(url, payload, timeout=180):
-        sent["images"] = payload["messages"][0]["content"], payload["messages"][0]["images"]
-        return {"message": {"content": '{"caption_de": "hallo", "scene_tags": []}'}}
+    def fake_post(url, payload, timeout=180, headers=None):
+        sent["images"] = _images(payload)
+        return _chat_answer('{"caption_de": "hallo", "scene_tags": []}')
 
     monkeypatch.setattr("ingest.captioner.post_json", fake_post)
     # Der Pfad existiert nicht -- ein Lesezugriff wuerde also auffliegen.
     result = Captioner().caption_structured("/gibt/es/nicht.jpg", {}, image_b64="AAAA")
     assert result["caption_de"] == "hallo"
-    assert sent["images"][1] == ["AAAA"]
+    assert sent["images"] == ["AAAA"]
 
 
 def test_captioner_falls_back_to_reading_the_file(tmp_path, monkeypatch):
     captured = {}
 
-    def fake_post(url, payload, timeout=180):
-        captured["b64"] = payload["messages"][0]["images"][0]
-        return {"message": {"content": '{"caption_de": "x", "scene_tags": []}'}}
+    def fake_post(url, payload, timeout=180, headers=None):
+        captured["b64"] = _images(payload)[0]
+        return _chat_answer('{"caption_de": "x", "scene_tags": []}')
 
     monkeypatch.setattr("ingest.captioner.post_json", fake_post)
     path = _tiny_jpeg_path(tmp_path)
@@ -120,36 +131,11 @@ class _Cfg:
     skip_caption = False
 
 
-def test_warmup_loads_caption_model_then_repins_embedder(monkeypatch):
-    """Reihenfolge zaehlt: das grosse Modell zuerst, dann den Embedder zurueck.
-
-    Ollama wirft beim Reload andere Modelle aus dem VRAM; der Embedder muss
-    danach wieder angeheftet werden, sonst laedt ihn der erste Textvektor neu.
-    """
-    from ingest.ollama_client import CAPTION_MODEL, CAPTION_NUM_CTX, EMBED_MODEL
-    from ingest.pipeline import IngestConfig, IngestPipeline
-
-    calls = []
-
-    def fake_post(url, payload, timeout=180):
-        calls.append((url.rsplit("/", 1)[-1], payload))
-        return {}
-
-    monkeypatch.setattr("ingest.ollama_client.post_json", fake_post)
-    IngestPipeline(IngestConfig(source="/x"))._warm_caption_model()
-
-    assert [c[0] for c in calls] == ["generate", "embed"]
-    assert calls[0][1]["model"] == CAPTION_MODEL
-    assert calls[0][1]["options"]["num_ctx"] == CAPTION_NUM_CTX
-    assert calls[0][1]["keep_alive"] == -1
-    assert calls[1][1]["model"] == EMBED_MODEL
-
-
 def test_warmup_failure_does_not_abort_the_run(monkeypatch):
     from ingest.pipeline import IngestConfig, IngestPipeline
 
-    def boom(url, payload, timeout=180):
-        raise OSError("ollama weg")
+    def boom(url, payload, timeout=180, headers=None):
+        raise OSError("litellm weg")
 
     monkeypatch.setattr("ingest.ollama_client.post_json", boom)
     # Darf nicht werfen -- der erste Caption-Aufruf laedt das Modell sonst eben.
@@ -172,34 +158,6 @@ def test_num_ctx_zero_lets_the_profile_decide(monkeypatch):
     options = cap.caption_options()
     assert "num_ctx" not in options
     assert options["num_predict"] == 512
-
-
-def test_request_omits_num_ctx_when_disabled(monkeypatch):
-    import ingest.captioner as cap
-
-    sent = {}
-
-    def fake_post(url, payload, timeout=180):
-        sent.update(payload)
-        return {"message": {"content": '{"caption_de": "x", "scene_tags": []}'}}
-
-    monkeypatch.setattr(cap, "CAPTION_NUM_CTX", 0)
-    monkeypatch.setattr(cap, "post_json", fake_post)
-    cap.Captioner().caption_structured("/nix.jpg", {}, image_b64="AAAA")
-    assert "num_ctx" not in sent["options"]
-
-
-def test_warmup_follows_the_same_rule(monkeypatch):
-    import ingest.captioner as cap
-    from ingest.pipeline import IngestConfig, IngestPipeline
-
-    calls = []
-    monkeypatch.setattr(cap, "CAPTION_NUM_CTX", 0)
-    monkeypatch.setattr("ingest.ollama_client.post_json",
-                        lambda url, payload, timeout=180: calls.append(payload) or {})
-    IngestPipeline(IngestConfig(source="/x"))._warm_caption_model()
-    assert "num_ctx" not in calls[0]["options"]
-    assert calls[0]["options"]["num_predict"] == 1
 
 
 def test_captioner_goes_through_litellm_chat(monkeypatch):
@@ -269,6 +227,31 @@ def test_warmup_via_litellm_pins_caption_and_embedder(monkeypatch):
     assert calls[0][1]["model"] == CAPTION_MODEL
     assert calls[1][1]["model"] == EMBED_MODEL
     assert "num_ctx" not in calls[0][1]
+
+
+def test_no_path_talks_to_ollama_directly():
+    """photovault#19/#26: Ollama-Adressen und -Endpunkte stehen nur in
+    ``ingest/ollama_client.py``, hinter dem Schalter ``PHOTOVAULT_LLM=ollama``.
+
+    Gesucht wird im Code, nicht in der Doku: eine Ollama-Adresse in einem
+    anderen Modul hiesse, dass ein Pfad am Schalter -- und damit auf crackdesk
+    am GPU-Tor -- vorbeigeht. Dass ohne Schalter nichts zu Ollama geht, haelt
+    ``tests/test_ollama_wahl.py`` fest.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    pattern = re.compile(r"11434|/api/(chat|generate|embed|tags)|OLLAMA_URL")
+    hits = []
+    for folder in ("ingest", "api", "tools", "scripts"):
+        for path in sorted((root / folder).rglob("*.py")):
+            if path == root / "ingest" / "ollama_client.py":
+                continue
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if pattern.search(line):
+                    hits.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
+    assert hits == []
 
 
 def test_env_file_value_strips_quotes(tmp_path):

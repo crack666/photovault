@@ -1,5 +1,5 @@
 """Nur Dateien ohne echte Aufnahmezeit werden beschrieben — Kamera bleibt."""
-from datetime import datetime
+from datetime import datetime, timezone
 
 from tools.exif_repair import _parse_taken_at, candidate
 
@@ -11,7 +11,7 @@ def test_filename_derived_whatsapp_is_a_candidate():
         "date_source": "filename",
     })
     assert hit is not None
-    assert hit[1] == datetime(2018, 10, 21, 17, 11, 11)
+    assert hit[1] == datetime(2018, 10, 21, 17, 11, 11, tzinfo=timezone.utc), "UTC, mit Zone"
 
 
 def test_camera_exif_is_never_a_candidate():

@@ -1,6 +1,15 @@
 """Datum aus Dateizeiten: letzter Ausweg, damit nichts durch Zeitfilter faellt."""
+import pytest
+
 from ingest.normalizer import Normalizer
 from ingest.pipeline import PhotoRecord
+
+
+@pytest.fixture(autouse=True)
+def _ortszeit_utc(monkeypatch):
+    """Der Tag der Dateizeit zaehlt in Ortszeit (Issue #43). Diese Faelle
+    sind in UTC gedacht -- ohne feste Zone haengen sie an der Rechneruhr."""
+    monkeypatch.setenv("PHOTOVAULT_TZ", "UTC")
 
 
 def _record(**kw) -> PhotoRecord:

@@ -22,14 +22,13 @@ def rebuild_text_vectors(
     client,
     point_ids: list[str],
     collection: str = "photos",
-    ollama_url: str | None = None,
     embedder: TextEmbedder | None = None,
 ) -> dict[str, int]:
     """Dokument + Kopfzeile + Text-Vektor fuer die gegebenen Punkte erneuern."""
     stats = {"requested": len(point_ids), "updated": 0, "skipped": 0, "failed": 0}
     if not point_ids:
         return stats
-    emb = embedder or TextEmbedder(ollama_url)
+    emb = embedder or TextEmbedder()
 
     for chunk in _chunks(point_ids, BATCH):
         try:

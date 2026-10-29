@@ -97,7 +97,25 @@ def fake(monkeypatch):
 
 
 @pytest.fixture
-def client(fake):
+def quellen(monkeypatch, tmp_path):
+    """Eine eigene `sources.txt` -- nicht die der Maschine.
+
+    Die echte liegt im Repo, ist aber gitignored und maschinenspezifisch.
+    Ohne sie gaben `/api/sources` 404 und `/api/sources/browse` 500, und
+    `photo_root()` war leer, sodass `/api/trash/empty` mit 500 verweigerte
+    (#25). Ob ein Test gruen ist, darf nicht davon abhaengen, ob auf dem
+    Rechner gerade eine Quellendatei liegt -- und wenn ja, welche.
+    """
+    datei = tmp_path / "sources.txt"
+    datei.write_text("/mnt/photo/Urlaub\n", encoding="utf-8")
+    monkeypatch.setattr("api.routes.sources.FILE", str(datei))
+    monkeypatch.setattr("ingest.spaces.SOURCES_FILE", str(datei))
+    monkeypatch.delenv("PHOTOVAULT_PHOTO_ROOT", raising=False)
+    return datei
+
+
+@pytest.fixture
+def client(fake, quellen):
     from api.main import app
 
     with TestClient(app) as c:
@@ -143,6 +161,29 @@ class TestStatischeAuslieferung:
         r = client.get("/jobs.html")
         assert r.status_code == 200
         assert r.headers["cache-control"] == "no-cache"
+
+    def test_verlinkte_tab_adressen_werden_auch_ausgeliefert(self, client):
+        """Was `tabUrl` im Browser baut, muss der Server auch kennen.
+
+        Die Jobs-Seite verlinkte Schritt 4 auf `/index.html?tab=label` --
+        getippt, nicht abgeleitet, und ein totes Ende: die Anwendung liegt
+        unter `/`, eine Route `index.html` gibt es nicht. Nichts hat gewarnt,
+        der Browser zeigte `{"detail":"Not Found"}`.
+
+        Darum hier beide Seiten des Vertrags: die Adresse, die `nav.js`
+        erzeugt, und die Antwort des Servers darauf.
+        """
+        import re
+
+        from api.main import WEB_DIR
+
+        nav = (WEB_DIR / "static" / "core" / "nav.js").read_text(encoding="utf-8")
+        muster = re.search(r"return `(/[^`]*?)\$\{encodeURIComponent\(id\)\}`", nav)
+        assert muster, "tabUrl sieht anders aus als erwartet -- Test nachziehen"
+        assert client.get(muster.group(1) + "label").status_code == 200
+
+        # Und die Falle, in die es ging, bleibt eine Falle.
+        assert client.get("/index.html").status_code == 404
 
     def test_module_werden_nicht_gecacht(self, client):
         r = client.get("/static/core/dom.js")
@@ -196,6 +237,13 @@ class TestIngestZustand:
 
 
 class TestPapierkorb:
+    @pytest.fixture(autouse=True)
+    def _wurzel(self, monkeypatch):
+        # Ausdruecklich, nicht aus sources.txt geraten: ohne bestimmbare
+        # Wurzel verweigert das Leeren mit 500, bevor es `confirm` oder den
+        # Papierkorb-Vermerk ansieht -- und genau die sollen hier halten.
+        monkeypatch.setenv("PHOTOVAULT_PHOTO_ROOT", "/mnt/photo")
+
     def test_leere_kennungsliste_ist_ein_fehler(self, client):
         r = client.post("/api/trash", json={"photo_ids": []})
         assert r.status_code == 400
@@ -258,7 +306,7 @@ class TestQuellen:
         r = client.post("/api/sources/add", json={"path": "/", "exclude": False})
         assert r.status_code == 403
 
-    def test_ohne_parameter_faengt_er_an_der_wurzel_an(self, client, monkeypatch):
+    def test_ohne_parameter_faengt_er_an_der_wurzel_an(self, client, monkeypatch, tmp_path):
         """Die Voreinstellung war `/` -- und lief damit in die eigene
         Schranke.
 
@@ -266,11 +314,18 @@ class TestQuellen:
         der Aufruf *ohne* Parameter gab 403, weil `/` nicht in der
         Bibliothek liegt. "Nicht angegeben" und "leer angegeben" muessen
         dasselbe heissen.
+
+        Die Wurzel ist ein echtes Verzeichnis unter `tmp_path`: `browse`
+        listet sie wirklich, und `/mnt/photo` gibt es nur dort, wo das NAS
+        eingehaengt ist.
         """
-        monkeypatch.setattr("ingest.spaces.photo_root", lambda: "/mnt/photo")
+        wurzel = tmp_path / "photo"
+        (wurzel / "Urlaub").mkdir(parents=True)
+        monkeypatch.setattr("ingest.spaces.photo_root", lambda: str(wurzel))
         r = client.get("/api/sources/browse")
         assert r.status_code == 200
-        assert r.json()["path"] == "/mnt/photo"
+        assert r.json()["path"] == str(wurzel)
+        assert [d["name"] for d in r.json()["dirs"]] == ["Urlaub"]
         assert r.json()["parent"] is None      # kein Weg nach oben an der Wurzel
 
     def test_ohne_bestimmbare_wurzel_bleibt_der_waehler_benutzbar(self, client, monkeypatch, tmp_path):
@@ -283,6 +338,33 @@ class TestQuellen:
         monkeypatch.setattr("ingest.spaces.photo_root", lambda: "")
         r = client.get("/api/sources/browse", params={"path": str(tmp_path)})
         assert r.status_code == 200
+
+    def test_ohne_sources_txt_bleibt_der_waehler_benutzbar(self, client, monkeypatch,
+                                                            quellen, tmp_path):
+        """Der eigentliche Einrichtungsfall: es gibt die Datei noch gar nicht.
+
+        `browse` las sie ungeprueft und lief in einen `FileNotFoundError`
+        -- eine 500 genau dort, wo die Jobs-Seite sagt "Unten einen Ordner
+        als Quelle hinzufuegen" (#25).
+        """
+        quellen.unlink()
+        (tmp_path / "Urlaub").mkdir()
+        monkeypatch.setattr("ingest.spaces.photo_root", lambda: "")
+        r = client.get("/api/sources/browse", params={"path": str(tmp_path)})
+        assert r.status_code == 200
+        assert [(d["name"], d["listed"]) for d in r.json()["dirs"]] == [("Urlaub", None)]
+
+    def test_erste_quelle_legt_die_datei_an(self, client, monkeypatch, quellen, tmp_path):
+        quellen.unlink()
+        ordner = tmp_path / "Urlaub"
+        ordner.mkdir()
+        monkeypatch.setattr("ingest.spaces.photo_root", lambda: "")
+        r = client.post("/api/sources/add", json={"path": str(ordner), "exclude": False})
+        assert r.status_code == 200
+        # Die neue Datei bekommt die erklaerenden Kopfzeilen des Wizards (#18);
+        # die einzige wirksame Zeile ist der Ordner.
+        zeilen = quellen.read_text(encoding="utf-8").splitlines()
+        assert [z for z in zeilen if z.strip() and not z.startswith("#")] == [str(ordner)]
 
 
 class TestKarte:
@@ -390,6 +472,30 @@ class TestBildfehler:
         assert archiv["ok"] is False
         assert "nicht gemountet" in archiv["why"]
         assert archiv["lost"]
+
+
+class TestOriginal:
+    """Die Grossansicht laedt das Original unter `/media/<dateiname>`.
+
+    Anlass: Ziehen aus der Grossansicht in den Explorer legte jede Kopie als
+    `thumb.jpg` ab, und das zweite Bild ueberschrieb das erste. Der Name am
+    Ende der Adresse ist nur fuer den Browser da -- welche Datei kommt, sagt
+    allein die Kennung.
+    """
+
+    def test_name_in_der_adresse_waehlt_nichts_aus(self, client, fake, tmp_path):
+        from PIL import Image
+
+        foto = tmp_path / "IMG_0001.png"
+        Image.new("RGB", (8, 8), (20, 80, 140)).save(foto, format="PNG")
+        fake.punkte = [_Point("a", {"file_path": str(foto)})]
+        r = client.get("/api/photos/a/media/irgendwas.jpg")
+        assert r.status_code == 200
+        assert r.content == foto.read_bytes()
+        # Kein pauschales JPEG mehr, und angezeigt statt heruntergeladen.
+        assert r.headers["content-type"] == "image/png"
+        assert r.headers["content-disposition"].startswith("inline")
+        assert "IMG_0001.png" in r.headers["content-disposition"]
 
 
 class TestBildtextSuche:

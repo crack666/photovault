@@ -122,6 +122,7 @@ nav { display: flex; gap: 8px; }
 .primary,
 .primary-action,
 .starter button.go,
+.starter a.go,
 .joiner.on,
 .atlas-seg .chip.on,
 #btn-select-mode.on {
@@ -155,10 +156,59 @@ nav { display: flex; gap: 8px; }
   text-align: center; box-shadow: 0 12px 40px #0006;
 }
 .card h1 { margin: 16px 0 4px; font-size: var(--fs-h1); }
+/* Das Titelbild bleibt beim Scrollen stehen.
+
+   Ein Klick auf eine Kachel zeigt sie hier gross -- nur steht man bei 1.200
+   Gesichtern zwanzig Bildschirme tiefer und sieht davon nichts. Die Auswahl
+   wirkte dadurch wie "passiert nichts". */
+.hero {
+  position: sticky; top: 0; z-index: 3;
+  padding: 8px 0; text-align: center;
+  background: linear-gradient(var(--bg) 70%, transparent);
+}
 .hero img {
   width: 240px; height: 240px; object-fit: cover; border-radius: 50%;
   background: #000; box-shadow: 0 0 0 6px #2a3140;
+  cursor: pointer;
 }
+/* Beim Scrollen schrumpft es, damit es die Kacheln nicht zudeckt. */
+@media (max-height: 1100px) {
+  .hero img { width: 148px; height: 148px; }
+}
+
+/* Waehrend eine Zuordnung laeuft.
+
+   Kein Laufbalken: der Server meldet keinen Fortschritt, und ein Balken, der
+   raet, ist schlimmer als ein Kreisel, der nur "ich arbeite" sagt. Wichtiger
+   als die Anzeige ist ohnehin das Sperren -- sichtbar passierte vorher
+   nichts, also klickte man ein zweites Mal, und die zweite Anfrage machte
+   dieselbe Minute Arbeit noch einmal. */
+.card.laeuft { cursor: progress; }
+.card.laeuft #thumbs, .card.laeuft #suggestions { opacity: .45; pointer-events: none; }
+.card.laeuft #btn-confirm-known {
+  position: relative; padding-left: 2.4rem;
+}
+.card.laeuft #btn-confirm-known::before {
+  content: ""; position: absolute; left: 1rem; top: 50%;
+  width: 14px; height: 14px; margin-top: -7px;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: kreisel .7s linear infinite;
+}
+@keyframes kreisel { to { transform: rotate(360deg); } }
+/* Ein gesperrter Knopf wird sonst blass -- hier soll er lesbar bleiben,
+   denn genau er traegt die Erklaerung, warum gerade nichts geht. */
+.card.laeuft #btn-confirm-known:disabled { opacity: 1; }
+
+/* Das ganze Foto ansehen -- zweiter Knopf, gegenueber dem Ausschliessen. */
+.thumbs .thumb .gross {
+  position: absolute; left: 2px; top: 2px;
+  width: 18px; height: 18px; line-height: 16px; padding: 0;
+  border-radius: var(--r-s); border: 1px solid #3a4353;
+  background: #1b2029; color: #ccd5e2; font-size: 11px;
+  cursor: pointer; opacity: 0; transition: opacity .12s;
+}
+.thumbs .thumb:hover .gross { opacity: 1; }
+.thumbs .thumb .gross:hover { background: #2f3847; color: #fff; }
 .thumbs { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 12px 0 8px; }
 .thumbs .thumb { position: relative; margin: 0; }
 .thumbs .thumb img {

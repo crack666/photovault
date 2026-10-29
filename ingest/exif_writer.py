@@ -21,6 +21,12 @@ droht bei Captions: ein LLM-Satz ohne Marker sähe aus wie eine
 Kamerabeschreibung. Die Notiz in `UserComment` hält fest, woher Datum und
 Satz kamen.
 
+Zeitzone: `DateTimeOriginal` hat keine und gilt als **Ortszeit**. Der Index
+haelt Dateizeiten in UTC. Eine Zeit mit Zone wird deshalb vor dem Schreiben in
+die Ortszeit (`ingest.localtime.zone`) umgerechnet, und die Abweichung von UTC
+landet in `OffsetTimeOriginal` -- dann ist der Zeitpunkt auch fuer Programme
+eindeutig, die die Zone kennen wollen (Issue #43).
+
 Geschrieben wird ohne Neukodierung: `piexif` tauscht nur den EXIF-Block aus,
 die Bilddaten bleiben Byte für Byte dieselben.
 """
@@ -29,7 +35,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +46,18 @@ _DT_IMAGE = 306
 _USER_COMMENT = 37510
 _IMAGE_DESCRIPTION = 270
 _XP_COMMENT = 0x9C9C  # 40092, Windows-Kommentar (UTF-16LE)
+#: OffsetTime (zu 306), OffsetTimeOriginal, OffsetTimeDigitized -- EXIF 2.31.
+_OFFSET_IMAGE = 36880
+_OFFSET_ORIGINAL = 36881
+_OFFSET_DIGITIZED = 36882
 
 MARKER = "photovault"
-#: photovault:src=filename;prev=2009:01:16 01:46:18;mtime=2013-07-13T15:07:22;cap=llm
-_RE_NOTE = re.compile(r"photovault:src=([a-z_]+)(?:;prev=([^;]*?))?(?:;mtime=([^;]*))?(?:;|$)")
+#: photovault:src=filename+mtime;prev=2009:01:16 01:46:18;mtime=2013-07-13T15:07:22Z;cap=llm
+#:
+#: `src=filename` heisst: Tag *und* Uhrzeit aus dem Namen. `src=filename+mtime`:
+#: Tag aus dem Namen, Uhrzeit aus der Dateizeit -- der Name kennt keine Uhr.
+#: `mtime` ist UTC (aeltere Notizen ohne `Z`, gemeint ist dasselbe).
+_RE_NOTE = re.compile(r"photovault:src=([a-z_+]+)(?:;prev=([^;]*?))?(?:;mtime=([^;]*))?(?:;|$)")
 _RE_FIELD = re.compile(r"([a-z_]+)=([^;]*)")
 _NOTE_ORDER = ("src", "prev", "mtime", "cap")
 
@@ -92,6 +106,46 @@ def _safe_dump(exif: dict) -> bytes:
 
 def _fmt(dt: datetime) -> str:
     return dt.strftime("%Y:%m:%d %H:%M:%S")
+
+
+def _fmt_offset(dt: datetime) -> str:
+    """`+02:00` -- das Format von OffsetTimeOriginal."""
+    off = dt.utcoffset()
+    assert off is not None
+    minutes = int(off.total_seconds() // 60)
+    sign = "+" if minutes >= 0 else "-"
+    minutes = abs(minutes)
+    return f"{sign}{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _parse_offset(raw) -> timedelta | None:
+    if not raw:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("ascii", "ignore")
+    m = re.fullmatch(r"\s*([+-])(\d{2}):(\d{2})\s*", str(raw).strip("\x00"))
+    if not m:
+        return None
+    delta = timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
+    return -delta if m.group(1) == "-" else delta
+
+
+def local_stamp(when: datetime) -> datetime:
+    """Was in `DateTimeOriginal` gehoert: Ortszeit, bewusst (mit Zone).
+
+    Ohne Zone gilt `when` schon als Ortszeit -- von Hand eingegeben oder aus
+    einer Kamera -- und bleibt, wie es ist.
+    """
+    if when.tzinfo is None:
+        return when
+    from ingest.localtime import to_local
+
+    return to_local(when)
+
+
+def mtime_note(ts: float) -> str:
+    """Dateizeit fuer die Notiz: UTC, mit `Z`, damit es niemand verwechselt."""
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse(raw) -> datetime | None:
@@ -182,6 +236,26 @@ def read_note(file_path: str) -> tuple[str, str, str] | None:
     return (fields.get("src") or "", fields.get("prev") or "", fields.get("mtime") or "")
 
 
+def read_capture_instant(file_path: str) -> datetime | None:
+    """`DateTimeOriginal` plus `OffsetTimeOriginal` als bewusster Zeitpunkt.
+
+    Ohne Offset-Tag: `None` -- welcher Zeitpunkt gemeint ist, sagt die Datei
+    dann nicht.
+    """
+    import piexif
+
+    try:
+        exif = piexif.load(file_path)
+    except Exception:
+        return None
+    ifd = exif.get("Exif", {})
+    dt = _parse(ifd.get(_DT_ORIGINAL))
+    off = _parse_offset(ifd.get(_OFFSET_ORIGINAL))
+    if dt is None or off is None:
+        return None
+    return dt.replace(tzinfo=timezone(off))
+
+
 def read_capture_time(file_path: str) -> datetime | None:
     import piexif
 
@@ -203,12 +277,21 @@ def write_capture_time(
     dry_run: bool = True,
     overwrite: bool = False,
     preserve_mtime: bool = True,
+    keep_prev: bool = False,
 ) -> dict:
     """Aufnahmezeit setzen.
 
-    `source` nennt die Herkunft (`filename`, `album`, `offset`, …) und landet
-    in der Notiz. Ein vorhandener Wert wird nur mit `overwrite=True` ersetzt --
-    und dann in der Notiz aufbewahrt, damit die Änderung umkehrbar bleibt.
+    `source` nennt die Herkunft (`filename`, `filename+mtime`, `album`,
+    `offset`, …) und landet in der Notiz. Ein vorhandener Wert wird nur mit
+    `overwrite=True` ersetzt -- und dann in der Notiz aufbewahrt, damit die
+    Änderung umkehrbar bleibt. `keep_prev=True` korrigiert einen Wert, den wir
+    selbst geschrieben haben: dann bleibt der `prev` der vorhandenen Notiz
+    stehen, statt unseren eigenen Fehler als Ausgangszustand festzuhalten.
+
+    **Zeitzone.** `when` mit Zone (der Index haelt UTC) wird in Ortszeit
+    geschrieben, und `OffsetTimeOriginal` nennt die Abweichung. `when` ohne
+    Zone gilt schon als Ortszeit. Die Gegenprobe liest beides zurueck und
+    verlangt denselben Zeitpunkt, nicht nur dieselben Ziffern.
 
     **Die Änderungszeit der Datei wird erhalten.** Das ist keine Kosmetik: bei
     WhatsApp-Dateien ist sie die *einzige* Quelle der Uhrzeit -- der Dateiname
@@ -225,8 +308,11 @@ def write_capture_time(
 
     import piexif
 
+    local = local_stamp(when)
+    naive = local.replace(tzinfo=None)
+    offset = _fmt_offset(local) if local.tzinfo is not None else None
     result = {"path": file_path, "written": False, "reason": "", "previous": None,
-              "new": _fmt(when)}
+              "new": _fmt(naive), "offset": offset}
     if Path(file_path).suffix.lower() not in WRITABLE_SUFFIXES:
         result["reason"] = "Format nicht verlustfrei beschreibbar"
         return result
@@ -243,14 +329,28 @@ def write_capture_time(
         if not overwrite:
             result["reason"] = "hat bereits eine Aufnahmezeit"
             return result
-        if existing == when:
+        had_offset = _parse_offset(exif.get("Exif", {}).get(_OFFSET_ORIGINAL))
+        if existing == naive and (offset is None or (
+                had_offset is not None and had_offset == local.utcoffset())):
             result["reason"] = "Wert ist schon korrekt"
             return result
 
-    stamp = _fmt(when).encode("ascii")
-    exif.setdefault("Exif", {})[_DT_ORIGINAL] = stamp
-    exif["Exif"].setdefault(_DT_DIGITIZED, stamp)
+    stamp = _fmt(naive).encode("ascii")
+    ifd = exif.setdefault("Exif", {})
+    ifd[_DT_ORIGINAL] = stamp
+    digitized_ours = _DT_DIGITIZED not in ifd
+    ifd.setdefault(_DT_DIGITIZED, stamp)
     exif.setdefault("0th", {})[_DT_IMAGE] = stamp
+    # Offset gehoert zum Wert, den wir gerade setzen. Ohne bekannte Zone wird
+    # ein alter Offset entfernt -- er wuerde sonst eine andere Uhr behaupten.
+    for tag, ours in ((_OFFSET_ORIGINAL, True), (_OFFSET_IMAGE, True),
+                      (_OFFSET_DIGITIZED, digitized_ours)):
+        if not ours:
+            continue
+        if offset:
+            ifd[tag] = offset.encode("ascii")
+        else:
+            ifd.pop(tag, None)
 
     snap = None
     if preserve_mtime:
@@ -258,17 +358,21 @@ def write_capture_time(
             from ingest.filetimes import snapshot
 
             snap = snapshot(file_path)
-            result["mtime"] = datetime.fromtimestamp(
-                snap["mtime"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            result["mtime"] = mtime_note(snap["mtime"])
         except OSError as e:
             logger.warning("Aenderungszeit von %s nicht lesbar: %s", file_path, e)
 
-    updates = {"src": source}
-    if result["previous"]:
-        updates["prev"] = result["previous"]
-    if result.get("mtime"):
-        updates["mtime"] = result["mtime"]
     existing_note = exif.get("Exif", {}).get(_USER_COMMENT)
+    old_fields = note_fields(existing_note)
+    updates = {"src": source}
+    if keep_prev:
+        updates["prev"] = old_fields.get("prev", "")
+    elif result["previous"]:
+        updates["prev"] = result["previous"]
+    # Die erste festgehaltene Dateizeit bleibt: sie ist die Quelle der Uhr.
+    # Ein spaeterer Lauf nach einem Kopieren saehe nur noch die Kopierzeit.
+    if result.get("mtime") and not old_fields.get("mtime"):
+        updates["mtime"] = result["mtime"]
     exif.setdefault("Exif", {})[_USER_COMMENT] = _merge_user_comment(existing_note, updates)
     if dry_run:
         result["reason"] = "Trockenlauf"
@@ -287,10 +391,19 @@ def write_capture_time(
         result["birth_restored"] = restored["birth"]
 
     check = read_capture_time(file_path)
-    if check != when:
+    if check != naive:
         raise ExifWriteError(
-            f"{file_path}: geschrieben, aber Gegenprobe ergibt {check!r} statt {when!r}"
+            f"{file_path}: geschrieben, aber Gegenprobe ergibt {check!r} statt {naive!r}"
         )
+    if when.tzinfo is not None:
+        # Ziffern allein reichen nicht: 17:51 statt 19:51 waere auch
+        # "derselbe Text". Der Zeitpunkt aus Ortszeit + Offset muss stimmen.
+        instant = read_capture_instant(file_path)
+        if instant is None or instant != when:
+            raise ExifWriteError(
+                f"{file_path}: geschrieben, aber Gegenprobe ergibt Zeitpunkt "
+                f"{instant!r} statt {when!r}"
+            )
     result["written"] = True
     result["reason"] = "geschrieben"
     return result
@@ -404,8 +517,7 @@ def write_caption(
             from ingest.filetimes import snapshot
 
             snap = snapshot(file_path)
-            result["mtime"] = datetime.fromtimestamp(
-                snap["mtime"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            result["mtime"] = mtime_note(snap["mtime"])
         except OSError as e:
             logger.warning("Aenderungszeit von %s nicht lesbar: %s", file_path, e)
 

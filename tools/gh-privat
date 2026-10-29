@@ -1,0 +1,65 @@
+#!/bin/sh
+# `gh`, aber Titel und Text gehen vorher durch die Namenspruefung.
+#
+# Der Commit-Hook sieht Issues und Pull Requests nie: sie gehen per `gh` direkt
+# an GitHub, und bei einem oeffentlichen Repository sind sie oeffentlich, sobald
+# sie entstehen. Am 27.10.2026 stand so ein echter Name in einem Issue-Text,
+# waehrend Code und Commits sauber waren.
+#
+# Nachtraegliches Pruefen hilft dort nicht: ein veroeffentlichter Text steht
+# auch nach dem Bearbeiten noch in der Versionsgeschichte des Issues, die jeder
+# lesen kann. Deshalb vorher oder gar nicht.
+#
+#   tools/gh-privat issue create --title "..." --body "..."
+#   tools/gh-privat pr create --title "..." --body-file text.md
+#
+# Alles andere reicht es unveraendert durch -- `tools/gh-privat pr list` ist
+# einfach `gh pr list`.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+if [ -x "${VIRTUAL_ENV:-/nonexistent}/bin/python" ]; then
+    PY="$VIRTUAL_ENV/bin/python"
+elif [ -x "$HOME/.venvs/photovault/bin/python" ]; then
+    PY="$HOME/.venvs/photovault/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY=python3
+else
+    PY=python
+fi
+
+# Nur was Text veroeffentlicht. Lesende Befehle brauchen keine Pruefung.
+schreibt=0
+case "${1:-} ${2:-}" in
+    "issue create"|"issue edit"|"issue comment"|\
+    "pr create"|"pr edit"|"pr comment"|"release create") schreibt=1 ;;
+esac
+
+if [ "$schreibt" = "1" ]; then
+    # Titel, Text und Textdatei einsammeln -- in eine Datei, einmal pruefen.
+    sammel="$(mktemp)"
+    trap 'rm -f "$sammel"' EXIT
+    naechste=""
+    for arg in "$@"; do
+        case "$naechste" in
+            wert) printf '%s\n' "$arg" >> "$sammel"; naechste="" ; continue ;;
+            datei) [ -f "$arg" ] && cat "$arg" >> "$sammel"; naechste="" ; continue ;;
+        esac
+        case "$arg" in
+            --title|-t|--body|-b) naechste=wert ;;
+            --body-file|-F) naechste=datei ;;
+        esac
+    done
+
+    if [ -s "$sammel" ]; then
+        if ! "$PY" -m tools.privacy_check --text "$sammel"; then
+            echo
+            echo "Nichts gesendet. Das waere oeffentlich gewesen und haette sich"
+            echo "auch durch Bearbeiten nicht mehr zuruecknehmen lassen."
+            exit 1
+        fi
+    fi
+fi
+
+exec gh "$@"

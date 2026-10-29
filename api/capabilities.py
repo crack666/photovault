@@ -3,11 +3,11 @@
 Ein `pip install` beantwortet die Frage nicht, und zwar aus drei Gruenden,
 die alle in diesem Projekt zutreffen:
 
-1. **Ollama ist kein Python-Paket.** Es ist ein eigener Dienst auf dem Host,
-   der laufen muss und dessen Modelle gezogen sein muessen. Kein Paketmanager
-   kann das zusagen -- und `docker compose` auch nicht, denn Ollama laeuft
-   absichtlich ausserhalb des Verbunds (GPU-Durchreichung, zweistellige
-   Gigabyte).
+1. **Die Modelle sind kein Python-Paket.** Sie liegen hinter LiteLLM (ai-stack),
+   einem eigenen Dienst auf dem Host, der laufen und die Pools `local` und
+   `embedder` kennen muss. Kein Paketmanager kann das zusagen -- und
+   `docker compose` auch nicht, denn LiteLLM und Ollama laufen absichtlich
+   ausserhalb des Verbunds (GPU-Durchreichung, zweistellige Gigabyte).
 2. **Manches ist absichtlich optional.** `umap-learn` zieht numba und llvmlite
    fuer einen einzigen Befehl. Verpflichtend gemacht, zahlt das jeder mit, der
    die Karte nie rechnet.
@@ -31,13 +31,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ingest.ollama_client import (
-    caption_model,
-    embed_model,
-    litellm_headers,
-    litellm_url,
-    ollama_url,
+    caption_model, embed_model, litellm_headers, litellm_url, llm_mode, llm_target,
+    ollama_models, ollama_url,
 )
-from ingest.settings import llm_mode
+from ingest.settings import chosen_mode
 
 logger = logging.getLogger(__name__)
 
@@ -50,30 +47,23 @@ TTL_SECONDS = 15.0
 
 _cache: tuple[float, dict] = (0.0, {})
 
-#: „noch nicht nachgesehen" -- unterscheidbar von `None`, das „Ollama
+#: „noch nicht nachgesehen" -- unterscheidbar von `None`, das „LiteLLM
 #: antwortet nicht" bedeutet.
 UNCHECKED: Any = object()
 
 
-def ollama_models() -> Optional[set[str]]:
-    """Welche Modelle liegen bereit? `None` heisst: Ollama antwortet nicht."""
-    try:
-        with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=3) as resp:
-            data = json.loads(resp.read())
-    except Exception:
-        return None
-    return {str(m.get("name") or "") for m in data.get("models", [])}
-
-
 def llm_models() -> Optional[set[str]]:
-    """Pool-Aliase bei LiteLLM, sonst Ollama-Tags.
+    """Pool-Aliase bei LiteLLM, im Modus ``ollama`` (``PHOTOVAULT_LLM=ollama``
+    oder Wahl im Setup-Wizard) Ollama-Tags.
 
-    PhotoVault kennt `local` und `embedder`. Ob dahinter ctx8k oder ein
-    anderes Gewicht haengt, sieht nur der Proxy.
+    `None` heisst: der gewaehlte Dienst antwortet nicht. PhotoVault kennt
+    `local` und `embedder`; ob dahinter ctx8k oder ein anderes Gewicht haengt,
+    sieht nur der Proxy. Ollama wird nur gefragt, wenn es ausdruecklich
+    gewaehlt ist (photovault#26), nie als stiller Rueckfall (photovault#19).
     """
-    pool = litellm_url()
-    if not pool:
+    if llm_mode() == "ollama":
         return ollama_models()
+    pool = litellm_url()
     try:
         req = urllib.request.Request(f"{pool}/v1/models", headers=litellm_headers())
         with urllib.request.urlopen(req, timeout=3) as resp:
@@ -102,16 +92,15 @@ def hint_for(kind: str, model: str = "") -> str:
     die Zugangsdaten -- und ohne gewaehltes Modell der Wizard. Ein fester
     Satz "LiteLLM starten" war fuer den Fremden mit Ollama schlicht falsch.
     """
-    mode = llm_mode()
-    if mode == "off":
-        return "Im Setup ist das Sprachmodell ausgeschaltet."
     if not model:
+        if chosen_mode() == "off":
+            return "Im Setup ist das Sprachmodell ausgeschaltet."
         return "Im Setup ein Modell waehlen."
-    if os.environ.get("LITELLM_URL"):
-        return f"LiteLLM starten; Pool `{model}` muss in der Config stehen."
-    if mode == "openai":
+    if llm_mode() == "ollama":
+        return f"Ollama starten und `ollama pull {model}` -- oder im Setup ziehen."
+    if chosen_mode() == "openai" and not os.environ.get("LITELLM_URL"):
         return "Cloud-Zugang im Setup pruefen: Adresse, Schluessel, Modellname."
-    return f"Ollama starten und `ollama pull {model}` -- oder im Setup ziehen."
+    return f"LiteLLM starten; Pool `{model}` muss in der Config stehen."
 
 
 def missing(
@@ -140,7 +129,7 @@ def missing(
     if wanted:
         pool = llm_models() if have_models is UNCHECKED else have_models
         if pool is None:
-            target = litellm_url() or ollama_url()
+            target = llm_target()
             return f"LLM-Pool nicht erreichbar ({target}). {wanted[0][1]}".strip()
         absent = [(m, h) for m, h in wanted if m not in pool]
         if absent:
@@ -222,7 +211,7 @@ def snapshot() -> dict:
     }
 
     state = {
-        "ollama": {"url": litellm_url() or ollama_url(), "reachable": pool is not None,
+        "ollama": {"url": llm_target(), "mode": llm_mode(), "reachable": pool is not None,
                    "models": sorted(pool) if pool else []},
         "llm": {"mode": llm_mode(), "caption_model": caption_model(),
                 "embed_model": embed_model()},

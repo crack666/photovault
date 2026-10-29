@@ -37,6 +37,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api import capabilities as cap
+from ingest.ollama_client import ollama_pull, ollama_tags, ollama_url_from_env
 from api.qdrant_util import PHOTOS, client
 from ingest import nas, settings
 
@@ -118,14 +119,16 @@ def state() -> dict:
     llm = {
         **conf["llm"],
         "effective": {
-            "mode": settings.llm_mode(),
+            # Der Weg, der gilt: litellm | ollama (ingest.ollama_client.llm_mode).
+            # Die Wahl im Wizard steht daneben in `mode` (ollama | openai | off).
+            "mode": cap.llm_mode(),
             "caption_model": cap.caption_model(),
             "embed_model": cap.embed_model(),
             "from_env": _from_env(),
         },
         "reachable": reachable,
         "models": models,
-        "url_in_use": cap.litellm_url() or cap.ollama_url(),
+        "url_in_use": _pool() or cap.ollama_url(),
     }
     llm["caption_ready"] = bool(cap.caption_model()) and cap.caption_model() in models
     llm["embed_ready"] = bool(cap.embed_model()) and cap.embed_model() in models
@@ -151,8 +154,18 @@ def _from_env() -> dict[str, bool]:
         "pool": bool(os.environ.get("LITELLM_URL") or os.environ.get("PHOTOVAULT_EMBED_URL")),
         "caption_model": bool(os.environ.get("PHOTOVAULT_CAPTION_MODEL")),
         "embed_model": bool(os.environ.get("PHOTOVAULT_EMBED_MODEL")),
-        "ollama_url": bool(os.environ.get("OLLAMA_URL")),
+        "ollama_url": ollama_url_from_env(),
     }
+
+
+def _pool() -> str:
+    """Die Adresse eines eingetragenen Pools/Anbieters -- leer, wenn Ollama
+    gilt oder keiner eingetragen ist.
+
+    Nicht `cap.litellm_url()`: das faellt auf den lokalen Proxy zurueck, und
+    ein Fremder ohne LiteLLM saehe dann 127.0.0.1:4000 statt seines Ollama.
+    """
+    return settings.pool_url() if cap.llm_mode() == "litellm" else ""
 
 
 def _reachable_models() -> tuple[bool, list[str]]:
@@ -198,8 +211,8 @@ def save_llm(req: LlmRequest) -> dict:
 @router.get("/llm/models")
 def llm_models() -> dict:
     """Was beim Anbieter liegt -- mit Groesse, wo er sie nennt (Ollama)."""
-    mode = settings.llm_mode()
-    pool = cap.litellm_url()
+    mode = cap.llm_mode()
+    pool = _pool()
     if pool:
         req = urllib.request.Request(f"{pool}/v1/models", headers=cap.litellm_headers())
         try:
@@ -214,14 +227,13 @@ def llm_models() -> dict:
                 "models": sorted(models, key=lambda m: m["name"])}
     url = cap.ollama_url()
     try:
-        with urllib.request.urlopen(f"{url}/api/tags", timeout=5) as resp:
-            data = json.loads(resp.read())
+        tags = ollama_tags(timeout=5)
     except Exception as e:
         return {"reachable": False, "mode": mode, "url": url, "models": [],
                 "error": _plain(e)}
     models = [{"name": str(m.get("name") or ""),
                "size_gb": round(int(m.get("size") or 0) / 1e9, 1)}
-              for m in data.get("models", []) if m.get("name")]
+              for m in tags if m.get("name")]
     return {"reachable": True, "mode": mode, "url": url,
             "models": sorted(models, key=lambda m: m["name"])}
 
@@ -241,14 +253,11 @@ def pull_model(req: PullRequest) -> StreamingResponse:
     name = req.model.strip()
     if not name or any(c in name for c in " \t\n\"'"):
         raise HTTPException(400, "Kein gueltiger Modellname")
-    if settings.llm_mode() != "ollama" or cap.litellm_url():
+    if _pool():
         raise HTTPException(409, "Ziehen geht nur mit Ollama; ein Anbieter hat seine Modelle schon.")
     url = cap.ollama_url()
-    body = json.dumps({"name": name, "stream": True}).encode("utf-8")
-    request = urllib.request.Request(f"{url}/api/pull", data=body,
-                                     headers={"Content-Type": "application/json"}, method="POST")
     try:
-        resp = urllib.request.urlopen(request, timeout=30)
+        resp = ollama_pull(name, timeout=30)
     except urllib.error.HTTPError as e:
         raise HTTPException(502, f"Ollama antwortet {e.code}: {e.read()[:200]!r}") from e
     except Exception as e:

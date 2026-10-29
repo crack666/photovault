@@ -7,7 +7,16 @@ zum selben Ereignis wie das um 12:00" nicht entscheidbar.
 """
 from __future__ import annotations
 
+import pytest
+
 from ingest.normalizer import Normalizer
+
+
+@pytest.fixture(autouse=True)
+def _ortszeit_utc(monkeypatch):
+    """Der Tag der Dateizeit zaehlt in Ortszeit (Issue #43). Diese Faelle
+    sind in UTC gedacht -- ohne feste Zone haengen sie an der Rechneruhr."""
+    monkeypatch.setenv("PHOTOVAULT_TZ", "UTC")
 
 
 class _Rec:

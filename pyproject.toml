@@ -17,6 +17,8 @@ dependencies = [
     "torch>=2.2",
     # EXIF schreiben, ohne das JPEG neu zu kodieren.
     "piexif>=1.1.3",
+    # Zeitzonen fuer zoneinfo, auch wo das Image kein /usr/share/zoneinfo hat.
+    "tzdata",
 ]
 
 [project.optional-dependencies]

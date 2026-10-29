@@ -1,8 +1,12 @@
-"""Text-Embedding: OpenAI-Format ueber den Pool (`embedder`), sonst Ollama direkt.
+"""Text-Embedding: LiteLLM-Pool `embedder` (Vorgabe), sonst Ollama direkt.
 
 Hier: LiteLLM-Alias `embedder` = qwen3-embedding:4b-ctx2k, 2560 Dimensionen.
-Bei einem Fremden: der Ollama-Tag aus `data/settings.json`, und die Dimension
-ist die, die der Setup-Wizard per Probe gemessen hat.
+Vorgabe ist LiteLLM (photovault#19); Embeddings laesst das GPU-Tor immer
+durch, die Suche funktioniert also auch waehrend eines Spiels. Mit
+``PHOTOVAULT_LLM=ollama`` oder der Wahl "Ollama" im Setup-Wizard geht es an
+Ollama direkt (photovault#26); dann gilt der Ollama-Tag aus
+`data/settings.json`, und die Dimension ist die, die der Wizard per Probe
+gemessen hat.
 """
 from __future__ import annotations
 
@@ -12,7 +16,8 @@ from ingest.ollama_client import (
     embed_model,
     litellm_headers,
     litellm_url,
-    ollama_url,
+    llm_mode,
+    ollama_post,
     post_json,
     text_vector_size,
 )
@@ -21,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class TextEmbedder:
-    def __init__(self, ollama: str | None = None, model: str | None = None):
-        self._url = ollama_url(ollama)
+    def __init__(self, model: str | None = None):
         self._model = model or embed_model()
 
     def embed(self, text: str) -> list[float] | None:
@@ -52,27 +56,22 @@ class TextEmbedder:
         Modell hat, bevor die Collection angelegt wird. Fehler kommen hier
         als Ausnahme, nicht als None: der Aufrufer will den Grund sehen.
         """
-        pool = litellm_url()
-        if pool:
-            resp = post_json(
-                f"{pool}/v1/embeddings",
-                {"model": self._model, "input": texts},
-                timeout=60,
-                headers=litellm_headers(),
-            )
-            rows = resp.get("data") or []
-            out: list[list[float] | None] = [None] * len(texts)
-            for row in rows:
-                idx = int(row.get("index", 0))
-                vec = row.get("embedding")
-                if 0 <= idx < len(texts) and vec:
-                    out[idx] = list(vec)
-            return out
+        if llm_mode() == "ollama":
+            resp = ollama_post("embed", {"model": self._model, "input": texts}, timeout=60)
+            embeddings = resp.get("embeddings") or []
+            return [list(embeddings[i]) if i < len(embeddings) and embeddings[i] else None
+                    for i in range(len(texts))]
         resp = post_json(
-            f"{self._url}/api/embed",
+            f"{litellm_url()}/v1/embeddings",
             {"model": self._model, "input": texts},
             timeout=60,
+            headers=litellm_headers(),
         )
-        embeddings = resp.get("embeddings") or []
-        return [list(embeddings[i]) if i < len(embeddings) and embeddings[i] else None
-                for i in range(len(texts))]
+        rows = resp.get("data") or []
+        out: list[list[float] | None] = [None] * len(texts)
+        for row in rows:
+            idx = int(row.get("index", 0))
+            vec = row.get("embedding")
+            if 0 <= idx < len(texts) and vec:
+                out[idx] = list(vec)
+        return out

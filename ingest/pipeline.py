@@ -12,6 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from ingest.gpu_tor import Pause as GpuPause
+from ingest.gpu_tor import call_with_pause
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +35,6 @@ class IngestConfig:
     model_dir: str = "/models"
     resume: bool = True
     skip_caption: bool = False
-    ollama_url: Optional[str] = None
     limit: Optional[int] = None
     include: Optional[str] = None
     progress_every: int = 10
@@ -276,8 +278,10 @@ class IngestPipeline:
         folder_parser = FolderParser(sources)
         face_emb = FaceEmbedder(self.config.model_dir)
         scene = SceneTagger(self.config.model_dir, self.config.clip_threshold)
-        captioner = None if self.config.skip_caption else Captioner(self.config.ollama_url)
-        text_emb = TextEmbedder(self.config.ollama_url)
+        captioner = None if self.config.skip_caption else Captioner()
+        text_emb = TextEmbedder()
+        # Lehnt das GPU-Tor Captions ab, wartet der Lauf, statt Fehler zu zaehlen.
+        pause = GpuPause(self.job)
         if captioner is not None:
             self._warm_caption_model()
         normalizer = Normalizer()
@@ -408,9 +412,12 @@ class IngestPipeline:
                         from ingest.captioner import jpeg_b64
 
                         with t.stage("caption"):
-                            structured = captioner.caption_structured(
-                                fp, ctx,
-                                image_b64=jpeg_b64(fp, image=rgb) if rgb is not None else None,
+                            structured = call_with_pause(
+                                lambda: captioner.caption_structured(
+                                    fp, ctx,
+                                    image_b64=jpeg_b64(fp, image=rgb) if rgb is not None else None,
+                                ),
+                                pause,
                             )
                         if structured:
                             from ingest.captioner import merge_tags
@@ -432,6 +439,7 @@ class IngestPipeline:
                 except Exception as e:
                     logger.warning("Error processing %s: %s", fp, e)
                     self.progress.errors += 1
+                    self.job.fail(fp, e)
 
                 seen += 1
                 if self.config.progress_every and seen % self.config.progress_every == 0:
@@ -681,7 +689,8 @@ class IngestPipeline:
 
             if todo:
                 with _Timed(clock, "  w:caption"):
-                    run_captions(todo, caption_one, cfg.caption_workers)
+                    run_captions(todo, caption_one, cfg.caption_workers,
+                                 on_busy=GpuPause(self.job))
 
             docs = []
             for record in batch:
@@ -815,42 +824,38 @@ class IngestPipeline:
         131072 werden 4,6 GB frei -- Platz fuer insightface und CLIP, die im
         selben Prozess auf derselben Karte liegen.
         """
+        from ingest.gpu_tor import GpuBusy
         from ingest.ollama_client import (
             CAPTION_NUM_CTX, caption_model, embed_model, litellm_headers,
-            litellm_url, ollama_url, post_json,
+            litellm_url, llm_mode, post_json,
         )
-
-        from ingest.captioner import caption_options
 
         CAPTION_MODEL, EMBED_MODEL = caption_model(), embed_model()
         if not CAPTION_MODEL:
             logger.info("Kein Caption-Modell gewaehlt -- nichts vorzuwaermen.")
             return
+        if llm_mode() == "ollama":
+            self._warm_ollama(CAPTION_MODEL, EMBED_MODEL)
+            return
+
         started = time.time()
         pool = litellm_url()
         try:
-            if pool:
-                post_json(
-                    f"{pool}/v1/chat/completions",
-                    {
-                        "model": CAPTION_MODEL,
-                        "messages": [{"role": "user", "content": "ok"}],
-                        "max_tokens": 1,
-                        "stream": False,
-                    },
-                    timeout=900,
-                    headers=litellm_headers(),
-                )
-            else:
-                url = ollama_url(self.config.ollama_url)
-                options = dict(caption_options())
-                options["num_predict"] = 1
-                post_json(
-                    f"{url}/api/generate",
-                    {"model": CAPTION_MODEL, "prompt": "ok", "stream": False,
-                     "options": options, "keep_alive": -1},
-                    timeout=900,
-                )
+            post_json(
+                f"{pool}/v1/chat/completions",
+                {
+                    "model": CAPTION_MODEL,
+                    "messages": [{"role": "user", "content": "ok"}],
+                    "max_tokens": 1,
+                    "stream": False,
+                },
+                timeout=900,
+                headers=litellm_headers(),
+            )
+        except GpuBusy as busy:
+            # Kein Aufwaermen bei belegter Karte; die erste Caption pausiert dann.
+            logger.info("Kein Aufwaermen von %s, %s", CAPTION_MODEL, busy.reason)
+            return
         except Exception as e:
             logger.warning("Could not warm %s: %s", CAPTION_MODEL, e)
             return
@@ -860,18 +865,44 @@ class IngestPipeline:
             time.time() - started,
         )
         try:
-            if pool:
-                post_json(
-                    f"{pool}/v1/embeddings",
-                    {"model": EMBED_MODEL, "input": "ok"},
-                    timeout=300,
-                    headers=litellm_headers(),
-                )
-            else:
-                url = ollama_url(self.config.ollama_url)
-                post_json(f"{url}/api/embed",
-                          {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1},
-                          timeout=300)
+            post_json(
+                f"{pool}/v1/embeddings",
+                {"model": EMBED_MODEL, "input": "ok"},
+                timeout=300,
+                headers=litellm_headers(),
+            )
+        except Exception as e:
+            logger.warning("Could not re-pin %s: %s", EMBED_MODEL, e)
+
+    def _warm_ollama(self, CAPTION_MODEL: str, EMBED_MODEL: str) -> None:
+        """Dasselbe Aufwaermen mit Ollama direkt (``PHOTOVAULT_LLM=ollama``
+        oder die Wahl "Ollama" im Setup-Wizard).
+
+        Hier laesst sich die Kontextgroesse pro Anfrage setzen und das Modell
+        anheften (`keep_alive: -1`); erst das grosse Modell, dann den Embedder
+        zurueckholen, aus demselben Grund wie oben.
+        """
+        from ingest.captioner import caption_options
+        from ingest.ollama_client import CAPTION_NUM_CTX, ollama_post
+
+        started = time.time()
+        options = dict(caption_options())
+        options["num_predict"] = 1
+        try:
+            ollama_post("generate", {"model": CAPTION_MODEL, "prompt": "ok", "stream": False,
+                                     "options": options, "keep_alive": -1}, timeout=900)
+        except Exception as e:
+            logger.warning("Could not warm %s: %s", CAPTION_MODEL, e)
+            return
+        logger.info(
+            "Warmed %s via Ollama (%s) in %.0fs", CAPTION_MODEL,
+            f"num_ctx={CAPTION_NUM_CTX}" if CAPTION_NUM_CTX else "Kontext laut Profil",
+            time.time() - started,
+        )
+        if not EMBED_MODEL:
+            return
+        try:
+            ollama_post("embed", {"model": EMBED_MODEL, "input": "ok", "keep_alive": -1}, timeout=300)
         except Exception as e:
             logger.warning("Could not re-pin %s: %s", EMBED_MODEL, e)
 
@@ -974,7 +1005,6 @@ def main() -> None:
         help="Nur zeigen, was aufgenommen wuerde -- nichts schreiben.",
     )
     parser.add_argument("--qdrant-url", default=os.environ.get("QDRANT_URL", "http://localhost:6333"))
-    parser.add_argument("--ollama-url", default=os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"))
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument(
         "--model-dir",
@@ -1043,7 +1073,6 @@ def main() -> None:
         batch_size=args.batch_size,
         model_dir=args.model_dir,
         skip_caption=args.skip_caption,
-        ollama_url=args.ollama_url,
         collection=args.collection,
         limit=args.limit,
         include=args.include,
@@ -1073,7 +1102,7 @@ def _load_image(file_path: str):
     """(Original, RGB-Fassung, Warnung). Das Original traegt die EXIF-Daten, die beim
     Konvertieren verloren gehen; die RGB-Fassung brauchen die Modelle."""
     try:
-        from PIL import Image, ImageFile
+        from PIL import Image, ImageFile, ImageOps
 
         ImageFile.LOAD_TRUNCATED_IMAGES = True
         raw = Image.open(file_path)
@@ -1085,7 +1114,16 @@ def _load_image(file_path: str):
             warn = "truncated"
             if getattr(raw, "im", None) is None:
                 return None, None, "unreadable"
-        rgb = raw if raw.mode == "RGB" else raw.convert("RGB")
+        # Aufrecht, bevor ein Modell das Bild sieht. `api/thumbs.py` dreht vor
+        # dem Zuschneiden, hier geschah es nicht -- also sass ein
+        # Gesichtskasten in Roh-Koordinaten, waehrend der Zuschnitt ihn auf
+        # dem gedrehten Bild anlegte. Bei einem 180-Grad-Foto landete er
+        # spiegelverkehrt im Hintergrund: die Oberflaeche zeigte einen Zaun,
+        # wo ein Kind stand (photovault#37). Und der Detektor findet ein auf
+        # dem Kopf stehendes Gesicht schlechter -- auf jenem Foto eins statt
+        # zwei. `raw` bleibt unangetastet, denn daraus kommen die EXIF-Daten.
+        rgb = ImageOps.exif_transpose(raw) or raw
+        rgb = rgb if rgb.mode == "RGB" else rgb.convert("RGB")
         return raw, rgb, warn
     except Exception as e:
         logger.debug("Could not decode %s: %s", file_path, e)

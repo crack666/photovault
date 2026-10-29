@@ -2,10 +2,35 @@
 from __future__ import annotations
 
 import logging
+import warnings
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# scikit-image 0.26 hat `SimilarityTransform.estimate()` zugunsten des
+# Klassenkonstruktors `from_estimate()` abgekuendigt. insightface 1.0.1 ruft in
+# `utils/face_align.py` weiter die alte Form. Beim Einlesen von 3.251 Medien
+# ertraenkte das den Fortschritt in tausenden identischen Zeilen (26.10.2026).
+#
+# In einem einfachen Skript meldet Python denselben Ort nur einmal (gemessen:
+# drei Aufrufe, eine Zeile) -- die Flut entsteht erst im Lauf mit seinen
+# Lese-, GPU- und Schreib-Arbeitern, die sich die Warn-Registry nicht teilen.
+# Der Filter steht deshalb im Modul, das jeder dieser Arbeiter importiert.
+#
+# Bewusst nicht behoben, sondern stummgeschaltet: der Aufruf funktioniert, der
+# Code gehoert uns nicht, und das Update auf insightface 2.x waere kein
+# Fehlerbehebung sondern ein Modellwechsel -- ob buffalo_l dort denselben
+# Einbettungsraum liefert, ist unbelegt, und 35.051 vorhandene Gesichtsvektoren
+# samt 119 benannter Personen haengen daran.
+#
+# Der Filter ist eng gefasst: nur diese Kategorie aus diesem Modul. Ein
+# `simplefilter("ignore")` wuerde auch die Abkuendigung verschlucken, die uns
+# wirklich trifft -- scikit-image entfernt `estimate()` in 2.2, dann bricht
+# insightface 1.0.1 hart. Bis dahin ist das hier Laerm, danach ein Umzug.
+warnings.filterwarnings(
+    "ignore", category=FutureWarning, module=r"insightface\.utils\.face_align",
+)
 
 _CUDA_LIBS_LOADED = False
 #: Reihenfolge zaehlt -- cublas braucht cublasLt, cudnn braucht das CUDA-Runtime.
@@ -220,7 +245,22 @@ def _to_bgr(image) -> np.ndarray | None:
     return rgb[:, :, ::-1].copy()
 
 
-def _load_bgr(file_path: str) -> np.ndarray | None:
-    from PIL import Image
+def load_upright(file_path: str):
+    """Ein Standbild so oeffnen, wie es ein Modell sehen muss: aufrecht.
 
-    return _to_bgr(Image.open(file_path))
+    Die **eine** Stelle dafuer. Dass es vorher drei Ladewege gab, von denen
+    nur einer (`api/thumbs.py`) die EXIF-Ausrichtung beachtete, war genau der
+    Fehler aus photovault#37: der Gesichtskasten entstand auf dem rohen Bild,
+    der Zuschnitt lag auf dem gedrehten, und bei einem 180-Grad-Foto zeigte
+    die Oberflaeche einen Zaun statt eines Kindes.
+    """
+    from PIL import Image, ImageFile, ImageOps
+
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    bild = Image.open(file_path)
+    bild.load()
+    return ImageOps.exif_transpose(bild) or bild
+
+
+def _load_bgr(file_path: str) -> np.ndarray | None:
+    return _to_bgr(load_upright(file_path))

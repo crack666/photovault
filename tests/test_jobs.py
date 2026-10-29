@@ -59,6 +59,48 @@ class TestListJobs:
                       "started_at": time.time(), "updated_at": time.time()}])
         assert list_jobs(c)[0]["status"] == "running"
 
+    def test_fremde_arten_werden_uebersprungen(self):
+        """Teilt sich die Collection mit einem anderen Programm, darf dessen
+        Protokoll hier nicht erscheinen.
+
+        Real passiert am 26.10.2026: PhotoVault und der RAG-Ingest des ai-stack
+        benutzten beide den Vorgabenamen `ingest_jobs` im selben Qdrant. Die
+        fremden Zeilen tragen ein anderes Schema und rendern als `0 / 0 (0.0%)`
+        -- und der Aufraeumen-Knopf der Seite haette sie mitgeloescht.
+        """
+        c = _Client([
+            {"job_id": "unser", "kind": "ingest", "started_at": 200.0},
+            {"job_id": "fremd", "kind": "ingest_job", "started_at": 100.0},
+        ])
+        assert [j["job_id"] for j in list_jobs(c)] == ["unser"]
+
+    def test_ingest_mit_captions_bleibt_sichtbar(self):
+        """`ingest-caption` ist eine eigene Art -- und waere fast verschwunden.
+
+        `pipeline` waehlt die Kennung danach, ob `--skip-caption` gesetzt ist.
+        Als `list_jobs` anfing, fremde Arten zu ueberspringen, stand sie nicht
+        in der Liste der eigenen: ein Ingest mit Beschreibungen waere damit
+        von der Seite verschwunden, obwohl er laeuft. Seitdem wird die Liste
+        aus `KIND_MARKERS` abgeleitet statt danebengeschrieben.
+        """
+        from ingest.jobs import KIND_MARKERS, OWN_KINDS
+
+        assert "ingest-caption" in OWN_KINDS
+        assert OWN_KINDS == frozenset(KIND_MARKERS)
+        c = _Client([{"job_id": "mit-captions", "kind": "ingest-caption",
+                      "started_at": 1.0}])
+        assert [j["job_id"] for j in list_jobs(c)] == ["mit-captions"]
+
+    def test_eintrag_ohne_art_bleibt(self):
+        """Ohne `kind` ist ein Eintrag alt, nicht fremd.
+
+        Fremde Zeilen weisen sich durch ihre eigene Art aus. Einen Eintrag
+        wegzuwerfen, nur weil das Feld fehlt, wuerde eigene Historie kosten,
+        um fremde loszuwerden.
+        """
+        c = _Client([{"job_id": "alt_ohne_art", "started_at": 1.0}])
+        assert [j["job_id"] for j in list_jobs(c)] == ["alt_ohne_art"]
+
     def test_unreachable_qdrant_returns_empty(self):
         class _Broken:
             def scroll(self, **kw):
@@ -117,6 +159,40 @@ class TestTrackerVectorSize:
         t.finish("done", processed=7)
         p = c.upserts[-1].payload
         assert p["status"] == "done" and p["finished_at"] is not None
+
+    def test_gescheiterte_dateien_stehen_im_eintrag(self):
+        """Ein Zaehler allein laesst ratlos zurueck.
+
+        `1 Fehler` auf der Seite, und die betroffene Datei stand nur im
+        Terminal dessen, der den Lauf gestartet hat -- wer ihn ueber die
+        Oberflaeche startet, hat keins.
+        """
+        c = _TrackClient()
+        t = JobTracker(c, kind="faces")
+        t.fail("/mnt/photo/kaputt.mp4", "ffmpeg frame exit 0")
+        t.finish("done-with-errors", errors=1)
+        p = c.upserts[-1].payload
+        assert p["failures"] == [
+            {"path": "/mnt/photo/kaputt.mp4", "reason": "ffmpeg frame exit 0"}
+        ]
+
+    def test_viele_fehler_sprengen_den_eintrag_nicht(self):
+        """Ein Lauf ueber 50.000 Dateien darf den Qdrant-Punkt nicht aufblaehen.
+
+        Der Zaehler nennt weiterhin alle; namentlich gefuehrt wird eine
+        Stichprobe, die reicht um zu sehen, *was fuer eine Sorte* Datei es
+        trifft.
+        """
+        from ingest.jobs import MAX_FAILURES
+
+        c = _TrackClient()
+        t = JobTracker(c, kind="ingest")
+        for i in range(MAX_FAILURES + 50):
+            t.fail(f"/mnt/photo/{i}.jpg", "kaputt")
+        t.finish("done-with-errors", errors=MAX_FAILURES + 50)
+        p = c.upserts[-1].payload
+        assert len(p["failures"]) == MAX_FAILURES
+        assert p["errors"] == MAX_FAILURES + 50
 
     def test_write_failure_never_stops_the_run(self):
         class _Broken(_TrackClient):
@@ -307,10 +383,11 @@ class TestMissingRequirements:
 
     def test_reachable_but_model_not_pulled(self, monkeypatch):
         """Der Name kommt zur Laufzeit aus Umgebung oder Setup -- die Abhilfe
-        aus dem Modus: ohne Pool ist es ein `ollama pull`."""
+        aus dem Modus: mit Ollama direkt ist es ein `ollama pull`."""
         from api.routes.jobs import Runnable, missing_requirements
 
         monkeypatch.delenv("LITELLM_URL", raising=False)
+        monkeypatch.setenv("PHOTOVAULT_LLM", "ollama")
         monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "fehlt:1b")
         spec = Runnable(module="x", label="X", note="", kind="x", needs_kinds=("caption",))
         msg = missing_requirements(spec, models={"anderes:7b"})

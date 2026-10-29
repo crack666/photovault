@@ -76,6 +76,23 @@ class Runnable(BaseModel):
     #: Der Lauf liest `sources.txt` (PHOTOVAULT_SOURCES). Ohne aktive Quelle
     #: waere „gestartet" wieder eine Behauptung ohne Deckung.
     needs_sources: bool = False
+    #: Platz in der empfohlenen Reihenfolge nach neuen Fotos. Sechs Knoepfe
+    #: nebeneinander sagen nicht, welcher zuerst dran ist; die Abhaengigkeit
+    #: stand bisher nur zwischen den Zeilen der Notizen.
+    step: int = 0
+    #: Wann dieser Schritt faellig ist — eine Zeile, in der Sprache dessen,
+    #: der davorsitzt, nicht in der des Programms.
+    when: str = ""
+    #: Was der Schritt dem Archiv bringt. Ohne das bleibt die Reihenfolge eine
+    #: Anweisung statt einer Begruendung.
+    gives: str = ""
+    #: Woran dieser Schritt wirklich haengt. Eine Nummernfolge allein liest
+    #: sich als Kette, in der jedes Glied auf das vorige wartet -- genau so
+    #: wurde sie auch verstanden ("man haette erst 1, 2, 3 laufen lassen
+    #: sollen und dann die Namen vergeben"). Schritt 3 ist aber keine
+    #: Voraussetzung fuer Schritt 4: die Gesichtsausschnitte zum Benennen
+    #: erzeugt `/api/faces/{id}/crop` selbst.
+    needs: str = ""
 
 
 def sources_path() -> Path:
@@ -110,6 +127,10 @@ RUNNABLE: dict[str, Runnable] = {
         needs_sources=True,
         hint="Unten die Ordner als Quelle anhaken.",
         label="Neue Dateien einlesen",
+        step=1,
+        needs="Voraussetzung für alles Weitere.",
+        when="Immer zuerst, sobald Dateien dazugekommen sind.",
+        gives="Datum, Herkunft, Gesichter und Szene je Foto.",
         note="Ordner unten, nur was noch nicht im Index liegt. Fotos: Gesichter "
              "und CLIP. Videos: nur Poster. Beschreibungen und Video-Gesichter "
              "sind die Läufe daneben — dazwischen Namen unter Wer ist das?",
@@ -120,6 +141,10 @@ RUNNABLE: dict[str, Runnable] = {
         flags=("dry_run", "limit"),
         hint="insightface auf der Grafikkarte. Nicht zusammen mit Captions oder Embeddings.",
         label="Gesichter in Videos finden",
+        step=2,
+        needs="Braucht Schritt 1.",
+        when="Nach dem Einlesen, wenn Videos dabei waren.",
+        gives="Personen, die nur im Film vorkommen, nicht im Standbild.",
         note="Nach dem Einlesen. ffmpeg holt Frames parallel in den Speicher, "
              "insightface läuft auf einem Thread — Namen vergibt niemand still.",
     ),
@@ -128,6 +153,10 @@ RUNNABLE: dict[str, Runnable] = {
         flags=("dry_run", "limit"),
         needs_kinds=("caption",),
         label="Bildbeschreibungen erzeugen",
+        step=5,
+        needs="Braucht Schritt 4. Ohne Namen werden die Sätze deutlich blasser.",
+        when="Erst wenn die Namen sitzen — sie gehen als Kontext mit hinein.",
+        gives="Ein deutscher Satz je Foto, im Index und in der Datei.",
         note="Erst wenn die Namen sitzen. Vision-Modell über Medien ohne "
              "Beschreibung. Stunden, nicht Minuten.",
     ),
@@ -136,6 +165,10 @@ RUNNABLE: dict[str, Runnable] = {
         flags=("dry_run", "limit"),
         needs_kinds=("embed",),
         label="Text-Vektoren neu bauen",
+        step=6,
+        needs="Braucht Schritt 5 — oder neue Namen aus Schritt 4.",
+        when="Nach neuen Beschreibungen, Namen oder Notizen.",
+        gives="Die Freitextsuche findet das Neue.",
         note="Nach neuen Captions, Namen, Notizen — oder wenn sich die Regel geändert hat.",
     ),
     "thumbs": Runnable(
@@ -143,9 +176,16 @@ RUNNABLE: dict[str, Runnable] = {
         argv=("--warm",),
         flags=(),
         label="Vorschaubilder anlegen",
-        note="Erzeugt die fehlenden Kacheln fuer Karte und Listen. Liest jedes "
-             "Original einmal -- ueber ein Netzlaufwerk ist das der langsame Teil. "
-             "Danach werden die Originale nicht mehr geholt.",
+        step=3,
+        needs="Braucht Schritt 1 — sonst nichts. Blockiert Schritt 4 nicht: "
+              "die Gesichtsausschnitte zum Benennen entstehen von allein.",
+        when="Nach dem Einlesen — jederzeit, auch nebenher.",
+        gives="Raster, Karte und Listen laufen ohne Netzlaufwerk.",
+        note="Erzeugt die fehlenden Kacheln fuer Raster, Karte und Listen. Liest "
+             "jedes Original einmal -- ueber ein Netzlaufwerk ist das der langsame "
+             "Teil. Danach kommt das Blaettern ohne das Netzlaufwerk aus; die "
+             "Grossansicht holt das Original weiterhin nach, und Videos streamen "
+             "ohnehin von dort.",
     ),
     "atlas": Runnable(
         module="tools.atlas_build", kind="atlas",
@@ -153,6 +193,11 @@ RUNNABLE: dict[str, Runnable] = {
         needs_modules=("umap", "sklearn"),
         hint="pip install 'photovault[atlas]'",
         label="Karte neu rechnen",
+        step=7,
+        needs="Läuft auch ohne Schritt 5 — dann heißen die Kontinente nach "
+              "Szenen-Tags statt nach den Beschreibungen.",
+        when="Zuletzt — die Kontinente werden aus den Beschreibungen benannt.",
+        gives="Das Archiv als eine Karte, mit Lasso-Auswahl.",
         note="UMAP über die CLIP-Vektoren, reine Rechenarbeit auf der CPU. Kein Trockenlauf.",
     ),
 }
@@ -222,7 +267,12 @@ def _runnable_state(running: list[dict]) -> list[dict]:
             "busy": any(j.get("kind") == r.kind for j in running),
             "ready": not blocked,
             "blocked": blocked,
+            "step": r.step, "when": r.when, "gives": r.gives,
+            "needs": r.needs,
         })
+    # Nach Reihenfolge, nicht nach Eintragung: die Seite soll von oben nach
+    # unten lesbar sein wie eine Anleitung.
+    out.sort(key=lambda d: (d["step"] or 99, d["label"]))
     return out
 
 

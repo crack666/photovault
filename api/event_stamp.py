@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from api.qdrant_util import PHOTOS
 from ingest.reembed import rebuild_text_vectors
 
 logger = logging.getLogger(__name__)
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 
 def apply_event_name(q, point_ids: list[str], name: str | None) -> dict:
@@ -43,7 +41,7 @@ def apply_event_name(q, point_ids: list[str], name: str | None) -> dict:
             )
     stats = {}
     try:
-        stats = rebuild_text_vectors(q, ids, collection=PHOTOS, ollama_url=OLLAMA_URL)
+        stats = rebuild_text_vectors(q, ids, collection=PHOTOS)
     except Exception:
         logger.exception("Re-embed after event_name failed")
     return {"photos": len(ids), "reembedded": stats.get("updated", 0)}

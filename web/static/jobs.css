@@ -71,12 +71,64 @@
 }
 .starter h3 { margin: 0; font-size: var(--fs-xl); }
 .starter p { margin: 0; font-size: var(--fs-m); color: var(--muted); line-height: 1.45; }
+
+/* Die Reihenfolge sichtbar machen: eine Ziffer am Titel, darunter wann der
+   Schritt faellig ist und was er bringt. Sechs gleich aussehende Knoepfe
+   nebeneinander sagten nicht, welcher zuerst dran ist -- die Abhaengigkeit
+   stand nur zwischen den Zeilen der Notizen. */
+.starter .head { display: flex; align-items: baseline; gap: .5rem; }
+.starter .step {
+  flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  display: grid; place-items: center; font-size: var(--fs-s); font-weight: 600;
+  background: #232a36; border: 1px solid #3a4353; color: #9fb0c6;
+}
+.starter .when { color: var(--text); }
+/* Der Nutzen steht leiser als die Faelligkeit: erst wann, dann wofuer. */
+.starter .gives { font-size: var(--fs-s); }
+.starter .gives::before { content: "→ "; color: #5e6b7e; }
+.starter .note { font-size: var(--fs-s); opacity: .85; }
+/* Die Voraussetzung ist das, was die Nummer allein nicht sagt: eine Ziffernfolge
+   liest sich als Kette, in der jedes Glied auf das vorige wartet. Genau so
+   wurde sie auch verstanden -- dabei haelt Schritt 3 den vierten gar nicht auf. */
+.starter .needs {
+  font-size: var(--fs-s); color: #8fa3bb;
+  border-left: 2px solid #3a4353; padding-left: .5rem;
+}
+
+/* Gescheiterte Dateien beim Lauf, nicht nur ihre Anzahl. Eingeklappt, weil
+   der Normalfall null Fehler ist -- aufgeklappt steht da, welche Datei und
+   woran. Ein Lauf, der `done-with-errors` meldet und verschweigt was, macht
+   auf ein Problem aufmerksam, das man anschliessend nicht finden kann. */
+.job-noinfo { color: #7b8695; font-size: var(--fs-s); }
+.job-fails { margin-top: .4rem; font-size: var(--fs-s); }
+.job-fails summary { cursor: pointer; color: #e88c89; }
+.job-fails ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+.job-fails li { margin: .25rem 0; line-height: 1.4; }
+.job-fails code {
+  color: var(--text); word-break: break-all;
+  background: #1b2029; border-radius: var(--r-s); padding: 0 .25rem;
+}
+.job-fails li span { color: var(--muted); display: block; }
+.job-fails .rest { color: var(--muted); margin: .5rem 0 0; }
+
+/* Schritt 4 ist Handarbeit und hat keinen Startknopf -- das darf man ihm
+   ansehen, sonst sucht man ihn. */
+.starter.manual { background: #14181c; border-style: dashed; }
+.starter.manual .step { background: #1d242e; border-style: dashed; }
 .starter .row { display: flex; gap: .4rem; margin-top: .25rem; flex-wrap: wrap; }
 .starter button {
   min-height: 36px; padding: 0 .8rem; border-radius: var(--r-m);
   background: #232a36; border: 1px solid #3a4353; color: #ccd5e2; font-size: var(--fs-m);
 }
 .starter button:hover:not(:disabled) { background: #2f3847; color: var(--text); }
+/* Schritt 4 fuehrt auf eine andere Seite, ist also ein Link und kein Knopf.
+   Die Form teilt er sich mit den Knoepfen daneben, die Farbe kommt aus der
+   gemeinsamen Liste in styles.css. */
+.starter a.go {
+  min-height: 36px; padding: 0 .8rem; border-radius: var(--r-m);
+  display: inline-flex; align-items: center;
+  border: 1px solid #3a4353; font-size: var(--fs-m); text-decoration: none;
+}
 /* .go steht jetzt in styles.css, gemeinsam mit .primary. */
 .starter button:disabled { opacity: .45; }
 .starter .gpu { font-size: var(--fs-xs); color: #d8ae4c; }
