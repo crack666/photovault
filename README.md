@@ -786,7 +786,15 @@ python -m tools.backfill_spaces --check              # Bereiche + Payload-Indize
 python -m tools.thumbs                               # Vorschaubild-Cache: wo, wie gross, wieviel Muell
 python -m tools.thumbs --prune                        # verwaiste Kacheln loeschen
 python -m tools.thumbs --warm                         # fehlende erzeugen
+python -m tools.faces_reorient --dry-run --limit 50   # gedrehte Fotos neu erkennen (#37), GPU
 ```
+
+`tools.faces_reorient` erkennt Fotos mit EXIF-Ausrichtung != 1 neu, deren
+Kästen vor #38 in Roh-Koordinaten entstanden. Namen wandern per
+Kasten-Überlappung (IoU ≥ 0,3) auf die neuen Gesichter; ein Foto, auf dem
+ein benanntes Gesicht keinen Partner fände, wird nur gelistet (schreiben erst
+mit `--allow-lost-names`). Trockenlauf ist Standard, `--apply` schreibt. Es
+rechnet auf der Grafikkarte: vorher das GPU-Tor fragen.
 
 ### Der Vorschaubild-Cache
 

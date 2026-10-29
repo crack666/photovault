@@ -61,6 +61,33 @@ class QdrantWriter:
         self._ensure_collection()
         self._ensure_faces_collection()
 
+    @classmethod
+    def on(cls, client, collection: str = "photos",
+           faces_collection: str = "faces") -> "QdrantWriter":
+        """Ein Schreiber auf einem schon offenen Client, ohne Collections anzulegen.
+
+        Fuer Werkzeuge, die bestehende Punkte nachbearbeiten
+        (`tools/faces_reorient.py`): dasselbe Payload-Format wie der Ingest,
+        aber kein zweiter Client und kein `create_collection`.
+        """
+        self = cls.__new__(cls)
+        self.client = client
+        self.collection = collection
+        self.faces_collection = faces_collection
+        self.space_root = None
+        return self
+
+    @staticmethod
+    def face_point_id(photo_id: str, index: int, box, frame_ss=None) -> str:
+        """Punkt-ID eines Gesichts. Ohne Zeitpunkt wie bei Fotos -- sonst
+        wuerde ein Re-Ingest neue IDs erzeugen und die vergebenen Namen nicht
+        mehr finden."""
+        if frame_ss is None:
+            key = f"{photo_id}:{index}:{box}"
+        else:
+            key = f"{photo_id}:{frame_ss}:{index}:{box}"
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+
     def _ensure_collection(self):
         from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
 
@@ -234,15 +261,8 @@ class QdrantWriter:
             vec = face.get("embedding")
             if not vec:
                 continue
-            # Ohne Zeitpunkt bleibt der Schluessel wie bei Fotos -- sonst
-            # wuerde ein Re-Ingest neue IDs erzeugen und die vergebenen
-            # Namen nicht mehr finden.
-            ss = face.get("frame_ss")
-            if ss is None:
-                face_key = f"{record.photo_id}:{i}:{face.get('box')}"
-            else:
-                face_key = f"{record.photo_id}:{ss}:{i}:{face.get('box')}"
-            fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, face_key))
+            fid = self.face_point_id(record.photo_id, i, face.get("box"),
+                                     face.get("frame_ss"))
             prepared.append((fid, vec, face))
         if not prepared:
             return
