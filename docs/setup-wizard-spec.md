@@ -163,6 +163,15 @@ Maschine (Env, LiteLLM-Aliasse) unberührt: ohne Datei ändert sich nichts.
 }
 ```
 
+Nachtrag 29.10.2026 (Merge mit #24/#27): Seit #19 gibt es keinen stillen
+Rückfall „kein Pool = Ollama“ mehr; Ollama direkt ist eine ausdrückliche
+Wahl (`PHOTOVAULT_LLM=ollama`). Der Wizard bildet darauf ab:
+`mode: "ollama"` ist dasselbe wie `PHOTOVAULT_LLM=ollama`
+(`ingest.ollama_client.llm_mode()`), `openai` geht den LiteLLM-Weg mit der
+eingetragenen Adresse, `off` schaltet beide Modelle ab. Die Vorgabe für
+`mode` ist leer („noch nicht gewählt“) — dann gilt LiteLLM, wie ohne Wizard.
+`PHOTOVAULT_LLM` oder `LITELLM_URL` in der Umgebung schlagen die Wahl.
+
 ### E6 — Fertiges Image statt Bau auf fremder Maschine
 
 GitHub Action → `ghcr.io/crack666/photovault:<tag>`; Compose auf `image:`,
