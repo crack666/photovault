@@ -228,8 +228,15 @@ alle übrigen bleiben liegen und werden gelistet:
 
 ```bash
 TZ=Europe/Berlin python -m tools.exif_tz_fix /mnt/photo --sample 5
-TZ=Europe/Berlin python -m tools.exif_tz_fix /mnt/photo --apply --limit 50
+TZ=Europe/Berlin python -m tools.exif_tz_fix /mnt/photo/Sonstiges/Screenshots --apply --limit 50
 ```
+
+`--limit` begrenzt die *angesehenen* Dateien, nicht die geänderten. Über ganz
+`/mnt/photo` stehen vorn Dateien ohne Notiz, und eine Stichprobe ändert dann
+womöglich nichts. Deshalb einen Ordner als Wurzel nehmen. Trockenlauf vom
+29.10.2026: 41.722 Dateien; `src=filename` 7.381, davon 7.368 korrigiert und
+13 auf 12:00 gesetzt, kein Tageswechsel; dazu 262 `file_time`. `--apply`
+ändert also 7.643 Dateien (#43).
 
 Reihenfolge: erst `--preview` auf Tag 306 vs. Original (`backfill_taken_at`),
 Index korrigieren, **dann** fehlende EXIF einfrieren. Umgekehrt würde eine
