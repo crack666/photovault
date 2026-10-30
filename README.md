@@ -795,12 +795,18 @@ python -m tools.thumbs --warm                         # fehlende erzeugen
 python -m tools.faces_reorient --dry-run --limit 50   # gedrehte Fotos neu erkennen (#37), GPU
 ```
 
-`tools.faces_reorient` erkennt Fotos mit EXIF-Ausrichtung != 1 neu, deren
-Kästen vor #38 in Roh-Koordinaten entstanden. Namen wandern per
-Kasten-Überlappung (IoU ≥ 0,3) auf die neuen Gesichter; ein Foto, auf dem
-ein benanntes Gesicht keinen Partner fände, wird nur gelistet (schreiben erst
-mit `--allow-lost-names`). Trockenlauf ist Standard, `--apply` schreibt. Es
-rechnet auf der Grafikkarte: vorher das GPU-Tor fragen.
+`tools.faces_reorient` erkennt Fotos mit EXIF-Ausrichtung != 1 neu. Ob die
+gespeicherten Kästen roh (vor #38) oder schon aufrecht liegen, misst es je
+Foto: Beide Lesarten werden gegen die neue Erkennung gepaart, die mit mehr
+Paaren gilt. Gemessen am 30.10.2026 lagen alle schon aufrecht: 761 von 945
+Fotos werden nur gestempelt, 184 bekommen neu gefundene Gesichter (rund 300),
+und von 487 Namen geht keiner verloren. Namen wandern per
+Kasten-Überlappung (IoU ≥ 0,3); ein Foto, auf dem ein benanntes Gesicht keinen
+Partner fände, wird nur gelistet (schreiben erst mit `--allow-lost-names`).
+Trockenlauf ist Standard, `--apply` schreibt; `--limit` zählt dabei nur echte
+Schreibvorgänge, nicht die Stempel. Es rechnet auf der Grafikkarte: vorher das
+GPU-Tor fragen. Als Sicherung vorher Qdrant-Snapshots von `faces` und
+`photos` ziehen und herauskopieren, sie liegen nicht im Volume (#37).
 
 ### Der Vorschaubild-Cache
 
