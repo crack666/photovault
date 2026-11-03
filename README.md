@@ -812,6 +812,7 @@ python -m tools.thumbs                               # Vorschaubild-Cache: wo, w
 python -m tools.thumbs --prune                        # verwaiste Kacheln loeschen
 python -m tools.thumbs --warm                         # fehlende erzeugen
 python -m tools.faces_reorient --dry-run --limit 50   # gedrehte Fotos neu erkennen (#37), GPU
+python -m tools.persons_check                         # Person auf dem Foto ohne passendes Gesicht? (#57)
 ```
 
 `tools.faces_reorient` erkennt Fotos mit EXIF-Ausrichtung != 1 neu. Ob die
@@ -826,6 +827,18 @@ Trockenlauf ist Standard, `--apply` schreibt; `--limit` zählt dabei nur echte
 Schreibvorgänge, nicht die Stempel. Es rechnet auf der Grafikkarte: vorher das
 GPU-Tor fragen. Als Sicherung vorher Qdrant-Snapshots von `faces` und
 `photos` ziehen und herauskopieren, sie liegen nicht im Volume (#37).
+
+`tools.persons_check` misst nur lesend die Regel, dass jede Person in
+`person_ids` auf dem Foto ein Gesicht mit derselben `person_id` hat
+(Video-Bilder zählen mit, Pseudo-IDs nicht), und endet mit Exit 1, wenn ein
+Foto sie verletzt. Ausgegeben werden Punkt-IDs, keine Namen. Am 03.11.2026
+waren es 12 Fotos (#57). Nach dem Verlauf von #37 entstanden sie, als am 27.10. die alten
+Gesichtseinträge gedrehter Fotos gelöscht und mit `ingest.face_pass --kind
+photo --paths-file` neu erkannt wurden: dieser Lauf schreibt Gesichter ohne
+Namen und lässt `person_ids` stehen. Seitdem überspringt `--kind photo`
+Fotos mit bestätigter Person (Namen per Überlappung mitnehmen kann
+`tools.faces_reorient`) und stempelt `face_source: photo-rescan` statt
+`video-frames`.
 
 ### Der Vorschaubild-Cache
 

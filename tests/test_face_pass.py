@@ -4,6 +4,7 @@ from __future__ import annotations
 from ingest.caption_pass import Photo, build_filter
 from ingest.face_pass import (
     FACE_SOURCE,
+    PHOTO_SOURCE,
     collapse_same_person,
     run,
     suggestion_ids,
@@ -200,6 +201,81 @@ class TestRun:
         assert names["read"].startswith("read-")
         assert names["gpu"] == "gpu"
         assert names["read"] != names["gpu"]
+
+
+class TestStandbilder:
+    """`--kind photo`: Stempel und Schutz bestaetigter Personen (photovault#57)."""
+
+    @staticmethod
+    def _run(monkeypatch, photos, **kw):
+        from ingest import face_embedder, face_pass
+
+        monkeypatch.setattr(face_pass, "select_photos", lambda *a, **k: list(photos))
+        monkeypatch.setattr(face_embedder, "load_upright", lambda path: object())
+
+        class Embedder:
+            def process(self, file_path, image=None, bgr=None):
+                return {"faces": [_face([1.0, 0, 0], box=[0, 0, 8, 8], ss=None)]}
+
+        class Matcher:
+            def suggest(self, embedding, limit=1):
+                return [{"id": "zelda", "name": "Zelda", "score": 0.8}]
+
+        class Writer:
+            def __init__(self):
+                self.paths = []
+
+            def upsert_faces(self, record):
+                self.paths.append(record.file_path)
+
+        class Client:
+            def __init__(self):
+                self.payloads = []
+
+            def set_payload(self, collection_name, payload, points, wait=False):
+                self.payloads.append(payload)
+
+        writer, client = Writer(), Client()
+        stats = run(client, track=False, kind="photo", embedder=Embedder(), writer=writer,
+                    matcher=Matcher(), io_workers=1, ffmpeg_workers=1, **kw)
+        return stats, writer, client
+
+    def test_photo_is_not_stamped_as_video(self, monkeypatch):
+        """Die 12 Fotos aus #57 trugen "video-frames", obwohl sie .jpg waren."""
+        photo = Photo(0, {"file_path": "/a.jpg", "photo_id": "a", "kind": "photo"})
+        stats, _, client = self._run(monkeypatch, [photo])
+        assert stats["processed"] == 1
+        assert client.payloads[0]["face_source"] == PHOTO_SOURCE
+
+    def test_photo_with_confirmed_person_is_left_alone(self, monkeypatch):
+        """Sonst bleibt ein Name auf dem Foto, den kein Gesicht mehr traegt (#57).
+
+        Der Lauf schreibt Gesichter ohne Namen; `person_ids` blieben stehen.
+        Pseudo-IDs wie `_skipped` sind keine Bestaetigung und halten nicht auf.
+        """
+        named = Photo(0, {"file_path": "/named.jpg", "photo_id": "n", "kind": "photo",
+                          "person_ids": ["zelda"]})
+        skipped = Photo(1, {"file_path": "/skip.jpg", "photo_id": "s", "kind": "photo",
+                            "person_ids": ["_skipped"]})
+        stats, writer, _ = self._run(monkeypatch, [named, skipped])
+        assert stats["named"] == 1
+        assert stats["processed"] == 1
+        assert writer.paths == ["/skip.jpg"]
+
+    def test_explicit_list_does_not_bypass_the_guard(self, monkeypatch):
+        """Genau der Weg von #57: `--paths-file` schlaegt die Markierung, nicht den Schutz."""
+        named = Photo(0, {"file_path": "/named.jpg", "photo_id": "n", "kind": "photo",
+                          "person_ids": ["zelda"]})
+        stats, writer, _ = self._run(monkeypatch, [named], only_paths={"/named.jpg"})
+        assert stats["named"] == 1
+        assert writer.paths == []
+
+    def test_rescanned_photo_counts_as_done(self, monkeypatch):
+        photo = Photo(0, {"file_path": "/a.jpg", "photo_id": "a", "kind": "photo",
+                          "face_source": PHOTO_SOURCE})
+        stats, writer, _ = self._run(monkeypatch, [photo])
+        assert stats["selected"] == 0
+        assert writer.paths == []
 
 
 def test_locked_captions_stay_in_the_face_filter():
