@@ -53,7 +53,14 @@ mit der Grossansicht ersatzlos entfallen.
 
 - **Hell-Modus** — es gibt keinen, in keiner Form. Produktentscheidung, kein Befund; seit
   der Tokenschicht überhaupt erst diskutierbar.
-- **Tastaturbedienung** — kein einziges `tabindex` im Baum. Eigenständiges, grosses Paket.
+- **Tastaturbedienung** — teilweise da, als Paket offen. *Nachgemessen 06.11.2026 per
+  `grep` (#61); hier stand, es gebe kein einziges `tabindex`.* Kein Element trägt ein
+  `tabindex`-Attribut, das Wort steht aber zweimal als Selektor: in der Fokusfalle der
+  Dialoge (`core/modal.js:26`) und in der `:focus-visible`-Regel (`styles.css:78`).
+  Tasten gibt es in der Großansicht (←/→/Esc/i, `lightbox/index.js:447`), in Dialogen
+  (Esc, Tab bleibt im Dialog), im Atlas (Esc, `0`), im Pfadwähler (Enter/Esc) und als
+  Enter im Namensfeld des Gesichtsstreifens (`faces/strip.js:194`). „Wer ist das?“, die
+  Kandidaten und die Kachelauswahl bleiben Mausarbeit — Vorschlag dazu: #60.
 - ~~**Request-Level-Tests**~~ — erledigt 2026-09-04, `tests/test_app_requests.py`
   (23 Tests). Und der erste davon fand gleich einen Sicherheitsfehler: der
   Ordnerwähler war ein Dateibrowser für die ganze Maschine — `browse` nahm jeden
@@ -192,7 +199,7 @@ Titel auf der vorhandenen Karte neu, statt 40 Minuten UMAP zu wiederholen.
 Offen: Inseln über ~1.000 Fotos (Screenshots 1.125) sind nur über die Anker
 begehbar; eine Unterteilung in Sub-Inseln wäre der nächste Schritt, wenn das
 nicht reicht. Und `cluster_selection_epsilon` ist in sklearn 1.7 kaputt
-(TypeError im Baum-Code) — nicht benutzen.
+(TypeError in sklearns Tree-Code) — nicht benutzen.
 
 ### Zum Schnitt: die Reihenfolge ist enger als hier notiert
 
@@ -302,7 +309,7 @@ Groesster sichtbarer Effekt pro Zeile im ganzen Plan.
   der Link erbt 16px system-ui, der Knopf faellt auf die Formularschrift des Browsers.
   Dieselbe Kopfleiste, zwei Schriften. Ebenso das zentrale Namensfeld "Wer ist das?"
   (`styles.css:62-65`).
-- **Kein `color-scheme`.** Null Treffer im ganzen `web/`-Baum. Alle nativen Elemente
+- **Kein `color-scheme`.** Null Treffer unter `web/`. Alle nativen Elemente
   rendern hell: Bildlaufleisten, jede Aufklappliste, alle Ankreuzfelder, und vor allem
   der Kalender von `input[type=date]` — auf einer sonst durchgehend dunklen Oberflaeche.
 - **`accent-color` nur an zwei Stellen** (`atlas.css:314`, `styles.css:601`). Alle
@@ -861,7 +868,7 @@ Neuladen bestehen.
 
 ### 5.1 Die Tokenschicht ist zur Haelfte nicht vorhanden
 
-`:root` definiert **7** Variablen (`styles.css:1-9`, das einzige `:root` im ganzen Baum).
+`:root` definiert **7** Variablen (`styles.css:1-9`, das einzige `:root` unter `web/`).
 Dem stehen **140 verschiedene hart gesetzte Hexwerte** gegenueber (styles.css 129
 Vorkommen, ui.css 77, atlas.css 78, strip.css 26, jobs.html 40). Jede Farbaenderung muss
 an rund 350 Stellen von Hand nachgezogen werden. **Das ist die Wurzel fast aller folgenden
@@ -931,14 +938,18 @@ ueberfahrene Bild); `jobs.html` traegt 100 Zeilen inline-CSS als fuenfte Stilque
   `[data-theme]`-Regel, keine zweite Farbdefinition. Das ist keine offene Baustelle,
   sondern eine nie begonnene — und mit 140 harten Hexwerten derzeit auch nicht machbar.
   **Produktentscheidung, kein Befund.** Erst nach 5.1 ueberhaupt diskutierbar.
-- **Tastaturbedienung.** Kein einziges `tabindex` im ganzen Baum. Fotos oeffnen, Fotos
+- **Tastaturbedienung.** Kein einziges `tabindex` unter `web/`. Fotos oeffnen, Fotos
   auswaehlen und Papierkorb-Kacheln fuer das endgueltige Loeschen anhaken sind reine
   Maushandlungen. Eigenstaendiges, grosses Paket.
+  *Stand 06.11.2026 (#61): teilweise ueberholt, siehe „Was noch offen ist“ oben.*
 - **Tests fuer den Loeschpfad.** `api/routes/trash.py:128` loescht Dateien per `unlink`
   und raeumt Punkte samt Gesichtern aus dem Index — **kein Test fasst das Modul an**, und
   es gibt im ganzen Repo keinen einzigen Request-Level-Test (`TestClient` kommt nirgends
   vor). Der einzige unwiderrufliche Pfad ist der einzige ungesicherte. Eigenes Paket,
   aber **das wichtigste der drei**.
+  *Erledigt, nachgemessen 06.11.2026 (#61): `tests/test_trash_route.py`,
+  `tests/test_trash_events_cleanup.py`, und `TestClient` in `tests/test_app_requests.py`
+  (seit 04.09.2026, siehe oben).*
 - **`persons.py` teilen.** 1019 Zeilen, und tatsaechlich zwei Dinge: neben 17
   Personen-Routen der Galerie-/Zeitleisten-Bau (`:411-524`) und die
   Foto-Payload-Synchronisierung (`:880-928`), beide mit eigenen Tests und wenigen
@@ -961,6 +972,9 @@ Der Plan ist aus dem Code gelesen. Diese Punkte entscheiden sich nur im Betrieb:
    Maschine abkoppelt. Unter POSIX ja; unter Windows ignoriert CPython den Parameter.
 7. Ob geloeschte Fotos noch als Mitglieder in der Ereignis-Ablage stehen — `trash.py`
    raeumt PHOTOS und FACES, ein Aufraeumschritt fuer `events_store` ist nicht auffindbar.
+   *Geklaert, nachgelesen 06.11.2026 (#61): Mitglieder werden aus den Foto-Punkten
+   abgeleitet und verschwinden mit ihnen; stehen bleibt nur der Serien-Name samt
+   Fotozahl. Festgehalten in `tests/test_trash_events_cleanup.py`.*
 
 ## Reihenfolge in einem Satz
 

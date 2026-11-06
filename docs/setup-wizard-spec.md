@@ -263,7 +263,9 @@ entpackt, davon 773 MB torch. `.github/workflows/image.yml` baut amd64 und
 arm64 nativ, macht denselben Rauchtest vor dem Push und schiebt nach
 `ghcr.io/crack666/photovault:latest`. Einmalig vom Besitzer: das Paket auf
 GHCR öffentlich stellen. Bis dahin baut `start.bat` lokal — mit demselben
-Dockerfile, gemessen funktionsfähig. README „Der einfache Weg" ist auf den
+Dockerfile, gemessen funktionsfähig. *(Nachgemessen 06.11.2026, #61: das Paket ist öffentlich — ein
+anonymes Token für `ghcr.io/crack666/photovault` liest die Tag-Liste mit HTTP 200;
+`start.ps1` holt zuerst und baut nur, wenn das Holen scheitert.)* README „Der einfache Weg" ist auf den
 neuen Ablauf umgeschrieben; Feinschliff und Klemmliste nach dem Test.
 
 **v2, nicht jetzt:** Ordnerdialog als Rückfall. *(GPU für den Container,

@@ -60,6 +60,8 @@ Die aktuelle Version erwartet CUDA 13, torch liefert 12.8 mit. Der
 CUDA-Provider lädt dann nicht und **fällt still auf die CPU zurück** — die
 Gesichtserkennung kostet 860 statt 30 ms, ohne dass irgendwo ein Fehler
 erscheint. Passend ist `onnxruntime-gpu==1.22`.
+(860 ms galt vor `allowed_modules`, siehe nächster Abschnitt; seitdem kostet der
+Rückfall auf die CPU rund 150 ms, README § Voraussetzungen. Vermerkt 06.11.2026, #61.)
 
 Zusätzlich findet onnxruntime die CUDA-Bibliotheken nicht, die torch als
 pip-Pakete unter `nvidia/*/lib` mitbringt; sie werden in
