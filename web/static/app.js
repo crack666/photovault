@@ -1,5 +1,5 @@
 import { api, cropUrl } from "./core/api.js";
-import { $, escapeHtml } from "./core/dom.js";
+import { $, escapeHtml, isTyping } from "./core/dom.js";
 import { watchMedia } from "./core/images.js";
 import { faceStatsLine } from "./core/format.js";
 import { notify } from "./core/modal.js";
@@ -7,6 +7,7 @@ import { refreshEventNames, refreshPersonNames } from "./core/names.js";
 import { rememberTab, renderNav, tabFromUrl, photoFromUrl } from "./core/nav.js";
 import { forgetPeopleList } from "./core/people.js";
 import { bindEvents, loadEventTab } from "./events/index.js";
+import { LABEL_KEYS, labelKeyAction } from "./faces/keys.js";
 import { bindLightbox, showLightbox } from "./lightbox/index.js";
 import { bindPeople, loadPeople, openPersonFromUrl } from "./people/index.js";
 import { bindSearch, loadPersonPicker } from "./search/index.js";
@@ -125,7 +126,14 @@ function renderCard() {
   $("name-input").placeholder = known
     ? "Nein — anderer Name (z. B. Schwester)"
     : "Name eingeben — neue Person oder bekanntes Gesicht";
-  $("name-input").focus();
+  /* Fokus ins Namensfeld nur, wenn es nichts anzunehmen gibt. Steht ein
+     Vorschlag da, soll J/Enter ihn annehmen koennen -- im Feld gehoerte das
+     "J" dem Namen (photovault#60). N fuehrt von dort ins Feld. */
+  if (known || (cluster.suggestions || []).length) {
+    if (document.activeElement === $("name-input")) $("name-input").blur();
+  } else {
+    $("name-input").focus();
+  }
 }
 
 function showCover(cluster, faceId) {
@@ -366,6 +374,65 @@ $("btn-skip").addEventListener("click", async () => {
     body: JSON.stringify({ face_ids: keptFaces(cluster) }),
   });
   next();
+});
+
+/* ---- Tastatur fuer die Karte (photovault#60) ----
+   Die Zuordnung Taste -> Aktion steht in faces/keys.js, hier nur, was die
+   Aktion an der aktuellen Karte bedeutet. Gesperrt, solange ein Dialog oder
+   die Grossansicht offen ist oder eine Zuordnung laeuft: dort gehoeren die
+   Pfeile der Grossansicht und Enter dem Dialog. */
+function karteNimmtTasten() {
+  if ($("view-label").classList.contains("hidden")) return false;
+  if ($("card").classList.contains("hidden")) return false;
+  if ($("card").classList.contains("laeuft")) return false;
+  if (!$("lightbox").classList.contains("hidden")) return false;
+  if (document.querySelector(".pv-modal-host:not(.hidden)")) return false;
+  return true;
+}
+
+function vorschlagAnnehmen(i) {
+  const chip = $("suggestions").querySelectorAll(".chip")[i];
+  if (chip) chip.click();
+  return Boolean(chip);
+}
+
+function zeigeKarte(schritt) {
+  const n = state.clusters.length;
+  if (n < 2) return;
+  state.index = (state.index + schritt + n) % n;
+  renderCard();
+}
+
+$("label-keys").innerHTML = LABEL_KEYS
+  .map(([k, was]) => `<kbd>${escapeHtml(k)}</kbd> ${escapeHtml(was)}`).join(" · ");
+$("label-keys-toggle").addEventListener("click", () => {
+  $("label-keys").classList.toggle("hidden");
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!karteNimmtTasten()) return;
+  const ziel = e.target;
+  const aktion = labelKeyAction(e, {
+    typing: isTyping(e),
+    inNameField: ziel === $("name-input"),
+    onButton: Boolean(ziel && ziel.closest && ziel.closest("button, a")),
+  });
+  if (!aktion) return;
+  const cluster = state.clusters[state.index];
+  if (!cluster) return;
+  e.preventDefault();
+  if (aktion === "leave-field") { $("name-input").blur(); return; }
+  if (aktion === "confirm") {
+    if (cluster.kind === "known" && cluster.person_name) $("btn-confirm-known").click();
+    else if (!vorschlagAnnehmen(0)) $("name-input").focus();
+    return;
+  }
+  if (aktion === "reject") { $("name-input").focus(); return; }
+  if (aktion === "skip") { $("btn-skip").click(); return; }
+  if (aktion === "next") { zeigeKarte(1); return; }
+  if (aktion === "prev") { zeigeKarte(-1); return; }
+  if (aktion === "help") { $("label-keys").classList.toggle("hidden"); return; }
+  if (aktion.pick != null) vorschlagAnnehmen(aktion.pick);
 });
 
 loadQueue().catch((err) => {
