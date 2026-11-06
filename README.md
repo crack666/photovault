@@ -395,7 +395,8 @@ keiner und wird dazu zurückgesetzt.
 
 ### Was einen Re-Ingest überlebt — auch bei Gesichtern
 
-Nicht nur am Foto (`caption_de`, `annotations`, `person_ids`, `person_names`),
+Nicht nur am Foto (`caption_de`, `annotations`, `person_ids`, `person_names` und
+weitere, vollständig unter [Was einen Re-Ingest überlebt](#was-einen-re-ingest-überlebt)),
 sondern auch an jedem Gesicht: `person_id` und `person_name`. Ohne das löscht
 ein Routinelauf die gesamte Labeling-Arbeit — bei mehreren tausend von Hand
 zugeordneten Gesichtern der teuerste denkbare Datenverlust.
@@ -465,7 +466,8 @@ der sich gleichmäßig füllt, wäre eine Lüge. Fehlt `umap-learn`, ist der Kno
 gesperrt und nennt den Grund, statt zu starten und still zu sterben.
 
 Das Ergebnis ist eine statische Datei unter `web/static/atlas/atlas.json`
-(1,3 MB). Sie wird über den vorhandenen StaticFiles-Mount ausgeliefert — die
+(3,2 MB, gemessen 06.11.2026 am Bau vom 15.09.2026 mit beiden Anordnungen
+und Ankern; hier stand vorher 1,3 MB). Sie wird über den vorhandenen StaticFiles-Mount ausgeliefert — die
 Karte neu zu rechnen braucht **keinen API-Neustart**.
 
 **Die Ordneransicht wäre an diesem Archiv sinnlos.** 76 % der Fotos liegen in
@@ -567,8 +569,10 @@ sieht ähnlich aus) gibt es „Themen": dieselben Fotos, angeordnet und
 geclustert nach dem Textvektor ihrer Beschreibung — Nähe heißt: wird ähnlich
 beschrieben. Die visuellen Kontinente sind Bildstile (Nahaufnahmen, dunkle
 Innenräume, Himmel); die Themen sind Schubladen (`silvester · nacht · funken`,
-`tisch · teller · essen · restaurant`, `pferd · frisst · wiese`), mit 60
-statt 40, weil Themen feiner sind als Stile. Fotos ohne Beschreibung stehen
+`tisch · teller · essen · restaurant`, `pferd · frisst · wiese`). Zur
+k-means-Zeit waren es 60 Schubladen statt 40, weil Themen feiner sind als
+Stile; seit den Inseln (15.09.2026) ergibt sich die Zahl aus der Karte, siehe
+oben. Fotos ohne Beschreibung stehen
 dort, wo ihre zehn nächsten *visuellen* Nachbarn mit Beschreibung liegen —
 ihr Textvektor bestünde nur aus Metadaten, und ein Probebau ergab daraus
 sieben Haufen, die wörtlich nach dem Ordner hießen.
@@ -671,7 +675,9 @@ mit `buffalo_l` bitgleiche Kästen und Vektoren (500 Fotos, gemessen
 liefern; vor dem Anheben der Obergrenze den Vergleich wiederholen.
 
 Prüfen, dass die Gesichtserkennung wirklich auf der GPU landet — ohne
-`CUDAExecutionProvider` läuft insightface auf der CPU und kostet ~860 ms statt ~30 ms pro Foto:
+`CUDAExecutionProvider` läuft insightface auf der CPU und kostet ~150 ms statt ~30 ms pro Foto
+(hier stand bis 06.11.2026 noch ~860 ms, der Wert von vor `allowed_modules`, siehe
+[Voraussetzungen](#voraussetzungen)):
 
 ```bash
 ~/.venvs/photovault/bin/python -c "import onnxruntime;print(onnxruntime.get_available_providers())"
@@ -778,8 +784,12 @@ spricht PhotoVault Ollama-Tags, mit `LITELLM_URL` die Pool-Aliasse
 
 `upsert` ersetzt das komplette Payload. Alles, was nicht aus der Datei
 rekonstruierbar ist, wird deshalb vorher gelesen und zurückgeschrieben:
-`caption_de`, `annotations`, `person_ids`, `person_names`. Ohne das löscht ein
-`--skip-caption`-Lauf jede Caption und jede bestätigte Person.
+`caption_de`, `caption_source`, `caption_locked`, `annotations`, `person_ids`,
+`person_names`, `event_name`, `event_excluded` und `trashed_at`
+(`IngestPipeline.PRESERVE_FIELDS` in `ingest/pipeline.py`). Ohne das löscht ein
+`--skip-caption`-Lauf jede Caption und jede bestätigte Person, und ein Lauf mit
+`--no-resume` holte weggeworfene Fotos zurück. *(Nachgemessen 06.11.2026, #61:
+hier standen nur die ersten vier Felder.)*
 
 ### Werkzeuge
 
@@ -889,6 +899,10 @@ gemeinsam ein Bier" und „Niki, Jonas, Bier" liegen bei Cosinus 0,78 und liefer
 
 ### API-Endpunkte
 
+Eine Auswahl: gemessen 06.11.2026 hat die API 82 Routen unter `/api`
+(`grep '@router.' api/routes/*.py` plus `/api/health`), hier stehen 36. Die
+vollständige Liste zeigt `/docs` der laufenden API.
+
 | Methode | Pfad | Beschreibung |
 |---|---|---|
 | GET | `/api/health` | Health-Check |
@@ -996,22 +1010,26 @@ echtes Tor).
 Die UI besteht aus ES-Modulen, und ein `import "./core/dom.js"` trägt keinen
 Cache-Parameter. Der Browser liefert dann beliebig lange die alte Fassung aus,
 während `index.html` schon die neue erwartet — eine geänderte Ansicht kommt
-nicht an, obwohl die Datei auf der Platte richtig ist. Zwei Vorkehrungen
-dagegen:
+nicht an, obwohl die Datei auf der Platte richtig ist. Die Vorkehrung
+dagegen (bis 04.09.2026 waren es zwei):
 
 * `/static` antwortet mit `Cache-Control: no-cache` (`api.main.FreshStatic`).
   Das heißt „vorher nachfragen", nicht „nicht speichern": unveränderte Dateien
-  werden mit 304 und null Byte beantwortet, auch die 2,8 MB der Karte.
-* Jeder Modul-Import trägt zusätzlich `?v=N` — eine Zahl für alle Module
-  gemeinsam, die gemeinsam erhöht wird. Header allein haben in der Praxis nicht
-  gereicht.
+  werden mit 304 und null Byte beantwortet, auch die 3,2 MB der Karte (hier stand 2,8 MB).
+* ~~Jeder Modul-Import trägt zusätzlich `?v=N`~~ — die Stempel sind seit
+  04.09.2026 alle entfernt (gemessen 06.11.2026: kein `?v=` mehr unter `web/`),
+  weil niemand sie gleich nachzog und sie den Modul-Graphen nie abdeckten; Grund
+  in [docs/finish-plan.md](docs/finish-plan.md) § Nachtrag 2026-09-04. Hier
+  stand, Header allein hätten nicht gereicht. Heute trägt `FreshStatic` allein.
 
 ### Vorschaubilder
 
 Die Originale liegen auf dem NAS — ein Trefferraster mit 48 Bildern wären sonst
 48 SMB-Reads pro Seitenaufruf. Thumbnails werden deshalb beim Ingest gleich
-miterzeugt (das Bild ist dort ohnehin dekodiert) und unter
-`~/.cache/photovault-thumbs` abgelegt. `--no-thumbs` schaltet das ab.
+miterzeugt (das Bild ist dort ohnehin dekodiert) und im Vorschaubild-Cache
+abgelegt — lokal `~/.cache/photovault-thumbs`, im Container das Volume unter
+`/app/data/thumbs` ([Der Vorschaubild-Cache](#der-vorschaubild-cache); hier stand
+nur der lokale Ort). `--no-thumbs` schaltet das ab.
 
 ### Eigene Notizen (`annotations`)
 
@@ -1051,22 +1069,35 @@ bis zu 56 Fotos, die ein defektes Bild aus dem Index riss — stehen in
 
 ## Status
 
-Gegen ein echtes Archiv gemessen (43 000 Bilder auf einer NAS, davon 17 453
-ausgewählt und indiziert):
+Gegen ein echtes Archiv gemessen (43 000 Bilder auf einer NAS). Stand
+**06.11.2026**, gezählt per `points/count` und `facet` auf den Collections
+`photos` und `faces` im laufenden Qdrant:
 
 | | |
 |---|---|
-| indiziert | 17 453 Fotos, 27 968 Gesichter, 0 Fehler |
-| Kanäle | 10 014 empfangen · 5 691 eigene Aufnahmen · 1 732 verschickt · 16 Rest |
+| indiziert | 19 564 Punkte: 17 227 Fotos und 2 337 Videos · 37 187 Gesichter |
+| Kanäle | 9 004 eigene Aufnahmen · 8 858 empfangen · 1 693 verschickt · 9 Rest |
+| Gesichter benannt | 18 035 von 37 187, weiter per „Wer ist das?" |
+| Captions | 17 178 Punkte, davon 17 169 Fotos (99,7 % der Fotos) und 9 Videos |
+
+Aus dem ersten Ingest (17 453 Fotos, nicht neu gemessen):
+
+| | |
+|---|---|
 | mit Datum | 100 % · davon 90,7 % mit echter Uhrzeit |
-| Personen benannt | laufend, per „Wer ist das?" |
 | Ereignisse | 267 Serien ab 5 Fotos, davon 81 mit Namensvorschlag aus dem Ordner |
-| Captions | < 1 % — Vision-Lauf steht aus: `python -m ingest.caption_pass` |
 | Query-Latenz | 3–10 ms |
 | Durchsatz | 26,2 Fotos/s |
 
-Offen: Captions erzeugen, Ortserkennung ausbauen, Videos einbinden
-(2 904 liegen im Archiv, siehe [docs/curation.md](docs/curation.md)).
+Offen: Ortserkennung ausbauen. Videos werden seit PR #11 (14.09.2026)
+eingelesen, als Poster gezeigt und stehen auf der Karte; Captions haben sie
+bisher kaum (9 von 2 337).
+
+*Korrigiert 06.11.2026 (#61). Vorher stand hier: „17 453 Fotos, 27 968
+Gesichter, 0 Fehler“, Kanäle „10 014 empfangen · 5 691 eigene Aufnahmen · 1 732
+verschickt · 16 Rest“, Captions „< 1 % — Vision-Lauf steht aus“ und „Offen:
+Captions erzeugen, Ortserkennung ausbauen, Videos einbinden (2 904 liegen im
+Archiv, siehe docs/curation.md)“. Die Zahl 2 904 steht in docs/curation.md nicht.*
 
 ## Privatsphäre
 

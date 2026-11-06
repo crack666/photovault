@@ -20,7 +20,9 @@ Riesiges privates Fotoarchiv (~50k Fotos) auf TrueNAS, kaum gezielt durchsuchbar
 - Caption darf nicht nur Pixel beschreiben; sie wird mit diesem Kontext angefüttert
 
 ## Non-Goals (v1)
-- Video-Dateien, Cloud-Sync, Foto-Editing, Multi-User
+- ~~Video-Dateien~~, Cloud-Sync, Foto-Editing, Multi-User
+  *(Video kam mit PR #11 am 14.09.2026 dazu: Scan, Poster, Gesichter aus Einzelbildern,
+  Karte; gemessen 06.11.2026: 2 337 Videos im Index, #61.)*
 - Auto-Labeling ohne Bestätigung (`person_ids` nie still setzen)
 
 ## Architektur
@@ -82,7 +84,7 @@ location, date_range, description, people, type, notes
 | Lokal | 100 % lokal, kein Cloud |
 | Skalierung | 50k Metadaten+Face+CLIP in < 2h mit `--skip-caption`; Vision nachziehen |
 | Query-Latenz | < 500ms |
-| Idempotent | Re-Ingest = Upsert (Pfad-Hash) |
+| Idempotent | Re-Ingest = Upsert; Kennung `photo_uid` einmal aus dem Pfad gebildet, danach eingefroren, Wiedererkennung über `content_sha256` (`ingest/identity.py`; hier stand „Pfad-Hash“, korrigiert 06.11.2026, #61) |
 | Robustheit | EXIF-Fehler → skip + log, nie crash |
 
 ## Acceptance Scenarios
@@ -100,5 +102,5 @@ location, date_range, description, people, type, notes
 | Vector Store | Qdrant (:6333) |
 | Caption/Embed | Ollama (:11434) |
 | API | FastAPI |
-| UI | Next.js (noch nicht im Repo) |
+| UI | ES-Module ohne Build-Schritt unter `web/static/`, ausgeliefert von FastAPI (hier stand „Next.js (noch nicht im Repo)“, korrigiert 06.11.2026, #61) |
 | Storage | TrueNAS (Fotos) |
