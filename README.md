@@ -448,6 +448,15 @@ UI: `http://127.0.0.1:8000/` → Tab **Wer ist das?**
 4. Eine Zuordnung gilt für den ganzen Cluster; `person_ids` am Foto, nie still
 5. Überspringen markiert `_skipped`
 
+**Ohne Maus** (seit 06.11.2026, #60; „Tasten: ?“ unter der Karte zeigt die Belegung):
+`J`/`Enter` nimmt den ersten Vorschlag an (bei „Noch mehr …?“ das Ja),
+`1`–`9` den Vorschlag Nummer n, `N` heißt „anderer Name“ und setzt den
+Cursor ins Namensfeld, `S` überspringt, `→`/`←` blättert ohne Entscheidung,
+`Esc` führt aus dem Namensfeld heraus. Beim Tippen greift keine Taste
+(`isTyping`), ebenso wenig bei offenem Dialog oder offener Großansicht. Das
+Namensfeld bekommt den Fokus nur noch, wenn die Karte keinen Vorschlag hat.
+Die Belegung steht in `web/static/faces/keys.js`.
+
 ### Atlas — die Karte des Archivs
 
 UI: Tab **Atlas**. Alle Fotos auf einer Fläche, Nähe heißt „sieht sich

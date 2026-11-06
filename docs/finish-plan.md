@@ -61,6 +61,9 @@ mit der Grossansicht ersatzlos entfallen.
   (Esc, Tab bleibt im Dialog), im Atlas (Esc, `0`), im Pfadwähler (Enter/Esc) und als
   Enter im Namensfeld des Gesichtsstreifens (`faces/strip.js:194`). „Wer ist das?“, die
   Kandidaten und die Kachelauswahl bleiben Mausarbeit — Vorschlag dazu: #60.
+  *Nachtrag 06.11.2026 (#60):* „Wer ist das?“ hat jetzt eine Belegung (J/Enter, 1–9, N,
+  S, ←/→, Esc, ?; `faces/keys.js`, README § Person-Labeling). Offen bleiben die
+  Kandidaten unter „Unbekannte“ und die Kachelauswahl (Option B aus #60).
 - ~~**Request-Level-Tests**~~ — erledigt 2026-09-04, `tests/test_app_requests.py`
   (23 Tests). Und der erste davon fand gleich einen Sicherheitsfehler: der
   Ordnerwähler war ein Dateibrowser für die ganze Maschine — `browse` nahm jeden
