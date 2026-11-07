@@ -4,7 +4,8 @@ Die Regel: Jede Person in `person_ids` eines Fotos braucht auf diesem Foto
 ein Gesicht mit derselben `person_id`. Gesichter von Video-Bildern
 (`frame_ss`) zaehlen mit, Pseudo-IDs (`_skipped` usw.) nicht. Fehlt der
 Beleg, findet die Personensuche das Foto unter einem Namen, den kein Gesicht
-traegt (photovault#57: 12 Fotos, gemessen 03.11.2026).
+traegt (photovault#57: 12 Fotos, gemessen 03.11.2026; am 07.11.2026
+bereinigt, danach 0).
 
 Ausgegeben werden nur Punkt-IDs und Zaehler, keine Namen -- die Liste darf
 in ein Issue. Je Foto steht dabei, ob der Abgleich die fehlende Person

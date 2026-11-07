@@ -832,7 +832,9 @@ GPU-Tor fragen. Als Sicherung vorher Qdrant-Snapshots von `faces` und
 `person_ids` auf dem Foto ein Gesicht mit derselben `person_id` hat
 (Video-Bilder zählen mit, Pseudo-IDs nicht), und endet mit Exit 1, wenn ein
 Foto sie verletzt. Ausgegeben werden Punkt-IDs, keine Namen. Am 03.11.2026
-waren es 12 Fotos (#57). Nach dem Verlauf von #37 entstanden sie, als am 27.10. die alten
+waren es 12 Fotos (#57); am 07.11.2026 auf Entscheid des Menschen je ein
+Gesicht mit der genannten Person benannt (`/api/persons/faces/move`-Logik),
+seitdem 0 (gemessen 07.11.2026 per `python -m tools.persons_check`). Nach dem Verlauf von #37 entstanden sie, als am 27.10. die alten
 Gesichtseinträge gedrehter Fotos gelöscht und mit `ingest.face_pass --kind
 photo --paths-file` neu erkannt wurden: dieser Lauf schreibt Gesichter ohne
 Namen und lässt `person_ids` stehen. Seitdem überspringt `--kind photo`
