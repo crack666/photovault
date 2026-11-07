@@ -42,6 +42,21 @@ DEDUP_THRESHOLD = 0.55
 #: Ohne ihn wuerde `--missing-only` Clips ohne Treffer jedes Mal neu fahren.
 FACE_SOURCE = "video-frames"
 
+#: Derselbe Stempel fuer `--kind photo`. Bis photovault#57 trugen auch
+#: nachgearbeitete Standbilder "video-frames" -- wer den Index las, suchte
+#: dann nach einem Video, wo keins war.
+PHOTO_SOURCE = "photo-rescan"
+
+
+def source_for(kind: str) -> str:
+    """Stempel im Foto-Payload: woher die Gesichter dieses Lauf stammen."""
+    return PHOTO_SOURCE if kind == "photo" else FACE_SOURCE
+
+
+def confirmed_persons(payload: dict) -> list[str]:
+    """Bestaetigte Personen eines Fotos, ohne Pseudo-IDs (`_skipped` usw.)."""
+    return [p for p in (payload.get("person_ids") or []) if p and not str(p).startswith("_")]
+
 #: Sentinel: Leser fertig, GPU darf auslaufen.
 _DONE = object()
 
@@ -172,7 +187,7 @@ def suggestion_ids(faces: list[dict], matcher) -> list[str]:
 
 
 def write_faces(client, writer, photo: Photo, faces: list[dict], suggestions: list[str],
-                collection: str = "photos") -> None:
+                collection: str = "photos", source: str = FACE_SOURCE) -> None:
     """Gesichter in die Faces-Collection, Zaehler auf den Foto-Punkt.
 
     `set_payload` statt `upsert` auf dem Foto -- sonst waeren Caption und
@@ -193,7 +208,7 @@ def write_faces(client, writer, photo: Photo, faces: list[dict], suggestions: li
             "face_count": len(faces),
             "face_boxes": [f.get("box") or [] for f in faces],
             "person_suggestions": suggestions,
-            "face_source": FACE_SOURCE,
+            "face_source": source,
         },
         points=[photo.point_id],
         wait=True,
@@ -219,7 +234,7 @@ def run(
 ) -> dict[str, int]:
     stats = {
         "selected": 0, "processed": 0, "faces": 0, "skipped": 0,
-        "unreadable": 0, "failed": 0,
+        "unreadable": 0, "failed": 0, "named": 0,
     }
     photos = select_photos(
         client, collection, limit=None if only_paths else limit,
@@ -238,7 +253,27 @@ def run(
         if limit:
             photos = photos[:limit]
     elif missing_only:
-        photos = [p for p in photos if (p.payload or {}).get("face_source") != FACE_SOURCE]
+        photos = [p for p in photos
+                  if (p.payload or {}).get("face_source") not in (FACE_SOURCE, PHOTO_SOURCE)]
+    if kind == "photo":
+        # Dieser Lauf schreibt Gesichter ohne Namen und laesst `person_ids`
+        # stehen. Auf einem Foto mit bestaetigter Person ist das nur dann
+        # harmlos, wenn die alten, benannten Gesichter genau dieselben Kaesten
+        # haben -- sonst steht danach ein Name auf dem Foto, den kein Gesicht
+        # mehr traegt (photovault#57: 12 Fotos, nach dem Loeschen der alten
+        # Eintraege und einem Lauf `--kind photo --paths-file`). Namen per
+        # Kasten-Ueberlappung mitnehmen kann `tools.faces_reorient`.
+        named = [p for p in photos if confirmed_persons(p.payload or {})]
+        if named:
+            logger.warning(
+                "%d Fotos mit bestaetigter Person uebersprungen -- dafuer ist "
+                "tools.faces_reorient da (nimmt Namen per Kasten-Ueberlappung mit)",
+                len(named),
+            )
+            for photo in named[:5]:
+                logger.warning("  %s", photo.file_path)
+            stats["named"] = len(named)
+            photos = [p for p in photos if not confirmed_persons(p.payload or {})]
     stats["selected"] = len(photos)
     if not photos:
         logger.info("Nothing to scan for faces.")
@@ -405,7 +440,8 @@ def _run_piped(
                 suggestions = suggestion_ids(faces, matcher)
                 # Absicht: keine person_ids. Der Test und der Matcher-Kommentar
                 # verbieten stilles Auto-Label.
-                write_faces(client, writer, photo, faces, suggestions, collection)
+                write_faces(client, writer, photo, faces, suggestions, collection,
+                            source=source_for(kind))
             except Exception as e:
                 logger.warning("Face write failed for %s: %s", photo.file_path, e)
                 bump("failed")
