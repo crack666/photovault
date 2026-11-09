@@ -1029,6 +1029,11 @@ Atlas-Titel fallen bei belegter Karte auf ihre Szenen-Tags zurück. Code:
 `ingest/gpu_tor.py`, Tests `tests/test_gpu_tor.py` (mit einer LiteLLM-Attrappe, kein
 echtes Tor).
 
+Wer für einen langen Caption-Lauf selbst reserviert (`gpu-tor.ps1 reservieren -Von X`),
+setzt `PHOTOVAULT_GPU_TOR_VON=X`: der Captioner schickt dann `metadata.gpu_tor_von`
+mit, und die eigene Reservierung sperrt den Lauf nicht (ohne Kennung ist für LiteLLM
+jede Reservierung fremd, [photovault#65](https://github.com/crack666/photovault/issues/65)).
+
 ### Wenn eine Änderung nicht ankommt
 
 Die UI besteht aus ES-Modulen, und ein `import "./core/dom.js"` trägt keinen

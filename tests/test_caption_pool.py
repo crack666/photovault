@@ -16,6 +16,7 @@ def _ohne_litellm_env(monkeypatch):
     (Setup-Wizard), hiesse "nichts gesetzt" sonst "nichts vorzuwaermen"."""
     monkeypatch.delenv("LITELLM_URL", raising=False)
     monkeypatch.delenv("PHOTOVAULT_EMBED_URL", raising=False)
+    monkeypatch.delenv("PHOTOVAULT_GPU_TOR_VON", raising=False)
     monkeypatch.setenv("PHOTOVAULT_CAPTION_MODEL", "local")
     monkeypatch.setenv("PHOTOVAULT_EMBED_MODEL", "embedder")
 
@@ -186,6 +187,28 @@ def test_captioner_goes_through_litellm_chat(monkeypatch):
     assert parts[0]["type"] == "text"
     assert parts[1]["image_url"]["url"] == "data:image/jpeg;base64,AAAA"
     assert "num_ctx" not in sent["payload"]
+    assert "metadata" not in sent["payload"]
+
+
+@pytest.mark.parametrize("von, erwartet", [
+    ("issue-sweep/photovault", {"gpu_tor_von": "issue-sweep/photovault"}),
+    ("mit leerzeichen", None),
+    ("x" * 65, None),
+])
+def test_captioner_reicht_tor_kennung_durch(monkeypatch, von, erwartet):
+    """Eigene Reservierung am GPU-Tor: ohne Kennung sperrt sie den eigenen Lauf."""
+    sent = {}
+
+    def fake_post(url, payload, timeout=180, headers=None):
+        sent["payload"] = payload
+        return _chat_answer('{"caption_de": "hallo", "scene_tags": []}')
+
+    monkeypatch.setenv("PHOTOVAULT_GPU_TOR_VON", von)
+    monkeypatch.setattr("ingest.captioner.litellm_url", lambda: "http://127.0.0.1:4000")
+    monkeypatch.setattr("ingest.captioner.litellm_headers", lambda: {})
+    monkeypatch.setattr("ingest.captioner.post_json", fake_post)
+    Captioner(model="local").caption_structured("/nix.jpg", {}, image_b64="AAAA")
+    assert sent["payload"].get("metadata") == erwartet
 
 
 def test_embedder_goes_through_litellm(monkeypatch):

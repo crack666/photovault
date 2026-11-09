@@ -16,6 +16,7 @@ from ingest.gpu_tor import GpuBusy
 from ingest.ollama_client import (
     CAPTION_NUM_CTX,
     caption_model,
+    gpu_tor_metadata,
     litellm_headers,
     litellm_url,
     llm_mode,
@@ -391,6 +392,9 @@ class Captioner:
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        metadata = gpu_tor_metadata()
+        if metadata:
+            payload["metadata"] = metadata
         return post_json(
             f"{pool}/v1/chat/completions",
             payload,
