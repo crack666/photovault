@@ -1103,6 +1103,31 @@ zurückfallenden `onnxruntime` über drei umsonst gerechnete insightface-Modelle
 bis zu 56 Fotos, die ein defektes Bild aus dem Index riss — stehen in
 [docs/performance.md](docs/performance.md).
 
+### Wie lange dauert es? Faustwerte für 1 000 und 10 000 Fotos
+
+Hochgerechnet aus den gemessenen Raten, linear, ohne Anlauf. Alle Messungen
+liefen auf crackdesk (RTX 5090), die Fotos lagen auf einer NAS. Liegen die
+Fotos auf einer lokalen SSD, wird der Grundindex eher schneller.
+
+| Schritt | Rate | 1 000 Fotos | 10 000 Fotos | gemessen |
+|---|---|---|---|---|
+| **Grundindex** (Datum, Gesichter, Szene, Suchvektor), GPU | ~26 Fotos/s | < 1 min | ~6,5 min | 19.09.2026, Container |
+| Grundindex, nur CPU, 4 Kerne | 1,6 Fotos/s | ~10 min | ~1,7 h | 19.09.2026 |
+| Grundindex, nur CPU, 8 Kerne | 2,2 Fotos/s | ~8 min | ~1,3 h | 19.09.2026 |
+| Grundindex, nur CPU, 24 Kerne | 2,6 Fotos/s | ~6 min | ~1,1 h | 19.09.2026 |
+| **Beschreibungen** (Vision-Modell über Ollama, GPU) | ~3,0 s/Foto | ~50 min | ~8,3 h | 24.08.2026, qwen3.8, 2 162 Fotos |
+| Textvektor neu (nach Notizen/Namen) | ~130 ms/Foto | ~2 min | ~22 min | 24.08.2026 |
+
+**Lesart:** Der Grundindex ist der schnelle Teil. Danach kann man schon nach
+Personen, Datum, Ort und Szene suchen. Teuer sind die Beschreibungen: Sie
+kosten rund 100-mal so viel Zeit wie der Grundindex. Deshalb laufen sie als
+eigener Nachlauf (`ingest/caption_pass.py`), über Nacht oder auf Teilmengen
+(`--person`, `--album`). Auf der CPU sind die Beschreibungen nicht gemessen.
+
+**Noch nicht drin:**
+- **Videos:** Für die Beschreibung je Video gibt es noch keinen Messwert ([#65](https://github.com/crack666/photovault/issues/65)).
+- **SigLIP 2:** Das Szenenmodell wechselt von CLIP auf SigLIP 2 ([#66](https://github.com/crack666/photovault/issues/66)). Gemessen am 10.11.2026, nur die Szenenstufe auf der GPU: SigLIP 2 schafft 40 Bilder/s, CLIP 27 Bilder/s ([#59](https://github.com/crack666/photovault/issues/59), [docs/performance.md](docs/performance.md#bildmodell-clip-l14-gegen-siglip-2)). Der Grundindex sollte also nicht langsamer werden. Bis der Wechsel gemessen ist, gelten die CLIP-Zahlen oben.
+
 ## Status
 
 Gegen ein echtes Archiv gemessen (43 000 Bilder auf einer NAS). Stand
