@@ -255,7 +255,10 @@ def miss_modell(name: str, pretrained: str, daten: list[tuple[dict, list]],
     laden_s = time.perf_counter() - t0
     if dev == "cuda":
         torch.cuda.reset_peak_memory_stats()
-    dtype = next(model.parameters()).dtype
+    # Wie ingest/scene_tagger: fp16 auf der GPU. Nicht aus dem ersten Parameter
+    # ablesen -- open_clip laesst z. B. class_embedding in fp32 (Fehler am
+    # 10.11.2026: "Input type FloatTensor and weight type HalfTensor").
+    dtype = torch.float16 if dev == "cuda" else torch.float32
 
     def text(saetze: list[str]):
         with torch.no_grad():

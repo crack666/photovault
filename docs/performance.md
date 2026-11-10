@@ -459,6 +459,49 @@ Messbar war es nur indirekt — die Stufe `face_match` brauchte für 260 Fotos
 
 ---
 
+## Bildmodell: CLIP L/14 gegen SigLIP 2
+
+Gemessen 10.11.2026 14:20 mit `tools.clip_vergleich` ([#59](https://github.com/crack666/photovault/issues/59)),
+RTX 5090 hinter eigener GPU-Tor-Reservierung, fp16, Stapel 32. Stichprobe Seed 59:
+300 Fotos mit `caption_de`, 60 Videos (9 mit Beschreibung, 45 per Sicht auf den
+Mittel-Frame gelabelt, 6 ausgelassen). Referenz sind die Beschreibungen und Tags
+des Vision-Modells, nicht die alten CLIP-Tags. Laufzeit des ganzen Werkzeugs gut 2 min.
+
+```bash
+python -m tools.clip_vergleich --n 300 --videos 60 \
+  --video-labels ~/.local/share/photovault/clip_vergleich/video_labels.json \
+  --out ~/.local/share/photovault/clip_vergleich/ergebnis.json
+```
+
+| Kennzahl | ViT-L-14 (openai) | ViT-SO400M-14-SigLIP2 (webli) |
+|---|---|---|
+| Fotos: Tags F1 (Ingest-Regel) | 0.46 | 0.49 |
+| Fotos: Tags Precision / Recall | 0.41 / 0.54 | 0.47 / 0.52 |
+| Fotos: Tags je Bild | 2.97 | 2.47 |
+| Fotos: bestes Konzept richtig (top1) | 0.60 | 0.70 |
+| Fotos: mAP (schwellenfrei) | 0.62 | 0.68 |
+| Videos: Tags F1 / top1 / mAP | 0.42 / 0.53 / 0.56 | 0.49 / 0.64 / 0.69 |
+| Beschreibung (de) → Bild R@1 / R@5 / R@10 | 0.39 / 0.64 / 0.75 | 0.87 / 0.97 / 0.99 |
+| Kurze deutsche Anfragen, Treffer@10 | 0.60 | 0.77 |
+| Bilder/s (inkl. Vorverarbeitung) | 26.8 | 40.2 |
+| VRAM-Spitze | 1.3 GiB | 2.6 GiB |
+| Vektorgröße | 768 | 1152 |
+
+**Lesart:** SigLIP 2 gewinnt überall, am deutlichsten bei deutscher Freitextsuche
+(R@1 0,39 → 0,87, kurze Anfragen 0,60 → 0,77). Bei den Tags ist der Abstand
+kleiner, weil die Schwellen der Ingest-Regel auf CLIP eingestellt sind; mAP
+(schwellenfrei) zeigt +0,06 bei Fotos und +0,13 bei Videos. Schneller ist es
+auch, trotz größerem Modell. Die Beschreibungs-Kennzahl bevorzugt ein
+mehrsprachiges Modell, das ist aber genau der Anwendungsfall: Suchen wird auf
+Deutsch. Der Wechsel selbst (Re-Embed, neue Vektorgröße, Schwellen neu, Atlas)
+ist ein eigenes Paket.
+
+Erster GPU-Lauf scheiterte an `Input type (torch.cuda.FloatTensor) and weight
+type (torch.cuda.HalfTensor)`: der Eingabetyp wurde aus dem ersten Parameter
+abgelesen, den open_clip in fp32 lässt. Jetzt fest fp16 wie in `ingest/scene_tagger.py`.
+
+---
+
 ## Messen
 
 Jeder Lauf gibt am Ende eine Zeitverteilung aus. Im Parallelmodus addieren
