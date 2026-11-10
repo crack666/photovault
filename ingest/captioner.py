@@ -429,8 +429,12 @@ def jpeg_b64(file_path: str, image=None, max_side: int = 1024) -> str:
     Dekodieren weg. `thumbnail` arbeitet in-place, deshalb auf einer Kopie.
     """
     if image is None:
-        from PIL import Image
+        from PIL import Image, ImageFile
 
+        # Wie ingest/pipeline._load_image: abgeschnittene JPEGs (oft fehlen nur
+        # wenige Bytes am Ende) trotzdem lesen. Ohne das blieben 57 der 58
+        # Nachzuegler-Fotos aus #65 als "unlesbar" ohne Beschreibung (10.11.2026).
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
         image = Image.open(file_path)
     if image.mode != "RGB":
         image = image.convert("RGB")

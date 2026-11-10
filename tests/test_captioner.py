@@ -87,3 +87,21 @@ def test_video_prompt_asks_for_a_clip_not_a_still():
 def _json_string(value: str) -> str:
     import json
     return json.dumps(value)
+
+
+def test_jpeg_b64_reads_truncated_jpeg(tmp_path):
+    """Abgeschnittene JPEGs (#65: 57 Nachzuegler) muessen trotzdem ins Modell."""
+    import base64
+    import io
+
+    from PIL import Image, ImageFile
+
+    from ingest.captioner import jpeg_b64
+
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), (200, 30, 30)).save(buf, format="JPEG", quality=95)
+    path = tmp_path / "kaputt.jpg"
+    path.write_bytes(buf.getvalue()[:-20])
+    ImageFile.LOAD_TRUNCATED_IMAGES = False
+    out = jpeg_b64(str(path))
+    assert Image.open(io.BytesIO(base64.b64decode(out))).size == (64, 48)
