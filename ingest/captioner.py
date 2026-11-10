@@ -16,6 +16,7 @@ from ingest.gpu_tor import GpuBusy
 from ingest.ollama_client import (
     CAPTION_NUM_CTX,
     caption_model,
+    gpu_tor_metadata,
     litellm_headers,
     litellm_url,
     llm_mode,
@@ -391,6 +392,9 @@ class Captioner:
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        metadata = gpu_tor_metadata()
+        if metadata:
+            payload["metadata"] = metadata
         return post_json(
             f"{pool}/v1/chat/completions",
             payload,
@@ -425,8 +429,12 @@ def jpeg_b64(file_path: str, image=None, max_side: int = 1024) -> str:
     Dekodieren weg. `thumbnail` arbeitet in-place, deshalb auf einer Kopie.
     """
     if image is None:
-        from PIL import Image
+        from PIL import Image, ImageFile
 
+        # Wie ingest/pipeline._load_image: abgeschnittene JPEGs (oft fehlen nur
+        # wenige Bytes am Ende) trotzdem lesen. Ohne das blieben 57 der 58
+        # Nachzuegler-Fotos aus #65 als "unlesbar" ohne Beschreibung (10.11.2026).
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
         image = Image.open(file_path)
     if image.mode != "RGB":
         image = image.convert("RGB")

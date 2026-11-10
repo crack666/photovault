@@ -813,7 +813,14 @@ python -m tools.thumbs --prune                        # verwaiste Kacheln loesch
 python -m tools.thumbs --warm                         # fehlende erzeugen
 python -m tools.faces_reorient --dry-run --limit 50   # gedrehte Fotos neu erkennen (#37), GPU
 python -m tools.persons_check                         # Person auf dem Foto ohne passendes Gesicht? (#57)
+python -m tools.clip_vergleich --video-labels L.json   # CLIP L/14 gegen SigLIP 2 messen (#59), GPU
 ```
+
+`tools.clip_vergleich` misst nur lesend, ob ein anderes Bildmodell Szenen-Tags
+und deutsche Bildsuche besser macht. Referenz sind die Beschreibungen des
+Vision-Modells, nicht die alten CLIP-Tags. Braucht `transformers` in der venv
+(Tokenizer von SigLIP 2, `pip install -e ".[bench]"`) und rund 4,5 GB Gewichte
+im Modell-Cache. Ergebnis und Lesart: [docs/performance.md](docs/performance.md#bildmodell-clip-l14-gegen-siglip-2).
 
 `tools.faces_reorient` erkennt Fotos mit EXIF-Ausrichtung != 1 neu. Ob die
 gespeicherten Kästen roh (vor #38) oder schon aufrecht liegen, misst es je
@@ -1028,6 +1035,11 @@ Embeddings (Suche, Text-Vektoren, Re-Embed) lässt das Tor immer durch; die
 Atlas-Titel fallen bei belegter Karte auf ihre Szenen-Tags zurück. Code:
 `ingest/gpu_tor.py`, Tests `tests/test_gpu_tor.py` (mit einer LiteLLM-Attrappe, kein
 echtes Tor).
+
+Wer für einen langen Caption-Lauf selbst reserviert (`gpu-tor.ps1 reservieren -Von X`),
+setzt `PHOTOVAULT_GPU_TOR_VON=X`: der Captioner schickt dann `metadata.gpu_tor_von`
+mit, und die eigene Reservierung sperrt den Lauf nicht (ohne Kennung ist für LiteLLM
+jede Reservierung fremd, [photovault#65](https://github.com/crack666/photovault/issues/65)).
 
 ### Wenn eine Änderung nicht ankommt
 

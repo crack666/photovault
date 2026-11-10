@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 from typing import Any
@@ -197,6 +198,28 @@ def litellm_headers() -> dict[str, str]:
     if not key:
         return {}
     return {"Authorization": f"Bearer {key}"}
+
+
+_TOR_VON_ZEICHEN = re.compile(r"^[A-Za-z0-9._/:@-]{1,64}$")
+
+
+def gpu_tor_metadata() -> dict[str, str]:
+    """`metadata` fuer LiteLLM, wenn dieser Lauf eine eigene Tor-Reservierung hat.
+
+    Wer am GPU-Tor reserviert (`gpu-tor.ps1 reservieren -Von X`), wird sonst
+    von der eigenen Reservierung gesperrt: ohne Kennung fragt der LiteLLM-Hook
+    das Tor als `litellm`, und jede Reservierung ist fuer ihn fremd (ai-stack
+    `docs/LITELLM_GPU_TOR.md`). `PHOTOVAULT_GPU_TOR_VON=X` reicht die Kennung
+    durch. Erlaubt sind dieselben Zeichen wie beim Hook; eine ungueltige
+    Kennung wird ignoriert statt die Anfrage scheitern zu lassen.
+    """
+    von = (os.environ.get("PHOTOVAULT_GPU_TOR_VON") or "").strip()
+    if not von:
+        return {}
+    if not _TOR_VON_ZEICHEN.match(von):
+        logger.warning("PHOTOVAULT_GPU_TOR_VON ungueltig, ignoriert: %r", von)
+        return {}
+    return {"gpu_tor_von": von}
 
 
 def apply_llm_env() -> None:

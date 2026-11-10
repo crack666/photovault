@@ -35,6 +35,11 @@ atlas = [
     "umap-learn>=0.5",
     "scikit-learn>=1.4",
 ]
+# Nur fuer `python -m tools.clip_vergleich` (#59): SigLIP 2 bringt seinen
+# Tokenizer ueber transformers mit; der Ingest braucht ihn nicht.
+bench = [
+    "transformers>=4.45",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio",
