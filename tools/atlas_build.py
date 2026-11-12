@@ -5,7 +5,7 @@ nebeneinander, Kontinente bekommen einen Namen. Das Ergebnis ist eine
 statische Datei unter ``web/static/atlas/`` -- die UI laedt sie direkt ueber
 den vorhandenen StaticFiles-Mount, es braucht **keinen API-Neustart**.
 
-    python -m tools.atlas_build                 # aus CLIP-Vektoren
+    python -m tools.atlas_build                 # aus dem Bildraum (SigLIP 2, sobald voll, sonst CLIP)
     python -m tools.atlas_build --space text    # aus den grounded Textvektoren
     python -m tools.atlas_build --retitle       # nur die Titel, Karte bleibt
 
@@ -157,6 +157,27 @@ FLAG_VIDEO = 1 << 9  #: ein Video -- die Kachel zeigt sein Poster, nicht das Gan
 # Laden
 # --------------------------------------------------------------------------
 
+def _side_spec(space: str):
+    """Das Bildmodell, wenn `space` in einer Beistell-Collection liegt, sonst None."""
+    from ingest.scene_tagger import IMAGE_MODELS
+
+    spec = IMAGE_MODELS.get(space)
+    return spec if spec is not None and spec.collection != PHOTOS else None
+
+
+def resolve_space(qc: Any, space: str) -> str:
+    """`bild` = der volle Bildraum, aus dem auch die Aehnlichkeitssuche liest.
+
+    Karte und "Mehr davon" muessen im selben Raum arbeiten: sonst sind
+    Nachbarn auf der Karte etwas anderes als die Treffer der Suche.
+    """
+    if space != "bild":
+        return space
+    from ingest.image_space import active
+
+    return active(qc).key
+
+
 def load_points(qc: Any, space: str, limit: int | None = None) -> tuple[np.ndarray, list[dict]]:
     """Vektoren und die Payload-Felder holen, die die Karte braucht.
 
@@ -167,16 +188,29 @@ def load_points(qc: Any, space: str, limit: int | None = None) -> tuple[np.ndarr
     meta: list[dict] = []
     offset = None
     t0 = time.time()
+    side = _side_spec(space)
     while True:
         batch, offset = qc.scroll(
             collection_name=PHOTOS,
             limit=512,
             offset=offset,
             with_payload=True,
-            with_vectors=[space],
+            with_vectors=False if side else [space],
         )
+        if side:
+            # Der Vektor liegt in der Beistell-Collection (#66), die Payload
+            # hier: je Stapel nachholen, gleiche Punkt-IDs.
+            nach_id = {
+                str(p.id): (p.vector or {}).get(side.vector)
+                for p in qc.retrieve(collection_name=side.collection,
+                                     ids=[str(pt.id) for pt in batch],
+                                     with_payload=False, with_vectors=[side.vector])
+            }
         for point in batch:
-            vec = (point.vector or {}).get(space)
+            if side:
+                vec = nach_id.get(str(point.id))
+            else:
+                vec = (point.vector or {}).get(space)
             if not vec:
                 continue
             payload = point.payload or {}
@@ -987,6 +1021,7 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
     qc = qc or client()
 
     step("laden")
+    space = resolve_space(qc, space)
     X, meta = load_points(qc, space, limit)
     if len(X) < max(k, 50):
         raise SystemExit(f"Nur {len(X)} Punkte mit {space}-Vektor -- zu wenig fuer eine Karte.")
@@ -1183,8 +1218,9 @@ def retitle(out_dir: Path, qc: Any = None, ask: Any = None) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--space", choices=("clip", "text"), default="clip",
-                    help="Vektorraum fuer das Layout (Standard: clip)")
+    ap.add_argument("--space", choices=("bild", "clip", "siglip2", "text"), default="bild",
+                    help="Vektorraum fuer das Layout (Standard: bild = SigLIP 2, "
+                         "sobald voll, sonst clip; #66)")
     ap.add_argument("--clusters", type=int, default=0,
                     help="k-means mit so vielen Kontinenten statt der Inseln (Vergleich)")
     ap.add_argument("--limit", type=int, help="nur die ersten N Fotos (zum Ausprobieren)")

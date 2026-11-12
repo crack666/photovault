@@ -306,7 +306,42 @@ def miss_modell(name: str, pretrained: str, daten: list[tuple[dict, list]],
             "vram_gib": vram, "dim": int(bildvek.shape[1])}
 
 
-def auswerten(m: dict, daten: list[tuple[dict, list]], video_labels: dict) -> dict:
+#: Gitter fuer `--schwellen` (#66): (top_k, min_ratio, min_prob).
+GITTER_TOP_K = (3, 4, 5)
+GITTER_MIN_RATIO = (1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
+GITTER_MIN_PROB = (0.02, 0.04, 0.06, 0.08, 0.10, 0.15, 0.20)
+
+
+def schwellen_suche(probs, labels: list[str], refs: list, ist_video: list[bool]) -> dict:
+    """Die Ingest-Regel mit der besten F1 ueber Fotos und Videos zusammen.
+
+    Gewertet wird die Summe beider F1, damit die 45 Videos gegen 300 Fotos
+    nicht untergehen -- Videos sind der Bestand, in dem die Tags wirklich
+    zaehlen (ohne Beschreibung kommen sie nur vom Bildmodell).
+    """
+    def f1(maske, regel):
+        idx = [i for i, ok in enumerate(maske) if ok and refs[i]]
+        if not idx:
+            return None
+        vor = [tags_nach_regel(probs[i], labels, *regel) for i in idx]
+        return prf(vor, [refs[i] for i in idx])
+
+    fotos = [not v for v in ist_video]
+    bestes = None
+    for k in GITTER_TOP_K:
+        for ratio in GITTER_MIN_RATIO:
+            for mp in GITTER_MIN_PROB:
+                regel = (k, mp, ratio)
+                a, b = f1(fotos, regel), f1(ist_video, regel)
+                wert = (a["f1"] if a else 0.0) + (b["f1"] if b else 0.0)
+                if bestes is None or wert > bestes["wert"] + 1e-9:
+                    bestes = {"wert": wert, "top_k": k, "min_prob": mp, "min_ratio": ratio,
+                              "fotos": a, "videos": b}
+    return bestes or {}
+
+
+def auswerten(m: dict, daten: list[tuple[dict, list]], video_labels: dict,
+              suche: bool = False) -> dict:
     """Alle Kennzahlen eines Modells aus seinen Vektoren."""
     import numpy as np
 
@@ -345,6 +380,8 @@ def auswerten(m: dict, daten: list[tuple[dict, list]], video_labels: dict) -> di
            "vram_gib": m["vram_gib"], "laden_s": m["laden_s"],
            "tags_fotos": tagmasse([not v for v in ist_video]),
            "tags_videos": tagmasse(ist_video)}
+    if suche:
+        erg["schwellen"] = schwellen_suche(probs, labels, refs, ist_video)
 
     # Beschreibung -> eigenes Bild, gegen alle Kandidaten (Fotos + Videos).
     mit_cap = [i for i, (e, _) in enumerate(daten) if e.get("caption_de")]
@@ -423,6 +460,9 @@ def main(argv=None) -> int:
         "MODEL_DIR", str(Path.home() / ".cache" / "photovault-models")))
     ap.add_argument("--out", help="Ergebnisse als JSON")
     ap.add_argument("--liste", help="nur die Stichprobe als JSON schreiben, nichts rechnen")
+    ap.add_argument("--schwellen", action="store_true",
+                    help="je Modell die Ingest-Regel mit der besten Tag-F1 suchen (#66)")
+    ap.add_argument("--nur", help="nur dieses Modell (open_clip-Name)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -439,10 +479,19 @@ def main(argv=None) -> int:
     logger.info("%d von %d Eintraegen geladen", len(daten), len(eintraege))
     ergebnisse = []
     for name, pre in MODELLE:
+        if args.nur and name != args.nur:
+            continue
         logger.info("Modell %s (%s)", name, pre)
-        ergebnisse.append(auswerten(miss_modell(name, pre, daten, args.model_dir), daten, video_labels))
+        ergebnisse.append(auswerten(miss_modell(name, pre, daten, args.model_dir), daten,
+                                    video_labels, suche=args.schwellen))
     md = tabelle(ergebnisse)
     print(md)
+    for e in ergebnisse:
+        b = e.get("schwellen")
+        if b:
+            print(f"{e['modell']} beste Regel: top_k={b['top_k']} min_ratio={b['min_ratio']} "
+                  f"min_prob={b['min_prob']} -> F1 Fotos "
+                  f"{(b['fotos'] or {}).get('f1', 0):.2f}, Videos {(b['videos'] or {}).get('f1', 0):.2f}")
     for e in ergebnisse:
         print(e["modell"], json.dumps(e["anfragen_de"]["je_anfrage"], ensure_ascii=False))
     if args.out:

@@ -31,7 +31,9 @@ class IngestConfig:
     batch_size: int = 50
     face_threshold: float = 0.4
     # Mindest-Softmax-Wahrscheinlichkeit eines Szenen-Konzepts, kein roher Cosinus.
-    clip_threshold: float = 0.04
+    clip_threshold: Optional[float] = None  # None: die Schwelle des Bildmodells
+    #: None: `PHOTOVAULT_IMAGE_MODEL`, sonst `scene_tagger.DEFAULT_IMAGE_MODEL`.
+    image_model: Optional[str] = None
     model_dir: str = "/models"
     resume: bool = True
     skip_caption: bool = False
@@ -168,6 +170,10 @@ class PhotoRecord:
     faces: list[dict] = field(default_factory=list)
     scene_tags: list[str] = field(default_factory=list)
     clip_embedding: Optional[list[float]] = None
+    #: Welches Bildmodell `clip_embedding` gerechnet hat (`scene_tagger.IMAGE_MODELS`).
+    #: Der Schreiber legt den Vektor danach ab: `clip` in `photos`, sonst
+    #: in die Beistell-Collection des Modells (#66).
+    image_model: str = "clip"
     caption_de: Optional[str] = None
     caption_display: Optional[str] = None
     caption_source: Optional[str] = None
@@ -277,7 +283,8 @@ class IngestPipeline:
         exif_ext = ExifExtractor()
         folder_parser = FolderParser(sources)
         face_emb = FaceEmbedder(self.config.model_dir)
-        scene = SceneTagger(self.config.model_dir, self.config.clip_threshold)
+        scene = SceneTagger(self.config.model_dir, self.config.clip_threshold,
+                            model=self.config.image_model)
         captioner = None if self.config.skip_caption else Captioner()
         text_emb = TextEmbedder()
         # Lehnt das GPU-Tor Captions ab, wartet der Lauf, statt Fehler zu zaehlen.
@@ -378,6 +385,7 @@ class IngestPipeline:
                             sr = scene.process(fp, image=rgb)
                         record.scene_tags = sr["tags"]
                         record.clip_embedding = sr["embedding"]
+                        record.image_model = getattr(getattr(scene, "spec", None), "key", "clip")
                     elif getattr(record, "_frames", None):
                         # Video: die Caption-Frames einbetten, der Medoid
                         # vertritt das Video -- als Vektor und als Poster.
@@ -388,6 +396,7 @@ class IngestPipeline:
                         record._frames = None
                         if vc["embedding"]:
                             record.clip_embedding = vc["embedding"]
+                            record.image_model = getattr(getattr(scene, "spec", None), "key", "clip")
                             record.scene_tags = vc["tags"]
                             record.poster_ss = vc["poster_ss"]
                             rgb = vc["frame"]
@@ -637,6 +646,7 @@ class IngestPipeline:
                     vc = choose(got, record._frames or [])
                     if vc["embedding"]:
                         record.clip_embedding = vc["embedding"]
+                        record.image_model = getattr(getattr(scene, "spec", None), "key", "clip")
                         record.scene_tags = vc["tags"]
                         record.poster_ss = vc["poster_ss"]
                         # Jetzt steht das Poster fest.
@@ -645,6 +655,7 @@ class IngestPipeline:
                 elif got:
                     record.scene_tags = got[0]["tags"]
                     record.clip_embedding = got[0]["embedding"]
+                    record.image_model = getattr(getattr(scene, "spec", None), "key", "clip")
                 normalizer.normalize(record)
                 # Speicher sofort freigeben -- sonst haelt die Warteschlange
                 # dutzende dekodierte Bilder gleichzeitig.
