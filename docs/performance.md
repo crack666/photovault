@@ -528,6 +528,44 @@ Erster GPU-Lauf scheiterte an `Input type (torch.cuda.FloatTensor) and weight
 type (torch.cuda.HalfTensor)`: der Eingabetyp wurde aus dem ersten Parameter
 abgelesen, den open_clip in fp32 lässt. Jetzt fest fp16 wie in `ingest/scene_tagger.py`.
 
+### Schwellen der Ingest-Regel für SigLIP 2
+
+Gemessen 22.11.2026 16:10 ([#66](https://github.com/crack666/photovault/issues/66)),
+`tools.clip_vergleich --n 300 --videos 60 --schwellen`, gleiche Stichprobe
+(Seed 59), Gitter top_k {3, 4, 5} × min_ratio {1 … 6} × min_prob {0,02 … 0,20},
+Ziel F1 Fotos + F1 Videos. Laufzeit knapp 3 min.
+
+| Modell | beste Regel (top_k / min_ratio / min_prob) | F1 Fotos | F1 Videos |
+|---|---|---|---|
+| ViT-L-14 (openai) | 4 / 4,0 / 0,02 | 0.46 | 0.47 |
+| ViT-SO400M-14-SigLIP2, alte CLIP-Regel 5 / 2,0 / 0,04 | – | 0.49 | 0.50 |
+| ViT-SO400M-14-SigLIP2 | **4 / 2,0 / 0,02** | 0.49 | 0.51 |
+
+Die Regel steht in `IMAGE_MODELS["siglip2"]`. Der Gewinn gegenüber der alten
+Regel ist klein (Videos +0,01); SigLIP 2 liegt aber mit beiden Regeln über dem
+besten CLIP-Gitterpunkt (+0,03 Fotos, +0,04 Videos), passend zum mAP-Plus.
+Die übrigen Kennzahlen dieses Laufs bestätigen den 10.11. (R@1 0,43 → 0,89,
+kurze Anfragen 0,52 → 0,70, 33 → 45 Bilder/s); die Referenz hat sich
+leicht verschoben, weil seitdem 20 Videos mehr eine Beschreibung haben (#65).
+Ergebnis: `~/.local/share/photovault/clip_vergleich/ergebnis-schwellen-2026-11-22.json`.
+
+### Re-Embed in `photos_siglip2`
+
+Gemessen 22.11.2026 16:13–16:33, `tools.reembed_image --minutes 50` hinter
+eigener GPU-Tor-Reservierung: **19 564 Punkte (17 227 Fotos, 2 337 Videos) in
+20 min 20 s, 16,0 Punkte/s**, 0 übersprungen. Die Schätzung von 1–2 h war zu
+vorsichtig; die Grenze ist das Lesen vom NAS (8 Leser), nicht die GPU mit
+ihren 45 Bilder/s. Danach `photos_siglip2` 19 564/19 564 (100 %), `photos`
+unverändert. Ein Nachzug nach neuem Ingest ist derselbe Aufruf ohne
+`--minutes`.
+
+Noch nicht gemacht, weil es den produktiven Index umschaltet: `--tags`
+(Trockenlauf 16:35: 1 754 Punkte ohne Beschreibung bekämen SigLIP-Tags, die
+alten gesichert nach `scene_tags_clip`), `tools.atlas_build`
+(DUP_THRESHOLD 0,95 ist auf CLIP eingestellt) und die Ingest-Vorgabe
+`siglip2`. „Mehr davon“ liest SigLIP 2, sobald dieser Code im Server läuft,
+der Atlas beim nächsten `atlas_build`, weil die Abdeckung über 98 % liegt.
+
 ---
 
 ## Messen

@@ -102,13 +102,14 @@ class ImageModel:
 
 
 #: Die Schwellen von SigLIP 2 sind mit `tools.clip_vergleich --schwellen`
-#: eingestellt (docs/performance.md, #66), die von CLIP sind die alten.
+#: eingestellt (22.11.2026, docs/performance.md, #66): top_k 4, min_ratio 2,
+#: min_prob 0,02 -- F1 Fotos 0,49, Videos 0,51. Die von CLIP sind die alten.
 IMAGE_MODELS: dict[str, ImageModel] = {
     "clip": ImageModel("clip", "ViT-L-14", "openai", 768, "photos", "clip",
                        100.0, DEFAULT_TOP_K, DEFAULT_MIN_RATIO, DEFAULT_MIN_PROB),
     "siglip2": ImageModel("siglip2", "ViT-SO400M-14-SigLIP2", "webli", 1152,
                           "photos_siglip2", "siglip2",
-                          None, DEFAULT_TOP_K, DEFAULT_MIN_RATIO, DEFAULT_MIN_PROB),
+                          None, 4, 2.0, 0.02),
 }
 
 #: Vorgabe, wenn `PHOTOVAULT_IMAGE_MODEL` nicht gesetzt ist.
