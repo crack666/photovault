@@ -357,6 +357,34 @@ ergaenzten Regel: „Tobias Krueger und eine weitere Person posieren im April
 vergleicht jetzt umlautgefaltet und deckelt bei 16, sonst legt jeder erneute
 Lauf ein paar neue Formulierungen obendrauf.
 
+#### Videos: Probe und Etappenplan
+
+Gemessen 22.11.2026 16:02 ([#65](https://github.com/crack666/photovault/issues/65)),
+`caption_pass --kind video --limit 20 --no-exif`, Pool `local` über LiteLLM,
+4 Worker, hinter eigener GPU-Tor-Reservierung. Je Video gehen 3 Frames
+(Anfang/Mitte/Ende, `ingest/video.py:sample_offsets`, unter 3 s einer)
+gemeinsam ins Modell.
+
+| Lauf | Anzahl | Wanduhr | je Stück |
+|---|---|---|---|
+| Fotos (Nachzügler, `--kind photo`) | 57 | 3 min 15 s | 3,43 s |
+| Videos (Probe, `--kind video --limit 20`) | 20 | 1 min 52 s | 5,61 s |
+
+Stand danach (`points/count`, 22.11.2026 16:05): Fotos 17 227/17 227,
+Videos 29/2 337 mit `caption_de`. Offen: **2 308 Videos**, bei 5,6 s rund
+**3 h 35 min** GPU.
+
+**Etappenplan** (erst nach Abnahme des Tons durch den Menschen, #65): vier
+Etappen zu je `--limit 580` (≈ 55 min), nachts hinter dem GPU-Tor, je Etappe
+eine eigene Reservierung über 70 min. Die Auswahl ist „ohne `caption_de`“,
+jede Etappe setzt also dort fort, wo die letzte aufgehört hat; ein Abbruch per
+SIGTERM verliert höchstens die gerade laufenden vier Videos.
+
+```bash
+PHOTOVAULT_GPU_TOR_VON=<kennung> ~/.venvs/photovault/bin/python \
+  -m ingest.caption_pass --kind video --limit 580 --no-exif
+```
+
 ### Messfehler, die ich unterwegs gemacht habe
 
 Zwei Thesen, die die Daten widerlegt haben, als Warnung:
