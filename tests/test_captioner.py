@@ -77,6 +77,20 @@ def test_caption_structured_recovers_truncated_json(monkeypatch):
     assert not result["caption_de"].startswith("{")
 
 
+def test_video_prompt_kennt_weder_ordner_noch_dateinamen():
+    """#65, Entscheidung vom 25.11.2026: kein Ordnername im Satz. Die Regel
+    allein reicht nicht -- was im Kontext steht, landet irgendwann im Satz."""
+    ctx = {"kind": "video", "folder_name": "HandyPics", "filename": "VID-1.mp4",
+           "sequence": 3, "date": "2023-07-17", "event_name": "Sommerfest"}
+    text = build_caption_prompt(ctx)
+    assert "HandyPics" not in text and "VID-1" not in text
+    assert "2023-07-17" in text and "Sommerfest" in text
+    assert "schwarz" in text
+    # Fotos bleiben, wie sie abgenommen sind.
+    foto = build_caption_prompt({**ctx, "kind": "photo"})
+    assert "HandyPics" in foto and "VID-1.mp4" in foto and "schwarz" not in foto
+
+
 def test_video_prompt_asks_for_a_clip_not_a_still():
     text = build_caption_prompt({"kind": "video", "folder_name": "HandyPics"})
     assert "Video" in text

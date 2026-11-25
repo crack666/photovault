@@ -168,7 +168,7 @@ def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
     if kind == "video":
         head = (
             "Analysiere das Video anhand der Einzelbilder (Anfang, Mitte, Ende). "
-            "Der KONTEXT stammt aus Datei/Ordner/EXIF/Face-ID — nicht aus den Bildern. "
+            "Der KONTEXT stammt aus Datei/EXIF/Face-ID — nicht aus den Bildern. "
             "Nutze ihn in caption_de (Ort, Jahr, Anlass), "
             "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen. "
             "Beschreibe den Clip in 1-2 Saetzen, nicht jedes Einzelbild extra."
@@ -179,6 +179,27 @@ def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
             "nicht aus dem Bild. Nutze ihn in caption_de (Ort, Jahr, Anlass), "
             "aber erfinde keine Namen und keinen Ort, die nicht im Kontext stehen."
         )
+    if kind == "video":
+        # Entscheidung des Menschen, 25.11.2026 (#65): kein Ordnername im Satz,
+        # schwarze Clips sachlich. Der Ordner steht bei Videos deshalb gar nicht
+        # erst im Kontext (`format_context`) -- eine Regel allein haelt das
+        # Modell nicht ein.
+        folder_rules: list[str] = []
+        place_rules = [
+            "- Datum in den Satz einbauen, wenn vorhanden (z.B. 'im Juli 2015').",
+            "- Keine Ordner-, Album- oder Dateinamen im Satz, auch nicht als Herkunft.",
+            "- Sind alle Einzelbilder schwarz, leer oder unkenntlich: genau das sachlich in "
+            "einem kurzen Satz sagen. Keine Vermutung ueber die Ursache.",
+        ]
+    else:
+        folder_rules = [
+            "- Der Ordnername nennt oft den Anlass ('Junggesellenabschied'). Diese Person "
+            "muss NICHT im Bild sein. Den Namen dann fuer den Anlass verwenden "
+            "('bei einem JGA'), aber niemand im Bild bekommt ihn zugewiesen.",
+        ]
+        place_rules = [
+            "- Datum/Ordner in den Satz einbauen, wenn vorhanden (z.B. Griechenland 2015).",
+        ]
     lines = [
         head,
         "",
@@ -189,13 +210,11 @@ def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
         "Nicht auf 'zwei Personen' ausweichen, wenn ein Name bekannt ist.",
         "- Sind mehr Gesichter erkannt als Namen bekannt: die bekannten benennen, "
         "den Rest generisch dazu ('Tobias Krueger und eine weitere Person').",
-        "- Der Ordnername nennt oft den Anlass ('Junggesellenabschied'). Diese Person "
-        "muss NICHT im Bild sein. Den Namen dann fuer den Anlass verwenden "
-        "('bei einem JGA'), aber niemand im Bild bekommt ihn zugewiesen.",
+        *folder_rules,
         "- Nie schreiben, WER das Foto aufgenommen hat — das steht in keinem Metadatum.",
         "",
         "Weitere Regeln:",
-        "- Datum/Ordner in den Satz einbauen, wenn vorhanden (z.B. Griechenland 2015).",
+        *place_rules,
         "- Nur beschreiben, was wirklich im Bild ist. CLIP-Tags sind schwach und oft falsch.",
         "- Suchbare Dinge beim Namen: Bierglas, Weinflasche, Torte, Hund, Gitarre. "
         "Ein erkennbares Getraenk heisst bier/wein/cola/sekt in Satz und Tags, "
@@ -212,9 +231,13 @@ def build_caption_prompt(context: dict[str, Any] | None = None) -> str:
 
 def format_context(context: dict[str, Any]) -> str:
     rows: list[str] = []
+    # Videos: weder Ordner noch Dateiname. Was das Modell nicht sieht, kann es
+    # nicht in den Satz schreiben (#65: "aus dem Ordner HandyPics"). In den
+    # Textvektor geht der Ordner trotzdem, ueber `grounded_document`.
+    video = context.get("kind") == "video"
     if context.get("event_name"):
         rows.append(f"- Anlass (benannt): {context['event_name']}")
-    if context.get("folder_name"):
+    if context.get("folder_name") and not video:
         rows.append(f"- Ordner/Album: {context['folder_name']}")
     if context.get("date"):
         src = context.get("date_source") or "unbekannt"
@@ -223,13 +246,13 @@ def format_context(context: dict[str, Any]) -> str:
         rows.append(f"- Datei erstellt: {context['file_ctime']}")
     if context.get("file_mtime"):
         rows.append(f"- Datei geaendert: {context['file_mtime']}")
-    if context.get("filename"):
+    if context.get("filename") and not video:
         seq = context.get("sequence")
         if seq is not None:
             rows.append(f"- Dateiname: {context['filename']} (Sequenz {seq} im Ordner)")
         else:
             rows.append(f"- Dateiname: {context['filename']}")
-    elif context.get("sequence") is not None:
+    elif context.get("sequence") is not None and not video:
         rows.append(f"- Sequenz im Ordner: {context['sequence']}")
     if context.get("location"):
         rows.append(f"- Ort (Metadaten): {context['location']}")
