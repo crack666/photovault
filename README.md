@@ -814,7 +814,22 @@ python -m tools.thumbs --warm                         # fehlende erzeugen
 python -m tools.faces_reorient --dry-run --limit 50   # gedrehte Fotos neu erkennen (#37), GPU
 python -m tools.persons_check                         # Person auf dem Foto ohne passendes Gesicht? (#57)
 python -m tools.clip_vergleich --video-labels L.json   # CLIP L/14 gegen SigLIP 2 messen (#59), GPU
+python -m tools.reembed_image --dry-run               # SigLIP 2 fuer alle Fotos/Videos (#66), GPU
 ```
+
+**Bildmodell (#66).** Szenen-Tags und Bildvektor rechnet `ingest/scene_tagger.py`
+mit dem Modell aus `PHOTOVAULT_IMAGE_MODEL`: `clip` (ViT-L/14, 768 d, Vorgabe
+beim Ingest) oder `siglip2` (ViT-SO400M-14-SigLIP2, 1152 d). Der SigLIP-Vektor
+liegt nicht in `photos`, sondern in der Beistell-Collection `photos_siglip2`
+mit denselben Punkt-IDs: Qdrant kann einer bestehenden Collection keinen
+Vektor hinzufügen, und `photos` umzukopieren hieße, alle Namen und Notizen
+anzufassen. Der CLIP-Vektor bleibt, wo er ist. „Mehr davon“ und der Atlas
+lesen SigLIP 2, sobald `photos_siglip2` mindestens 98 % der Punkte mit
+CLIP-Vektor abdeckt (`ingest/image_space.py`), sonst CLIP.
+`tools.reembed_image` füllt den neuen Raum fortsetzbar in Etappen
+(`--minutes`) und fragt das GPU-Tor nicht selbst; `--tags` übernimmt danach
+die SigLIP-Tags für Punkte ohne Beschreibung und sichert die alten nach
+`scene_tags_clip`.
 
 `tools.clip_vergleich` misst nur lesend, ob ein anderes Bildmodell Szenen-Tags
 und deutsche Bildsuche besser macht. Referenz sind die Beschreibungen des

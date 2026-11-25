@@ -587,21 +587,40 @@ def similar(req: SimilarRequest) -> dict:
         )
 
     q = client()
-    try:
-        found = q.query_points(
-            collection_name=PHOTOS,
-            query=query,
-            using=req.using,
-            query_filter=visible(),
-            # Die Beispiele selbst kommen zurueck und wuerden Plaetze belegen.
-            limit=limit + len(positive),
-            with_payload=False,
-            with_vectors=False,
-            score_threshold=req.score_threshold,
-        ).points
-    except Exception as e:
-        logger.exception("Similar failed")
-        raise HTTPException(500, f"Ähnlichkeitssuche fehlgeschlagen: {e}") from e
+    space = req.using
+    found = None
+    if req.using == "clip":
+        # "Wie es aussieht" liest den besten vollen Bildraum (#66): SigLIP 2,
+        # sobald sein Re-Embed durch ist, sonst CLIP.
+        from ingest.image_space import active
+
+        spec = active(q)
+        if spec.collection != PHOTOS:
+            try:
+                found = _similar_side(q, spec, query, limit + len(positive), req.score_threshold)
+                space = spec.key
+            except Exception as e:
+                # Etwa ein Beispiel, das nach dem Re-Embed neu dazukam und
+                # im neuen Raum noch fehlt: dann eben im alten.
+                logger.warning("Similar im Raum %s fehlgeschlagen, lese clip: %s", spec.key, e)
+                found = None
+    if found is None:
+        space = req.using
+        try:
+            found = q.query_points(
+                collection_name=PHOTOS,
+                query=query,
+                using=req.using,
+                query_filter=visible(),
+                # Die Beispiele selbst kommen zurueck und wuerden Plaetze belegen.
+                limit=limit + len(positive),
+                with_payload=False,
+                with_vectors=False,
+                score_threshold=req.score_threshold,
+            ).points
+        except Exception as e:
+            logger.exception("Similar failed")
+            raise HTTPException(500, f"Ähnlichkeitssuche fehlgeschlagen: {e}") from e
 
     seen = set(req.photo_ids)
     results = [
@@ -609,7 +628,38 @@ def similar(req: SimilarRequest) -> dict:
         for p in found
         if str(p.id) not in seen
     ][:limit]
-    return {"using": req.using, "strategy": req.strategy, "from": len(positive), "results": results}
+    return {"using": req.using, "space": space, "strategy": req.strategy,
+            "from": len(positive), "results": results}
+
+
+def _similar_side(q, spec, query, limit: int, score_threshold) -> list:
+    """Aehnlichkeit in einer Beistell-Collection, Papierkorb danach abziehen.
+
+    Die Beistell-Collection traegt keinen Papierkorb-Stempel (der gehoert zu
+    `photos` und wechselt dort); gefiltert wird darum nachtraeglich ueber die
+    IDs. Etwas mehr holen, damit nach dem Abziehen noch `limit` uebrig sind.
+    """
+    from qdrant_client.models import Filter, HasIdCondition
+
+    roh = q.query_points(
+        collection_name=spec.collection, query=query, using=spec.vector,
+        limit=limit + 64, with_payload=False, with_vectors=False,
+        score_threshold=score_threshold,
+    ).points
+    if not roh:
+        return []
+    ids = [str(p.id) for p in roh]
+    sichtbar, offset = set(), None
+    while True:
+        batch, offset = q.scroll(
+            collection_name=PHOTOS, limit=len(ids), offset=offset,
+            scroll_filter=visible(Filter(must=[HasIdCondition(has_id=ids)])),
+            with_payload=False, with_vectors=False,
+        )
+        sichtbar.update(str(p.id) for p in batch)
+        if offset is None:
+            break
+    return [p for p in roh if str(p.id) in sichtbar][:limit]
 
 
 class RelocateRequest(BaseModel):

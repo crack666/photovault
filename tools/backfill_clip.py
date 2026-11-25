@@ -147,7 +147,9 @@ def run(qc, collection: str, aufgaben: list[tuple], model_dir: str,
     from api.thumbs import drop_cached
     from ingest.scene_tagger import SceneTagger
 
-    tagger = SceneTagger(model_dir, threshold)
+    # Fest CLIP: dieser Lauf fuellt den Vektor `clip`, egal was
+    # PHOTOVAULT_IMAGE_MODEL sagt (SigLIP 2: tools.reembed_image, #66).
+    tagger = SceneTagger(model_dir, threshold, model="clip")
     fertig = uebersprungen = 0
     begonnen = time.time()
 

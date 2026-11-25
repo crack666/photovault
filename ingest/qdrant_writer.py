@@ -173,8 +173,18 @@ class QdrantWriter:
         vectors = {}
         if record.face_embedding:
             vectors["face"] = record.face_embedding
+        side = None
         if record.clip_embedding:
-            vectors["clip"] = record.clip_embedding
+            # Der Bildvektor geht dorthin, wo sein Modell ihn fuehrt (#66):
+            # CLIP als `clip` in diesen Punkt, SigLIP 2 in die
+            # Beistell-Collection (ingest/image_space.py).
+            key = getattr(record, "image_model", None) or "clip"
+            if key == "clip":
+                vectors["clip"] = record.clip_embedding
+            else:
+                from ingest.scene_tagger import image_model
+
+                side = image_model(key)
         if record.text_embedding:
             vectors["text"] = record.text_embedding
         payload = {
@@ -245,6 +255,15 @@ class QdrantWriter:
             points=[PointStruct(id=point_id, vector=vectors, payload=payload)],
             wait=True,
         )
+        if side is not None:
+            from ingest import image_space
+
+            if side.key not in getattr(self, "_side_ready", set()):
+                image_space.ensure_collection(self.client, side)
+                self._side_ready = getattr(self, "_side_ready", set()) | {side.key}
+            image_space.write(self.client, side, [(point_id, record.clip_embedding, {
+                "kind": payload["kind"], "scene_tags": list(record.scene_tags or []),
+            })])
         self.upsert_faces(record)
 
     #: Vom Menschen vergeben -- muss einen Re-Ingest ueberleben.
