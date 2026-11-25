@@ -135,6 +135,10 @@ def run(client, collection: str = "photos", faces: str = "faces",
                 client.delete(
                     collection_name=collection, points_selector=ids[i:i + 256], wait=True,
                 )
+            if collection == "photos":
+                from ingest import image_space
+
+                image_space.forget(client, ids)
         if mig:
             from ingest.relocate import migrate_photo
             from ingest.folder_parser import album_dir

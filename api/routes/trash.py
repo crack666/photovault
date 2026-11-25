@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from api.qdrant_util import FACES, PHOTOS, TRASH_KEY, client
 from api.thumbs import drop_cached
+from ingest import image_space
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -229,6 +230,7 @@ def empty_trash(req: EmptyTrashRequest) -> dict:
     photo_hashes = [(p.payload or {}).get("photo_id") for p in found]
     try:
         q.delete(collection_name=PHOTOS, points_selector=[str(p.id) for p in found], wait=True)
+        image_space.forget(q, [str(p.id) for p in found])
         for h in [h for h in photo_hashes if h]:
             q.delete(
                 collection_name=FACES,

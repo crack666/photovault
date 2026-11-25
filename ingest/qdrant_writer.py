@@ -185,6 +185,11 @@ class QdrantWriter:
                 from ingest.scene_tagger import image_model
 
                 side = image_model(key)
+                # `upsert` ersetzt alle Vektoren des Punkts. Ein vorhandener
+                # CLIP-Vektor bleibt der Rueckweg (#66) und kommt deshalb mit.
+                old = self._clip_vector(point_id)
+                if old:
+                    vectors["clip"] = old
         if record.text_embedding:
             vectors["text"] = record.text_embedding
         payload = {
@@ -265,6 +270,15 @@ class QdrantWriter:
                 "kind": payload["kind"], "scene_tags": list(record.scene_tags or []),
             })])
         self.upsert_faces(record)
+
+    def _clip_vector(self, point_id: str) -> list[float] | None:
+        try:
+            found = self.client.retrieve(collection_name=self.collection, ids=[point_id],
+                                         with_payload=False, with_vectors=["clip"])
+        except Exception as e:
+            logger.warning("CLIP-Vektor von %s nicht lesbar: %s", point_id, e)
+            return None
+        return ((found[0].vector or {}).get("clip") if found else None) or None
 
     #: Vom Menschen vergeben -- muss einen Re-Ingest ueberleben.
     FACE_PRESERVE = ("person_id", "person_name")

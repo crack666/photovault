@@ -834,7 +834,7 @@ die SigLIP-Tags für Punkte ohne Beschreibung und sichert die alten nach
 `tools.clip_vergleich` misst nur lesend, ob ein anderes Bildmodell Szenen-Tags
 und deutsche Bildsuche besser macht. Referenz sind die Beschreibungen des
 Vision-Modells, nicht die alten CLIP-Tags. Braucht `transformers` in der venv
-(Tokenizer von SigLIP 2, `pip install -e ".[bench]"`) und rund 4,5 GB Gewichte
+(Tokenizer von SigLIP 2, seit 25.11.2026 eine normale Abhängigkeit) und rund 4,5 GB Gewichte
 im Modell-Cache. Ergebnis und Lesart: [docs/performance.md](docs/performance.md#bildmodell-clip-l14-gegen-siglip-2).
 
 `tools.faces_reorient` erkennt Fotos mit EXIF-Ausrichtung != 1 neu. Ob die

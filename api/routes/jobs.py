@@ -187,6 +187,23 @@ RUNNABLE: dict[str, Runnable] = {
              "Grossansicht holt das Original weiterhin nach, und Videos streamen "
              "ohnehin von dort.",
     ),
+    "image_space": Runnable(
+        module="tools.reembed_image", kind="image-space", gpu=True,
+        argv=("--mit-tags",),
+        flags=("dry_run", "limit"),
+        needs_modules=("open_clip", "transformers"),
+        hint="pip install -e . (oder das aktuelle Docker-Image)",
+        label="Bildsuche auf SigLIP 2 umstellen",
+        step=8,
+        needs="Braucht Schritt 1. Einmalig für Bestände, die vor dem Wechsel eingelesen wurden.",
+        when="Einmal nach dem Update; später nur, wenn oben Fotos ohne siglip2-Vektor stehen.",
+        gives="„Mehr davon“, Karte und Szenen-Tags treffen deutlich besser.",
+        note="Rechnet jeden Bildvektor neu und legt ihn neben den alten; Namen, Notizen und "
+             "Beschreibungen bleiben unberührt, und der alte Vektor bleibt als Rückweg. "
+             "Fortsetzbar. Lädt beim ersten Mal rund 4,5 GB Gewichte. Mit Grafikkarte etwa "
+             "16 Fotos/s, ohne sehr langsam — dann lieber lassen, die Suche läuft mit CLIP weiter. "
+             "Danach Schritt 7, damit die Karte zur Suche passt.",
+    ),
     "atlas": Runnable(
         module="tools.atlas_build", kind="atlas",
         flags=("limit",),
@@ -198,7 +215,7 @@ RUNNABLE: dict[str, Runnable] = {
               "Szenen-Tags statt nach den Beschreibungen.",
         when="Zuletzt — die Kontinente werden aus den Beschreibungen benannt.",
         gives="Das Archiv als eine Karte, mit Lasso-Auswahl.",
-        note="UMAP über die CLIP-Vektoren, reine Rechenarbeit auf der CPU. Kein Trockenlauf.",
+        note="UMAP über die Bildvektoren, reine Rechenarbeit auf der CPU. Kein Trockenlauf.",
     ),
 }
 
@@ -515,7 +532,7 @@ def prune_jobs(req: PruneRequest) -> dict:
 
 
 class RunRequest(BaseModel):
-    job: Literal["ingest", "faces", "caption", "reembed", "thumbs", "atlas"]
+    job: Literal["ingest", "faces", "caption", "reembed", "thumbs", "atlas", "image_space"]
     #: Trockenlauf, wo das Werkzeug einen anbietet -- zählt und schätzt, schreibt nichts.
     dry_run: bool = False
     #: Obergrenze, um in Häppchen zu arbeiten.

@@ -32,7 +32,7 @@ class IngestConfig:
     face_threshold: float = 0.4
     # Mindest-Softmax-Wahrscheinlichkeit eines Szenen-Konzepts, kein roher Cosinus.
     clip_threshold: Optional[float] = None  # None: die Schwelle des Bildmodells
-    #: None: `PHOTOVAULT_IMAGE_MODEL`, sonst `scene_tagger.DEFAULT_IMAGE_MODEL`.
+    #: None: `PHOTOVAULT_IMAGE_MODEL`, sonst der gelesene Raum (`image_space.ingest_key`).
     image_model: Optional[str] = None
     model_dir: str = "/models"
     resume: bool = True
@@ -283,8 +283,12 @@ class IngestPipeline:
         exif_ext = ExifExtractor()
         folder_parser = FolderParser(sources)
         face_emb = FaceEmbedder(self.config.model_dir)
-        scene = SceneTagger(self.config.model_dir, self.config.clip_threshold,
-                            model=self.config.image_model)
+        from ingest import image_space
+
+        model_key = self.config.image_model or image_space.ingest_key(
+            writer.client, self.config.collection)
+        logger.info("Bildmodell: %s", model_key)
+        scene = SceneTagger(self.config.model_dir, self.config.clip_threshold, model=model_key)
         captioner = None if self.config.skip_caption else Captioner()
         text_emb = TextEmbedder()
         # Lehnt das GPU-Tor Captions ab, wartet der Lauf, statt Fehler zu zaehlen.

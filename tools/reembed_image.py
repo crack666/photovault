@@ -14,13 +14,16 @@ neuen Punkte nach.
     python -m tools.reembed_image --minutes 50           # eine Etappe
     python -m tools.reembed_image --tags --dry-run       # Tag-Wechsel ansehen
     python -m tools.reembed_image --tags                 # Tags uebernehmen
+    python -m tools.reembed_image --mit-tags             # beides nacheinander (Jobs-Seite)
 
 **`--tags`** uebernimmt die Szenen-Tags des neuen Modells nach
 `photos.scene_tags` -- nur fuer Punkte **ohne** `caption_de`, wie
 `tools.backfill_clip`: wo eine Beschreibung ist, stammen die Tags aus ihr
 und sind die besseren. Der alte Stand wird vorher nach `scene_tags_clip`
 gesichert (nur beim ersten Mal), ein Zurueckdrehen ist damit ein
-Umkopieren.
+Umkopieren. Die Tags stehen auch im Dokument des Textvektors
+(`grounding.grounded_document`); der wird fuer genau diese Punkte gleich
+erneuert, wenn ein Embedder da ist (`--ohne-text` laesst es).
 
 Rechnet auf der Grafikkarte und fragt das GPU-Tor **nicht** selbst:
 vorher `gpu-tor.ps1 reservieren`.
@@ -89,7 +92,7 @@ def _prepare(tagger, item: tuple) -> tuple:
 
 
 def run(qc, spec, aufgaben: list[tuple], model_dir: str, *, batch: int = BATCH,
-        minutes: float | None = None, readers: int = READERS) -> dict:
+        minutes: float | None = None, readers: int = READERS, on_progress=None) -> dict:
     """Einbetten und schreiben, bis alles durch ist oder die Zeit um."""
     from ingest import image_space
     from ingest.scene_tagger import SceneTagger
@@ -136,6 +139,8 @@ def run(qc, spec, aufgaben: list[tuple], model_dir: str, *, batch: int = BATCH,
             image_space.write(qc, spec, items)
             fertig += len(items)
             dauer = time.time() - begonnen
+            if on_progress:
+                on_progress(fertig, uebersprungen)
             print(f"  {fertig + uebersprungen}/{len(aufgaben)}  "
                   f"{fertig / dauer if dauer else 0:.1f}/s", flush=True)
     finally:
@@ -183,6 +188,43 @@ def apply_tags(qc, plan: list[tuple]) -> int:
     return len(plan)
 
 
+def _retext(qc, plan: list[tuple]) -> dict | None:
+    """Textvektoren der Punkte, deren Tags gewechselt haben. None = kein Embedder."""
+    from api.capabilities import missing
+    from ingest.ollama_client import apply_llm_env
+    from ingest.reembed import rebuild_text_vectors
+
+    apply_llm_env()
+    grund = missing(kinds=("embed",))
+    if grund:
+        print(f"Textvektoren bleiben, wie sie sind: {grund}")
+        return None
+    # `apply_tags` schreibt ohne `wait`; ein Abruf mit Zusage davor, damit das
+    # Dokument die neuen Tags sieht.
+    if plan:
+        qc.set_payload(collection_name=PHOTOS, payload={"scene_tags": plan[-1][1]},
+                       points=[plan[-1][0]], wait=True)
+    return rebuild_text_vectors(qc, [p[0] for p in plan])
+
+
+def _tags(qc, spec, *, dry_run: bool, retext: bool) -> None:
+    plan = plan_tags(qc, spec)
+    neu = sum(1 for x in plan if not x[3])
+    print(f"{len(plan)} Punkt(e) ohne Beschreibung bekommen {spec.key}-Tags "
+          f"({neu} sichern ihre alten nach scene_tags_clip).")
+    for pid, n, a, _g in plan[:10]:
+        print(f"  {pid}: {a} -> {n}")
+    if dry_run or not plan:
+        print("Trockenlauf -- nichts geschrieben." if dry_run else "Nichts zu tun.")
+        return
+    print(f"{apply_tags(qc, plan)} geschrieben.")
+    if retext:
+        got = _retext(qc, plan)
+        if got:
+            print(f"Textvektoren: {got['updated']} neu, {got['skipped']} uebersprungen, "
+                  f"{got['failed']} fehlgeschlagen.")
+
+
 def main(argv=None) -> int:
     from ingest import image_space
     from ingest.scene_tagger import image_model
@@ -197,6 +239,10 @@ def main(argv=None) -> int:
     ap.add_argument("--batch", type=int, default=BATCH)
     ap.add_argument("--tags", action="store_true",
                     help="statt einzubetten: Szenen-Tags des Modells uebernehmen (ohne Beschreibung)")
+    ap.add_argument("--mit-tags", action="store_true",
+                    help="nach dem Einbetten gleich die Tags uebernehmen (nur, wenn alles durch ist)")
+    ap.add_argument("--ohne-text", action="store_true",
+                    help="nach --tags die Textvektoren nicht erneuern")
     ap.add_argument("--model-dir",
                     default=os.environ.get("MODEL_DIR",
                                            str(Path.home() / ".cache" / "photovault-models")))
@@ -211,16 +257,7 @@ def main(argv=None) -> int:
     qc = client()
 
     if args.tags:
-        plan = plan_tags(qc, spec)
-        neu = sum(1 for x in plan if not x[3])
-        print(f"{len(plan)} Punkt(e) ohne Beschreibung bekommen {spec.key}-Tags "
-              f"({neu} sichern ihre alten nach scene_tags_clip).")
-        for pid, n, a, _g in plan[:10]:
-            print(f"  {pid}: {a} -> {n}")
-        if args.dry_run or not plan:
-            print("Trockenlauf -- nichts geschrieben." if args.dry_run else "Nichts zu tun.")
-            return 0
-        print(f"{apply_tags(qc, plan)} geschrieben.")
+        _tags(qc, spec, dry_run=args.dry_run, retext=not args.ohne_text)
         return 0
 
     have, base = image_space.fill(qc, spec)
@@ -233,9 +270,27 @@ def main(argv=None) -> int:
         aufgaben = aufgaben[: args.limit]
     if args.dry_run or not aufgaben:
         print("Trockenlauf -- nichts geschrieben." if args.dry_run else "Nichts zu tun.")
+        if args.mit_tags and not args.dry_run:
+            _tags(qc, spec, dry_run=False, retext=not args.ohne_text)
         return 0
-    got = run(qc, spec, aufgaben, args.model_dir, batch=args.batch, minutes=args.minutes)
-    have, base = image_space.fill(qc, spec)
+    job = None
+    if os.environ.get("PHOTOVAULT_JOB_CHILD") == "1":
+        from ingest.jobs import JobTracker
+
+        job = JobTracker(qc, kind="image-space", source=spec.collection)
+        job.update(phase="embedding", total=len(aufgaben), force=True)
+    try:
+        got = run(qc, spec, aufgaben, args.model_dir, batch=args.batch, minutes=args.minutes,
+                  on_progress=(lambda n, f: job.update(processed=n, errors=f)) if job else None)
+        have, base = image_space.fill(qc, spec)
+        if args.mit_tags and not got["stopped"] and args.limit is None:
+            _tags(qc, spec, dry_run=False, retext=not args.ohne_text)
+    except Exception:
+        if job:
+            job.finish("error", phase="abgebrochen", errors=1)
+        raise
+    if job:
+        job.finish("done", phase="done", processed=got["done"], errors=got["skipped"])
     print(f"{got['done']} geschrieben, {got['skipped']} uebersprungen, {got['seconds']} s"
           + (" (Etappe um, fortsetzbar)" if got["stopped"] else "")
           + f". Jetzt {have} von {base}.")

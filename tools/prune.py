@@ -147,6 +147,10 @@ def run(client, sources: list[str], exclude: list[str], collection: str = "photo
         ids = [pid for pid, _, _ in doomed]
         for i in range(0, len(ids), 256):
             client.delete(collection_name=collection, points_selector=ids[i:i + 256], wait=True)
+        if collection == "photos":
+            from ingest import image_space
+
+            image_space.forget(client, ids)
         print(f"Entfernt: {len(ids)} Fotos, {n_faces} Gesichter.")
     else:
         print(f"Trockenlauf -- mit --apply werden {len(doomed)} Fotos entfernt.")

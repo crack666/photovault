@@ -63,6 +63,16 @@ FORMAT_VERSION = 3
 #: 0.92 faengt mehr ein, faltet aber auch Aehnliches zusammen.
 DUP_THRESHOLD = 0.95
 
+#: Derselbe Schnitt in anderen Raeumen. SigLIP 2 rueckt Verwandtes naeher
+#: zusammen: bei 0.96 ist der Anteil der Paare, die mehr als 30 Tage
+#: auseinanderliegen, derselbe wie bei CLIP 0.95 (4,9 gegen 4,6 %, gemessen
+#: 25.11.2026, docs/performance.md); 0.95 faltete 6 184 statt 5 386 Fotos.
+DUP_THRESHOLDS = {"siglip2": 0.96}
+
+
+def dup_threshold_for(space: str) -> float:
+    return DUP_THRESHOLDS.get(space, DUP_THRESHOLD)
+
 #: Floskeln, die in fast jeder Caption stehen und deshalb nichts trennen.
 #: Mit echten Umlauten -- die Captions schreiben „hält", nicht „haelt", eine
 #: transkribierte Liste liefe ins Leere. Gemessen an 3 285 Captions.
@@ -975,7 +985,7 @@ def progress_reporter(job) -> Any:
     return step
 
 
-def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
+def build(space: str, k: int, limit: int | None, dup_threshold: float | None, out_dir: Path,
           track: bool = True, themes_on: bool = True, titles: bool = True) -> dict:
     """Rechnen und dabei Bescheid geben.
 
@@ -1014,7 +1024,7 @@ def build(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: 
     return payload
 
 
-def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir: Path,
+def compute(space: str, k: int, limit: int | None, dup_threshold: float | None, out_dir: Path,
             step: Any = lambda _name: None, qc: Any = None,
             themes_on: bool = True, titles: bool = True) -> dict:
     """Die eigentliche Rechnung. Weiss nichts von Jobs."""
@@ -1022,6 +1032,8 @@ def compute(space: str, k: int, limit: int | None, dup_threshold: float, out_dir
 
     step("laden")
     space = resolve_space(qc, space)
+    if dup_threshold is None:
+        dup_threshold = dup_threshold_for(space)
     X, meta = load_points(qc, space, limit)
     if len(X) < max(k, 50):
         raise SystemExit(f"Nur {len(X)} Punkte mit {space}-Vektor -- zu wenig fuer eine Karte.")
@@ -1224,7 +1236,8 @@ def main() -> None:
     ap.add_argument("--clusters", type=int, default=0,
                     help="k-means mit so vielen Kontinenten statt der Inseln (Vergleich)")
     ap.add_argument("--limit", type=int, help="nur die ersten N Fotos (zum Ausprobieren)")
-    ap.add_argument("--dup-threshold", type=float, default=DUP_THRESHOLD)
+    ap.add_argument("--dup-threshold", type=float, default=None,
+                    help="Stapel-Schwelle (Standard: je Vektorraum, siehe DUP_THRESHOLDS)")
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     ap.add_argument("--no-track", action="store_true",
                     help="nicht in die Job-Liste schreiben")

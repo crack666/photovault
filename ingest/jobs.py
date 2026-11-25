@@ -53,6 +53,7 @@ KIND_MARKERS = {
     "faces": ("ingest.face_pass",),
     "caption": ("ingest.caption_pass",),
     "reembed": ("tools.reembed_all",),
+    "image-space": ("tools.reembed_image",),
     "thumbs": ("tools.thumbs",),
     "atlas": ("tools.atlas_build",),
 }
