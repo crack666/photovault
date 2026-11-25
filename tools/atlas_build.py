@@ -951,11 +951,13 @@ def day_number(taken_at: str | None) -> int:
 #: fuellt, ist eine Luege, wenn UMAP zwei Drittel der Zeit braucht.
 PHASES = (
     ("laden", 0.10),
-    ("umap", 0.55),
-    ("stapel", 0.10),
-    ("bereiche", 0.02),
-    ("serien", 0.08),
-    ("kontinente", 0.12),
+    ("umap", 0.33),
+    ("stapel", 0.02),
+    ("bereiche", 0.01),
+    ("serien", 0.04),
+    ("kontinente", 0.04),
+    ("themen", 0.33),
+    ("titel", 0.10),
     ("schreiben", 0.03),
 )
 
@@ -978,7 +980,8 @@ def progress_reporter(job) -> Any:
     def step(name: str) -> None:
         if job is None:
             return
-        i = phase_order.index(name)
+        # "titel 40" ist derselbe Schritt wie "titel", nur mit Zaehler.
+        i = phase_order.index(name.split()[0])
         job.update(processed=int(sum(phase_share[n] for n in phase_order[:i]) * 100),
                    phase=name)
 

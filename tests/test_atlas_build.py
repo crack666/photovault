@@ -321,6 +321,21 @@ class TestProgressReporter:
         step = progress_reporter(None)
         step("laden")  # darf nicht werfen
 
+    def test_every_announced_phase_exists(self):
+        """`themen` und `titel` fehlten: jeder Lauf mit Job starb an Schritt 7."""
+        import inspect
+        import re
+
+        from tools import atlas_build
+
+        announced = re.findall(r'step\("(\w+)"\)', inspect.getsource(atlas_build.compute))
+        assert "themen" in announced
+        assert announced == [name for name, _ in atlas_build.PHASES]
+        # `apply_titles` zaehlt mit.
+        job = _FakeJob()
+        atlas_build.progress_reporter(job)("titel 40")
+        assert job.calls[0]["phase"] == "titel 40"
+
     def test_shares_add_up(self):
         """Sonst endet der Balken bei 80 % oder springt über 100."""
         from tools.atlas_build import PHASES
