@@ -30,7 +30,12 @@ name: photovault
 
 services:
   qdrant:
-    image: qdrant/qdrant:v1.18.3
+    # Feste Fassung samt Digest, kein `latest`: 1.19.2 vom 05.10.2026 (hier stand
+    # bis 25.11.2026 v1.18.3). Qdrant hebt seinen Speicher nur um *eine*
+    # Nebenversion je Schritt; 1.20 kommt deshalb erst nach 1.19. Zurueck geht
+    # es nur aus der Kopie, die start.bat / start.sh vor dem Wechsel ziehen
+    # (Volume photovault_qdrant_sicherung).
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.2@sha256:b7b0444c4c351c970b98e90a6f89c2ee4287c65b44e52b4cb503fa5b2aa927ad}
     ports:
       - "${QDRANT_PORT:-6333}:6333"
     volumes:
@@ -133,7 +138,10 @@ services:
     # auf der Docker-Platte (unter Windows in der WSL-VHDX). Die GPU kommt
     # aus docker-compose.override.yml, wenn start.bat eine NVIDIA-Karte
     # gemessen hat; ohne Karte rechnet der Prozessor.
-    image: ollama/ollama:latest
+    # Fest statt `latest` (25.11.2026): 0.40.16 vom 09.11.2026, hier gemessen.
+    # 0.40.17 ist ausgelassen, dort sind Speicherfehler offen
+    # (ollama/ollama#19851, #19833, Stand 25.11.2026); 0.40.18 war einen Tag alt.
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     profiles: ["ollama"]
     ports:
       - "${OLLAMA_PORT:-11434}:11434"

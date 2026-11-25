@@ -12,9 +12,13 @@ dependencies = [
     # Die Obergrenze schliesst aus, was nicht gemessen ist -- vor dem Anheben
     # denselben Vergleich wiederholen.
     "insightface>=1.0.1,<2.2",
-    "open-clip-torch>=2.24",
+    "open-clip-torch>=3.3,<4.3",
+    # Der Tokenizer von SigLIP 2 (#66); bis 25.11.2026 nur im Extra [bench].
+    "transformers>=5.22,<6",
     "Pillow>=10.0",
-    "qdrant-client>=1.9",
+    # Client und Server duerfen eine Nebenversion auseinanderliegen: 1.19 passt
+    # zu den Servern 1.18 (Bestandsinstallationen), 1.19 (Verbund) und 1.20.
+    "qdrant-client>=1.19,<1.20",
     "fastapi>=0.111",
     "uvicorn>=0.30",
     "pydantic>=2.0",
@@ -34,11 +38,6 @@ dependencies = [
 atlas = [
     "umap-learn>=0.5",
     "scikit-learn>=1.4",
-]
-# Nur fuer `python -m tools.clip_vergleich` (#59): SigLIP 2 bringt seinen
-# Tokenizer ueber transformers mit; der Ingest braucht ihn nicht.
-bench = [
-    "transformers>=4.45",
 ]
 dev = [
     "pytest>=8.0",
