@@ -44,6 +44,9 @@ class _Q:
         self.gefragt: list[str] = []
 
     def count(self, collection_name=None, exact=False, count_filter=None):
+        # Die Beistell-Collection von SigLIP 2 gibt es hier nicht (#66).
+        if collection_name and collection_name != "photos":
+            raise RuntimeError("Collection not found")
         name = "total" if count_filter is None else count_filter.must[0].has_vector
         self.gefragt.append(name)
         if name in self.fail:
@@ -287,7 +290,8 @@ class TestStats:
 class TestIndexZustand:
     def test_ohne_luecken_wird_nichts_gemeldet(self, qdrant):
         qdrant(total=100)
-        assert ingest_route.index_state() == {"total": 100, "gaps": []}
+        antwort = ingest_route.index_state()
+        assert (antwort["total"], antwort["gaps"]) == (100, [])
 
     def test_fehlende_textvektoren_kommen_mit_grund_und_abhilfe(self, qdrant):
         """Der Punkt der Route: die Zahl allein sagt niemandem etwas. Erst
@@ -312,7 +316,8 @@ class TestIndexZustand:
 
     def test_leerer_index_hat_keine_luecken(self, qdrant):
         qdrant(total=0)
-        assert ingest_route.index_state() == {"total": 0, "gaps": []}
+        antwort = ingest_route.index_state()
+        assert (antwort["total"], antwort["gaps"]) == (0, [])
 
     def test_unerreichbares_qdrant_wird_gemeldet_statt_geworfen(self, qdrant):
         """Die Seite bekommt eine Antwort, keine 500 -- und der Grund steht

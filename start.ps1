@@ -419,6 +419,26 @@ if ($LASTEXITCODE -ne 0) {
     Compose build api
     if ($LASTEXITCODE -ne 0) { Bad "Bau fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1 }
 }
+# Wechselt die Qdrant-Fassung, zieht Qdrant seinen Speicher beim Start um --
+# ohne Weg zurueck. Deshalb vorher das Volume kopieren; klappt das nicht,
+# bleibt die alte Fassung, statt ohne Sicherung umzuziehen.
+function Save-Qdrant {
+    $cid = Compose ps -aq qdrant 2>$null | Select-Object -First 1
+    if (-not $cid) { return }
+    $have = & docker inspect -f '{{.Config.Image}}' $cid 2>$null
+    $want = Compose config --images qdrant 2>$null | Where-Object { $_ -match 'qdrant' } | Select-Object -First 1
+    if (-not $have -or -not $want -or $have -eq $want) { return }
+    Say "Neue Fassung der Datenbank -- sichere den Index vorher ..."
+    Compose stop api qdrant *> $null
+    & docker run --rm --entrypoint sh -v photovault_qdrant_data:/von:ro -v photovault_qdrant_sicherung:/nach $have -c 'rm -rf /nach/..?* /nach/* && cp -a /von/. /nach/' *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Ok "Gesichert (Docker-Volume photovault_qdrant_sicherung)"
+    } else {
+        Bad "Sicherung fehlgeschlagen (Platte voll?) -- die Datenbank bleibt auf der alten Fassung."
+        $env:QDRANT_IMAGE = $have
+    }
+}
+Save-Qdrant
 Say "Starte ..."
 Compose up -d --no-build
 if ($LASTEXITCODE -ne 0) {

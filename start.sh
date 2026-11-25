@@ -301,6 +301,28 @@ if ! compose pull api >/dev/null 2>&1; then
     say "Kein fertiges Image erreichbar -- baue selbst. Beim ersten Mal 5-15 Minuten, je nach Leitung."
     compose build api || { bad "Bau fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1; }
 fi
+# Wechselt die Qdrant-Fassung, zieht Qdrant seinen Speicher beim Start um --
+# ohne Weg zurueck. Deshalb vorher das Volume kopieren; klappt das nicht,
+# bleibt die alte Fassung, statt ohne Sicherung umzuziehen.
+qdrant_sichern() {
+    local cid have want
+    cid="$(compose ps -aq qdrant 2>/dev/null | head -1)"
+    [ -n "$cid" ] || return 0
+    have="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)"
+    want="$(compose config --images qdrant 2>/dev/null | grep -m1 qdrant)"
+    [ -n "$have" ] && [ -n "$want" ] && [ "$have" != "$want" ] || return 0
+    say "Neue Fassung der Datenbank -- sichere den Index vorher ..."
+    compose stop api qdrant >/dev/null 2>&1
+    if docker run --rm --entrypoint sh -v photovault_qdrant_data:/von:ro \
+            -v photovault_qdrant_sicherung:/nach "$have" \
+            -c 'rm -rf /nach/..?* /nach/* && cp -a /von/. /nach/' >/dev/null 2>&1; then
+        ok "Gesichert (Docker-Volume photovault_qdrant_sicherung)"
+    else
+        bad "Sicherung fehlgeschlagen (Platte voll?) -- die Datenbank bleibt auf der alten Fassung."
+        export QDRANT_IMAGE="$have"
+    fi
+}
+qdrant_sichern
 say "Starte ..."
 compose up -d --no-build || { bad "Start fehlgeschlagen. Die Meldung oben sagt meist, warum."; exit 1; }
 

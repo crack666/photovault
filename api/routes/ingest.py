@@ -102,13 +102,21 @@ def index_state() -> dict:
     except Exception as e:
         return {"total": 0, "gaps": [], "error": str(e)}
 
+    # Der Bildvektor zaehlt in dem Raum, aus dem gelesen wird (#66): nach dem
+    # Wechsel eingelesene Fotos haben keinen CLIP-Vektor und brauchen keinen.
+    raum = _image_space(q)
     gaps = []
     for name, means, remedy in _GAPS:
         try:
-            have = q.count(
-                collection_name=PHOTOS, exact=True,
-                count_filter=Filter(must=[HasVectorCondition(has_vector=name)]),
-            ).count
+            if name == "clip" and raum["active"] != "clip":
+                name = raum["active"]
+                remedy = "Vektoren nachziehen: Jobs → „Bildsuche auf SigLIP 2 umstellen“"
+                have = min(total, raum["have"])
+            else:
+                have = q.count(
+                    collection_name=PHOTOS, exact=True,
+                    count_filter=Filter(must=[HasVectorCondition(has_vector=name)]),
+                ).count
         except Exception:
             continue
         if total - have > 0:
@@ -116,7 +124,29 @@ def index_state() -> dict:
                 "vector": name, "missing": total - have,
                 "means": means, "remedy": remedy,
             })
-    return {"total": total, "gaps": gaps}
+    return {"total": total, "gaps": gaps, "image_space": raum}
+
+
+def _image_space(q) -> dict:
+    """Aus welchem Bildraum gelesen wird und ob der bessere noch zu rechnen ist.
+
+    `upgrade` ist die Auskunft fuer eine Installation, die von einer aelteren
+    Fassung kommt: ihr Index ist nicht kaputt, aber die Bildsuche waere mit
+    SigLIP 2 besser -- ein Lauf auf der Jobs-Seite, kein neues Einlesen.
+    Ohne Grafikkarte wird es nicht angeboten: der Lauf dauerte zu lange.
+    """
+    from api.capabilities import _accelerator
+    from ingest import image_space
+    from ingest.scene_tagger import IMAGE_MODELS
+
+    try:
+        spec = IMAGE_MODELS["siglip2"]
+        have, base = image_space.fill(q, spec)
+        active = image_space.active(q).key
+    except Exception as e:
+        return {"active": "clip", "have": 0, "base": 0, "upgrade": False, "error": str(e)}
+    return {"active": active, "have": have, "base": base,
+            "upgrade": active == "clip" and base > 0 and bool(_accelerator()["cuda"])}
 
 
 @router.get("/gaps/{vector}")
@@ -135,7 +165,11 @@ def gap_files(vector: str, limit: int = 200) -> dict:
     """
     from qdrant_client.models import Filter, HasVectorCondition
 
-    bekannt = {name for name, _m, _r in _GAPS}
+    from ingest import image_space
+    from ingest.scene_tagger import IMAGE_MODELS
+
+    seite = {k: s for k, s in IMAGE_MODELS.items() if s.collection != PHOTOS}
+    bekannt = {name for name, _m, _r in _GAPS} | set(seite)
     if vector not in bekannt:
         raise HTTPException(404, f"Kein solcher Vektor: {vector}. "
                                  f"Bekannt: {', '.join(sorted(bekannt))}")
@@ -143,15 +177,21 @@ def gap_files(vector: str, limit: int = 200) -> dict:
     q = client()
     fehlend, offset = [], None
     try:
+        # Beistell-Collection (#66): dort laesst sich nicht filtern, was in
+        # `photos` fehlt -- also die vorhandenen IDs holen und abziehen.
+        da = image_space.existing_ids(q, seite[vector]) if vector in seite else set()
         while len(fehlend) < limit:
             batch, offset = q.scroll(
                 collection_name=PHOTOS, limit=256, offset=offset,
                 with_payload=["file_path", "file_size", "file_warning", "date",
                               "folder_name", "content_sha256"],
                 with_vectors=False,
-                scroll_filter=Filter(must_not=[HasVectorCondition(has_vector=vector)]),
+                scroll_filter=(None if vector in seite else
+                               Filter(must_not=[HasVectorCondition(has_vector=vector)])),
             )
             for p in batch:
+                if str(p.id) in da:
+                    continue
                 pl = p.payload or {}
                 fehlend.append({
                     "id": str(p.id),

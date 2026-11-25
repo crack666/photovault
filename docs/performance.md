@@ -374,16 +374,37 @@ Stand danach (`points/count`, 22.11.2026 16:05): Fotos 17 227/17 227,
 Videos 29/2 337 mit `caption_de`. Offen: **2 308 Videos**, bei 5,6 s rund
 **3 h 35 min** GPU.
 
-**Etappenplan** (erst nach Abnahme des Tons durch den Menschen, #65): vier
-Etappen zu je `--limit 580` (≈ 55 min), nachts hinter dem GPU-Tor, je Etappe
-eine eigene Reservierung über 70 min. Die Auswahl ist „ohne `caption_de`“,
-jede Etappe setzt also dort fort, wo die letzte aufgehört hat; ein Abbruch per
-SIGTERM verliert höchstens die gerade laufenden vier Videos.
+Abgenommen am 25.11.2026 mit einer Auflage: kein Ordnername im Satz (er stand
+in 2 von 29 Sätzen), schwarze und leere Videos sachlich. Der Video-Prompt
+bekommt seitdem weder Ordner- noch Dateinamen; im Dokument des Textvektors
+steht der Ordner weiter. Kontrolle 25.11.2026 19:11, 5 Videos, darunter die
+beiden beanstandeten und ein schwarzes: 0 von 5 mit Ordnername, das schwarze
+heißt „durchgehend eine komplett schwarze Fläche“.
+
+| Lauf 25.11.2026 | Anzahl | je Stück |
+|---|---|---|
+| Kontrolle, Modell warm | 5 | 7,6 s |
+| Etappenskript, `--etappe 3 --hoechstens 1` | 3 | 10,8 s |
+
+Beide Läufe sind zu kurz, um die 5,6 s der Probe zu ersetzen: die Runde wartet
+auf das langsamste Video. **Kaltstart:** lag das VRAM mit anderem voll, lud das
+Modell 188 s; die Frist je Anfrage ist 180 s, vier von fünf Videos der ersten
+Runde fielen durch. Das Etappenskript lädt deshalb vorher.
+
+**Der Nachtlauf ist ein Befehl** (WSL, im Repo):
 
 ```bash
-PHOTOVAULT_GPU_TOR_VON=<kennung> ~/.venvs/photovault/bin/python \
-  -m ingest.caption_pass --kind video --limit 580 --no-exif
+~/.venvs/photovault/bin/python -m tools.caption_etappen --danach-atlas
 ```
+
+Je Etappe 580 Videos: am GPU-Tor reservieren (110 min), rechnen, freigeben,
+90 s Luft für Läufe mit Vorrang. Tor zu heißt Exit 75, derselbe Befehl macht
+später weiter: die Auswahl ist „ohne `caption_de`“, und ein Abbruch verliert
+höchstens die laufende Runde. Dateien bleiben unangetastet. Protokoll ohne
+Namen: `~/.local/share/photovault/nachtlauf/<datum>.log`. Offen am 25.11.2026
+19:20: **2 301** Videos, bei 5,6–10,8 s zwischen 3 h 35 min und 6 h 55 min.
+(Bis 25.11.2026 stand hier der Plan von Hand: vier Aufrufe von
+`ingest.caption_pass --kind video --limit 580 --no-exif`.)
 
 ### Messfehler, die ich unterwegs gemacht habe
 
@@ -559,12 +580,35 @@ ihren 45 Bilder/s. Danach `photos_siglip2` 19 564/19 564 (100 %), `photos`
 unverändert. Ein Nachzug nach neuem Ingest ist derselbe Aufruf ohne
 `--minutes`.
 
-Noch nicht gemacht, weil es den produktiven Index umschaltet: `--tags`
-(Trockenlauf 16:35: 1 754 Punkte ohne Beschreibung bekämen SigLIP-Tags, die
-alten gesichert nach `scene_tags_clip`), `tools.atlas_build`
-(DUP_THRESHOLD 0,95 ist auf CLIP eingestellt) und die Ingest-Vorgabe
-`siglip2`. „Mehr davon“ liest SigLIP 2, sobald dieser Code im Server läuft,
-der Atlas beim nächsten `atlas_build`, weil die Abdeckung über 98 % liegt.
+### Nach dem Wechsel
+
+Gemessen 25.11.2026 ([#66](https://github.com/crack666/photovault/issues/66)).
+Bis dahin stand hier, was noch fehlte: Tags, Karte, Ingest-Vorgabe.
+
+| Was | Ergebnis |
+|---|---|
+| Abdeckung `photos_siglip2` | 19 564/19 564 (100 %), seit dem 22.11. kein Punkt dazugekommen |
+| `reembed_image --tags` | 1 750 Punkte, alte Tags in `scene_tags_clip`; dazu 1 750 Textvektoren, zusammen 63 s |
+| `atlas_build` | Karte auf SigLIP 2, 19 564 Punkte, 69 Inseln, Themen 79 Inseln, rund 7 min (fast alles davon die Titel über `local`). Vorher stammte sie vom 15.09.2026: Läufe mit Job starben an der Phase `themen` |
+| open_clip 3.3 (venv) gegen 4.2 (Image), dieselben 20 Bilder | Kosinus ≥ 0,9997, Tags 20/20 gleich: kein Neurechnen nötig |
+| Qdrant 1.18.3 → 1.19.2, Wegwerf-Volume | 600 Fotos und 600 Gesichter, alle Vektoren und Payloads gleich |
+
+**Stapel-Schwelle.** SigLIP 2 rückt Verwandtes näher zusammen; 0,95 wäre dort
+zu locker. Maß: Paare über der Schwelle, deren Aufnahmen mehr als 30 Tage
+auseinanderliegen, gegen Paare unter 60 s.
+
+| Raum, Schwelle | unter 60 s | über 30 Tage | Anteil fern | Stapel / Fotos |
+|---|---|---|---|---|
+| clip 0,95 | 2 692 | 129 | 0,046 | 1 962 / 5 005 |
+| siglip2 0,95 | 4 122 | 270 | 0,061 | 2 269 / 6 184 |
+| siglip2 **0,96** | 3 018 | 156 | 0,049 | 2 096 / 5 386 |
+
+Die Wahl steht in `tools/atlas_build.py:DUP_THRESHOLDS`.
+
+**Das Modell lud je Vorbereiter-Faden einmal.** `SceneTagger.preprocess` läuft
+im Reader-Pool; beim ersten Stapel fanden acht Fäden kein Modell vor und luden
+je ihr eigenes. Aufgefallen erst im Container (acht Ladezeilen im Log), auf der
+32-GB-Karte war es nur langsam. Jetzt ein Schloss und ein Test.
 
 ---
 

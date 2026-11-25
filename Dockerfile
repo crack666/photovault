@@ -22,7 +22,10 @@
 # `onnxruntime-gpu` an ihrer Stelle), ffmpeg/ffprobe fuer Videos, libgl/libglib fuer OpenCV,
 # und das Extra [atlas], damit die Jobs-Seite die Karte rechnen kann.
 
-FROM python:3.11-slim AS builder
+# Python fest nach Digest (3.11.18, gebaut 05.11.2026). `3.11-slim` wandert mit
+# jedem Neubau des Basisimages, auch mit einem von gestern.
+ARG PYTHON_IMAGE=python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+FROM ${PYTHON_IMAGE} AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential g++ \
@@ -56,14 +59,20 @@ COPY pyproject.toml README.md ./
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
 ARG ORT=onnxruntime
 ARG ORT_INDEX=https://pypi.org/simple
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir torch torchvision --index-url "$TORCH_INDEX" \
+# Nichts, was juenger als eine Woche ist: eine untergeschobene Paketfassung
+# faellt meist in den ersten Tagen auf. `--uploaded-prior-to` gilt fuer PyPI;
+# der PyTorch-Index nennt keine Zeiten, dort stehen deshalb Obergrenzen
+# (cpu 2.15.0 vom 28.10.2026, cu130 2.14.1 -- die zuletzt gebauten Fassungen).
+ARG MAX_PAKETALTER=P7D
+RUN pip install --no-cache-dir "pip==26.3" \
+    && pip install --no-cache-dir "torch<2.16" "torchvision<0.30" --index-url "$TORCH_INDEX" \
     && python -c "import tomllib; d = tomllib.load(open('pyproject.toml', 'rb')); \
         print('\n'.join(d['project']['dependencies'] + d['project']['optional-dependencies']['atlas']))" \
         > /tmp/requirements.txt \
-    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && pip install --no-cache-dir --uploaded-prior-to "$MAX_PAKETALTER" -r /tmp/requirements.txt \
     && pip uninstall -y onnxruntime onnxruntime-gpu \
-    && pip install --no-cache-dir "$ORT" --index-url "$ORT_INDEX" --extra-index-url https://pypi.org/simple
+    && pip install --no-cache-dir --uploaded-prior-to "$MAX_PAKETALTER" "$ORT" \
+        --index-url "$ORT_INDEX" --extra-index-url https://pypi.org/simple
 # onnxruntime kommt zuletzt und allein: eine Abhaengigkeit zieht die
 # CPU-Fassung mit, und beide Pakete teilen sich ein Verzeichnis -- gemessen
 # hatte das cuda-Image danach keinen CUDAExecutionProvider. ORT_INDEX bleibt
@@ -76,7 +85,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 # mehreren Top-Level-Paketen (api, ingest, web) -- gemessen beim ersten Bau.
 
 
-FROM python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 # libGL und libglib brauchen OpenCV/insightface; ohne sie scheitert der Import
 # erst zur Laufzeit, nicht beim Bauen. ffmpeg fuer Poster und Frames aus Videos.

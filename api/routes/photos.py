@@ -568,24 +568,6 @@ def similar(req: SimilarRequest) -> dict:
     positive = _sample(req.photo_ids, MAX_POSITIVES)
     negative = _sample(req.negative_ids, MAX_POSITIVES)
 
-    from qdrant_client import models
-
-    if len(positive) == 1 and not negative:
-        # Ein einzelnes Beispiel: die einfache Nachbarschaftsabfrage genügt.
-        query: object = positive[0]
-    else:
-        query = models.RecommendQuery(
-            recommend=models.RecommendInput(
-                positive=list(positive),
-                negative=list(negative),
-                strategy=(
-                    models.RecommendStrategy.BEST_SCORE
-                    if req.strategy == "best"
-                    else models.RecommendStrategy.AVERAGE_VECTOR
-                ),
-            )
-        )
-
     q = client()
     space = req.using
     found = None
@@ -597,11 +579,16 @@ def similar(req: SimilarRequest) -> dict:
         spec = active(q)
         if spec.collection != PHOTOS:
             try:
-                found = _similar_side(q, spec, query, limit + len(positive), req.score_threshold)
-                space = spec.key
+                # Nur Beispiele, die im neuen Raum stehen: eine einzige fehlende
+                # ID laesst Qdrant die ganze Anfrage ablehnen.
+                da = _present(q, spec, positive + negative)
+                pos = [i for i in positive if i in da]
+                neg = [i for i in negative if i in da]
+                if pos:
+                    found = _similar_side(q, spec, _neighbour_query(pos, neg, req.strategy),
+                                          limit + len(positive), req.score_threshold)
+                    space = spec.key
             except Exception as e:
-                # Etwa ein Beispiel, das nach dem Re-Embed neu dazukam und
-                # im neuen Raum noch fehlt: dann eben im alten.
                 logger.warning("Similar im Raum %s fehlgeschlagen, lese clip: %s", spec.key, e)
                 found = None
     if found is None:
@@ -609,7 +596,7 @@ def similar(req: SimilarRequest) -> dict:
         try:
             found = q.query_points(
                 collection_name=PHOTOS,
-                query=query,
+                query=_neighbour_query(positive, negative, req.strategy),
                 using=req.using,
                 query_filter=visible(),
                 # Die Beispiele selbst kommen zurueck und wuerden Plaetze belegen.
@@ -632,34 +619,72 @@ def similar(req: SimilarRequest) -> dict:
             "from": len(positive), "results": results}
 
 
+def _neighbour_query(positive: list[str], negative: list[str], strategy: str):
+    """Die Abfrage zu einer Auswahl; ein einzelnes Beispiel ist Nachbarschaft."""
+    from qdrant_client import models
+
+    if len(positive) == 1 and not negative:
+        return positive[0]
+    return models.RecommendQuery(
+        recommend=models.RecommendInput(
+            positive=list(positive),
+            negative=list(negative),
+            strategy=(
+                models.RecommendStrategy.BEST_SCORE
+                if strategy == "best"
+                else models.RecommendStrategy.AVERAGE_VECTOR
+            ),
+        )
+    )
+
+
+def _present(q, spec, ids: list[str]) -> set[str]:
+    """Welche dieser IDs stehen in der Beistell-Collection?"""
+    if not ids:
+        return set()
+    return {str(p.id) for p in q.retrieve(collection_name=spec.collection, ids=list(ids),
+                                          with_payload=False, with_vectors=False)}
+
+
+def _visible_ids(q, ids: list[str]) -> set[str]:
+    """Welche dieser IDs darf die Oberflaeche zeigen -- derselbe Filter wie ueberall."""
+    from qdrant_client.models import Filter, HasIdCondition
+
+    out, offset = set(), None
+    while True:
+        batch, offset = q.scroll(
+            collection_name=PHOTOS, limit=max(1, len(ids)), offset=offset,
+            scroll_filter=visible(Filter(must=[HasIdCondition(has_id=ids)])),
+            with_payload=False, with_vectors=False,
+        )
+        out.update(str(p.id) for p in batch)
+        if offset is None:
+            return out
+
+
 def _similar_side(q, spec, query, limit: int, score_threshold) -> list:
     """Aehnlichkeit in einer Beistell-Collection, Papierkorb danach abziehen.
 
     Die Beistell-Collection traegt keinen Papierkorb-Stempel (der gehoert zu
     `photos` und wechselt dort); gefiltert wird darum nachtraeglich ueber die
-    IDs. Etwas mehr holen, damit nach dem Abziehen noch `limit` uebrig sind.
+    IDs, mit demselben `visible()` wie im alten Raum. Reicht es danach nicht
+    fuer `limit`, wird verdoppelt und neu geholt: ein voller Papierkorb soll
+    die Trefferliste nicht kuerzen.
     """
-    from qdrant_client.models import Filter, HasIdCondition
-
-    roh = q.query_points(
-        collection_name=spec.collection, query=query, using=spec.vector,
-        limit=limit + 64, with_payload=False, with_vectors=False,
-        score_threshold=score_threshold,
-    ).points
-    if not roh:
-        return []
-    ids = [str(p.id) for p in roh]
-    sichtbar, offset = set(), None
+    holen = limit + 64
     while True:
-        batch, offset = q.scroll(
-            collection_name=PHOTOS, limit=len(ids), offset=offset,
-            scroll_filter=visible(Filter(must=[HasIdCondition(has_id=ids)])),
-            with_payload=False, with_vectors=False,
-        )
-        sichtbar.update(str(p.id) for p in batch)
-        if offset is None:
-            break
-    return [p for p in roh if str(p.id) in sichtbar][:limit]
+        roh = q.query_points(
+            collection_name=spec.collection, query=query, using=spec.vector,
+            limit=holen, with_payload=False, with_vectors=False,
+            score_threshold=score_threshold,
+        ).points
+        if not roh:
+            return []
+        sichtbar = _visible_ids(q, [str(p.id) for p in roh])
+        gut = [p for p in roh if str(p.id) in sichtbar]
+        if len(gut) >= limit or len(roh) < holen:
+            return gut[:limit]
+        holen *= 2
 
 
 class RelocateRequest(BaseModel):

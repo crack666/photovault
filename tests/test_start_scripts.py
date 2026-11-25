@@ -114,6 +114,26 @@ class TestStartPs1:
         assert "driver: nvidia" not in self._emit(src, tmp_path / "b.yml", "C", gpu=False)
 
 
+@pytest.mark.skipif(not _bash(), reason="bash fehlt")
+@pytest.mark.parametrize("have, kopie, erwartet", [
+    ("qdrant/qdrant:v1.18.3", "0", ["ok", "QI="]),
+    # Ohne Sicherung kein Umzug: die alte Fassung bleibt gesetzt.
+    ("qdrant/qdrant:v1.18.3", "1", ["bad", "QI=qdrant/qdrant:v1.18.3"]),
+    ("qdrant/qdrant:neu", "1", ["QI="]),  # kein Wechsel, nichts zu tun
+])
+def test_vor_einem_qdrant_wechsel_wird_gesichert(have, kopie, erwartet):
+    skript = f"""
+say() {{ :; }}; ok() {{ echo ok; }}; bad() {{ echo bad; }}
+compose() {{ case "$1" in ps) echo c1;; config) echo qdrant/qdrant:neu;; esac; }}
+docker() {{ case "$1" in inspect) echo {have};; run) return {kopie};; esac; }}
+eval "$(sed -n '/^qdrant_sichern() {{/,/^}}/p' start.sh | tr -d '\r')"
+unset QDRANT_IMAGE; qdrant_sichern; echo "QI=$QDRANT_IMAGE"
+"""
+    out = subprocess.run([_bash(), "-c", skript], capture_output=True, text=True,
+                         check=True, cwd=str(ROOT))
+    assert out.stdout.split() == erwartet
+
+
 def _to_windows(p: Path) -> str:
     """Unter WSL braucht powershell.exe Windows-Pfade; sonst ist der Pfad schon einer."""
     s = str(p)

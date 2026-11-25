@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,8 @@ IMAGE_MODELS: dict[str, ImageModel] = {
                           None, 4, 2.0, 0.02),
 }
 
-#: Vorgabe, wenn `PHOTOVAULT_IMAGE_MODEL` nicht gesetzt ist.
+#: Fuer Aufrufer, die kein Modell nennen. Der Ingest nennt eines: den Raum,
+#: aus dem gerade gelesen wird (`image_space.ingest_key`).
 DEFAULT_IMAGE_MODEL = "clip"
 
 
@@ -148,10 +150,19 @@ class SceneTagger:
         self._top_k = self.spec.top_k if top_k is None else top_k
         self._min_ratio = self.spec.min_ratio if min_ratio is None else min_ratio
         self._temperature = self.spec.temperature
+        self._load_lock = threading.Lock()
 
     def _ensure_loaded(self):
-        if self._model is not None:
+        # `preprocess` laeuft im Reader-Pool: ohne Schloss laedt beim ersten
+        # Stapel jeder Faden sein eigenes Modell (gesehen 25.11.2026: achtmal
+        # 4,5 GB Gewichte, bevor das erste Bild fertig war).
+        if self._text_features is not None:
             return
+        with self._load_lock:
+            if self._text_features is None:
+                self._load()
+
+    def _load(self):
         import open_clip
         import torch
 
@@ -187,6 +198,7 @@ class SceneTagger:
                 mean = feats.mean(dim=0)
                 mean /= mean.norm()
                 per_concept.append(mean)
+            # Zuletzt: daran erkennen die anderen Faeden "fertig geladen".
             self._text_features = torch.stack(per_concept)
         logger.info(
             "%s loaded on %s, %d concepts (%d prompts)",

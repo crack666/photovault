@@ -20,3 +20,13 @@ def _eigene_einstellungen(monkeypatch, tmp_path):
     settings.reset_cache()
     yield
     settings.reset_cache()
+
+
+@pytest.fixture(autouse=True)
+def _bildraum_neu_zaehlen():
+    """Welcher Bildraum gilt, merkt sich `image_space` 60 s -- ueber Tests hinweg."""
+    from ingest import image_space
+
+    image_space._cache.clear()
+    yield
+    image_space._cache.clear()

@@ -389,8 +389,15 @@ async function renderGaps() {
   try {
     const s = await (await fetch("/api/ingest/state")).json();
     const gaps = s.gaps || [];
-    box.classList.toggle("hidden", !gaps.length);
-    box.innerHTML = gaps.map(g => `
+    const raum = s.image_space || {};
+    box.classList.toggle("hidden", !gaps.length && !raum.upgrade);
+    box.innerHTML = (raum.upgrade ? `
+      <div class="gap"><div class="gap-head">
+        <b>Update</b>
+        <span>Eine bessere Bildsuche (SigLIP 2) ist verfügbar — ${raum.have.toLocaleString("de-DE")}
+          von ${raum.base.toLocaleString("de-DE")} Bildvektoren gerechnet. Bis dahin sucht CLIP wie bisher.</span>
+        <i>Mit Grafikkarte: unten „Bildsuche auf SigLIP 2 umstellen“ starten</i>
+      </div></div>` : "") + gaps.map(g => `
       <div class="gap">
         <button type="button" class="gap-head" data-gap="${esc(g.vector)}"
                 title="Zeigen, welche Dateien betroffen sind">

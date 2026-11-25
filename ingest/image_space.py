@@ -16,6 +16,14 @@ laesst `photos` unberuehrt, und der alte CLIP-Vektor bleibt, wo er ist.
 Gelesen wird der neue Raum erst, wenn er **voll** ist (`active`): solange
 der Re-Embed in Etappen laeuft, saehe eine Aehnlichkeitssuche im neuen Raum
 nur einen Teil des Bestands.
+
+**Geschrieben wird, was gelesen wird** (`ingest_key`): ein Ingest rechnet mit
+dem Modell des gerade gelesenen Raums. Rechnete er fest mit SigLIP 2, stuende
+auf einer Installation mit altem Bestand jedes neue Foto in einem Raum, aus
+dem noch niemand liest -- unsichtbar fuer "Mehr davon" und fuer die Karte.
+Nur ein leerer Index faengt gleich mit SigLIP 2 an, wenn eine Grafikkarte da
+ist. Alte Bestaende wechseln ueber den Lauf "Bildsuche auf SigLIP 2
+umstellen" (Jobs) und damit als Ganzes.
 """
 from __future__ import annotations
 
@@ -111,8 +119,35 @@ def existing_ids(qc, spec: ImageModel) -> set[str]:
             return out
 
 
+def forget(qc, ids: list[str]) -> None:
+    """Geloeschte Fotos auch aus den Beistell-Collections nehmen.
+
+    Zeigen kann die Suche sie ohnehin nicht (`similar` gleicht gegen `photos`
+    ab), aber sie belegten Plaetze in der Trefferliste und zaehlten fuer die
+    Abdeckung mit -- und ein geloeschtes Foto soll keinen Vektor zuruecklassen.
+    Fehler sind hier Beiwerk: das Loeschen selbst ist schon geschehen.
+    """
+    if not ids:
+        return
+    for spec in IMAGE_MODELS.values():
+        if spec.collection == "photos":
+            continue
+        try:
+            if not qc.collection_exists(spec.collection):
+                continue
+            for i in range(0, len(ids), 256):
+                qc.delete(collection_name=spec.collection,
+                          points_selector=[str(x) for x in ids[i:i + 256]], wait=True)
+        except Exception as e:
+            logger.warning("%s: Vektoren geloeschter Fotos bleiben stehen: %s", spec.collection, e)
+
+
 def fill(qc, spec: ImageModel) -> tuple[int, int]:
-    """(Punkte mit Vektor im neuen Raum, Punkte mit CLIP-Vektor in `photos`)."""
+    """(Punkte mit Vektor im neuen Raum, Punkte mit CLIP-Vektor in `photos`).
+
+    Punkte ohne CLIP-Vektor (nach dem Wechsel eingelesen) zaehlen nur links:
+    sie koennen im alten Raum nicht fehlen.
+    """
     from qdrant_client.models import Filter, HasVectorCondition
 
     base = qc.count(collection_name="photos", exact=True,
@@ -143,7 +178,9 @@ def active(qc, preferred: str | None = None, *, now: float | None = None) -> Ima
         return hit[1]
     try:
         have, base = fill(qc, spec)
-        chosen = spec if base and have >= FULL_SHARE * base else IMAGE_MODELS["clip"]
+        # `have` zuerst: ein leerer Raum ist nie voll (0 >= 0), ein Raum ohne
+        # CLIP-Gegenstueck (frische Installation, gleich SigLIP 2) dagegen schon.
+        chosen = spec if have and have >= FULL_SHARE * base else IMAGE_MODELS["clip"]
     except Exception as e:
         logger.warning("Bildraum %s nicht zaehlbar, lese clip: %s", spec.key, e)
         chosen = IMAGE_MODELS["clip"]
@@ -151,11 +188,46 @@ def active(qc, preferred: str | None = None, *, now: float | None = None) -> Ima
     return chosen
 
 
+def ingest_key(qc, collection: str = "photos") -> str:
+    """Mit welchem Bildmodell ein Ingest rechnet: Umgebung, sonst der gelesene Raum.
+
+    Siehe Modulkopf. Geht beim Nachsehen etwas schief, ist es CLIP wie bisher.
+    """
+    import os
+
+    if os.environ.get("PHOTOVAULT_IMAGE_MODEL"):
+        return image_model().key
+    if collection != "photos":
+        return "clip"
+    try:
+        # Frisch zaehlen: ein Ingest entscheidet einmal fuer seinen ganzen Lauf.
+        _cache.clear()
+        key = active(qc).key
+        if key != "clip":
+            return key
+        leer = qc.count(collection_name="photos", exact=True).count == 0
+    except Exception as e:
+        logger.warning("Bildraum nicht bestimmbar, rechne mit clip: %s", e)
+        return "clip"
+    return "siglip2" if leer and _cuda() else "clip"
+
+
+def _cuda() -> bool:
+    """Ohne Grafikkarte bleibt es bei CLIP: SigLIP 2 So400m ist auf dem
+    Prozessor ein Mehrfaches langsamer (docs/performance.md)."""
+    try:
+        import torch
+
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
 def _preferred_key() -> str:
     """Fuers Lesen: die Umgebung, sonst SigLIP 2 -- es gewinnt ueberall (#59).
 
-    Anders als beim Rechnen (`scene_tagger.DEFAULT_IMAGE_MODEL`) ist SigLIP 2
-    hier ohne Risiko die Vorgabe: gelesen wird es ohnehin erst, wenn es voll ist.
+    SigLIP 2 ist hier ohne Risiko die Vorgabe: gelesen wird es ohnehin erst,
+    wenn es voll ist.
     """
     import os
 

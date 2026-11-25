@@ -129,7 +129,16 @@ nur die beiden oben; die Prompt-Regeln gegen erfundene Namen sind auf
 nachgeprüft werden.
 
 Modelle für Gesichter (insightface) und Szenen (CLIP) lädt PhotoVault beim
-ersten Lauf selbst, rund 1,5 GB.
+ersten Lauf selbst, rund 1,5 GB. Mit NVIDIA-Karte rechnet ein neues Archiv die
+Szenen mit SigLIP 2 statt CLIP (seit 25.11.2026); das sind rund 4,5 GB Gewichte.
+
+**Aktualisieren** heißt: `start.bat`/`start.sh` noch einmal starten. Das holt
+das neue Image. Wechselt dabei die Qdrant-Fassung, kopiert das Startskript den
+Index vorher in das Docker-Volume `photovault_qdrant_sicherung`; gelingt die
+Kopie nicht, bleibt die alte Fassung. Ein Archiv, das noch mit CLIP gerechnet
+ist, läuft unverändert weiter; mit NVIDIA-Karte bietet die Jobs-Seite
+„Bildsuche auf SigLIP 2 umstellen“ an. Solange der Lauf nicht fertig ist,
+bleibt die Suche bei CLIP.
 
 
 ## Loslegen
@@ -164,7 +173,7 @@ ersten Mal einige Gigabyte und öffnet den Browser. Was es festhält, steht in
 `.env` und `docker-compose.override.yml` (beides nicht im Git).
 
 Der Rest passiert im Browser, unter `/setup` — und dorthin führt `/` von
-selbst, solange noch keine Quelle eingetragen ist: Ordner anhaken (Baum,
+selbst, solange noch keine Quelle eingetragen ist: Ordner anhaken (Ordnerliste,
 keine Pfade tippen), zählen lassen, einlesen mit Fortschritt, dann das
 Sprachmodell: das mitgelieferte Ollama oder ein eigenes, das Modell nach
 gemessenem Grafikspeicher vorgeschlagen und mit Balken geladen, und eine
@@ -183,7 +192,7 @@ beschreibbar; einlesen geht sofort.
 **Fotos auf einem NAS?** Kein Netzlaufwerk nötig — Docker Desktop könnte es
 ohnehin nicht durchreichen. Im Wizard die Freigabe eintragen
 (`\\nas\fotos`, Benutzer, Passwort); PhotoVault bindet sie selbst als
-CIFS-Volume ein und zeigt sie im Baum unter `nas`. Die Zugangsdaten liegen in
+CIFS-Volume ein und zeigt sie in der Ordnerliste unter `nas`. Die Zugangsdaten liegen in
 `data/settings.json` und `data/nas-volumes.yml` (beides nicht im Git, nur für
 dich lesbar) — im Klartext, anders kennt der Mount sie nicht.
 
@@ -269,7 +278,7 @@ außen kommt ohne Portproxy nichts in die WSL-VM hinein.
 | „Docker sieht die Grafikkarte nicht" | Docker Desktop → Settings → General → „Use the WSL 2 based engine"; NVIDIA-Treiber ab 580, `wsl --update`, Neustart. Eine `.wslconfig` braucht es **nicht** — die Durchreichung kommt vom Windows-Treiber (gemessen 20.09.2026: `docker run --gpus all … nvidia-smi -L` ohne jeden Eintrag) |
 | Nichts wird gefunden | im Wizard oder unter Jobs die Ordner anhaken — die Pfade beginnen mit `/host/…`, nicht mit `D:\` |
 | Seite lädt nicht | `docker compose logs api` zeigt, woran es liegt |
-| NAS erscheint nicht im Baum | `docker compose logs api` — meist Benutzer/Passwort; `data/nas-volumes.yml` enthält die Definition |
+| NAS erscheint nicht in der Ordnerliste | `docker compose logs api` — meist Benutzer/Passwort; `data/nas-volumes.yml` enthält die Definition |
 | Ein zweiter Lauf fängt „von vorn" an | Er überspringt, was im Index ist, und sagt es. Wirklich von vorn heißt es nur, wenn der Ordner umbenannt wurde (Compose-Projekt) oder der Mount-Pfad ein anderer ist |
 | Von vorn anfangen | `docker compose down -v` löscht den Index. Die Fotos bleiben unberührt. |
 
@@ -306,7 +315,7 @@ Verzeichnisse aus sources.txt
    → Herkunft      Kamera / empfangen / verschickt / Screenshot
    → Gesichter     insightface: Box, 512d-Vektor, Frontalität
    → Abgleich      gegen bereits benannte Personen → Vorschläge, nie still
-   → Szene         CLIP: Tags und 768d-Bildvektor
+   → Szene         SigLIP 2 oder CLIP: Tags und Bildvektor (§ Bildmodell)
    → Beschreibung  optional, mit Album/Datum/Namen als Kontext
    → Textvektor    aus alldem, 2560d
    → Qdrant        benannte Vektoren + Payload-Filter
@@ -338,7 +347,7 @@ Ab hier wird es technisch. Für die Benutzung reicht alles oben.
 4. **Folder-Parser** — `_photovault.json` + Ordner-/Datei-Regeln + Sequenz `IMG_0042`
 5. **Face** — insightface detect + embed (ndarray)
 6. **Face-Match** — ähnliche gelabelte Gesichter → `person_suggestions`
-7. **Scene** — CLIP zero-shot tags + embedding
+7. **Scene** — SigLIP 2 oder CLIP: zero-shot tags + embedding
 8. **Normalize** — `EXIF > Folder-JSON > Filename` (kein CLIP-Datum); Location persistieren
 9. **Caption** — Qwen 3.8 Vision, Prompt enthält den Kontext
 10. **Text Embed** — grounded Dokument (Ordner, Datum, Sequenz, Personen, Caption) → 2560d
@@ -460,7 +469,7 @@ Die Belegung steht in `web/static/faces/keys.js`.
 ### Atlas — die Karte des Archivs
 
 UI: Tab **Atlas**. Alle Fotos auf einer Fläche, Nähe heißt „sieht sich
-ähnlich": die CLIP-Vektoren werden per UMAP auf zwei Dimensionen gebracht.
+ähnlich": die Bildvektoren (SigLIP 2, sonst CLIP) werden per UMAP auf zwei Dimensionen gebracht.
 Für 17 370 Fotos dauert das 23 Sekunden.
 
 ```bash
@@ -469,8 +478,8 @@ python -m tools.atlas_build
 ```
 
 Oder ohne Terminal: **Jobs → Karte neu rechnen**. Der Lauf meldet sich mit
-Phase und Anteil in derselben Liste (`laden` 0 % → `umap` 10 % → `stapel`
-65 % → fertig), denn UMAP allein braucht die Hälfte der Zeit — ein Balken,
+Phase und Anteil in derselben Liste (`laden` 0 % → `umap` 10 % → … → `themen`
+54 % → `titel` 87 % → fertig), denn UMAP läuft zweimal und braucht zwei Drittel der Zeit — ein Balken,
 der sich gleichmäßig füllt, wäre eine Lüge. Fehlt `umap-learn`, ist der Knopf
 gesperrt und nennt den Grund, statt zu starten und still zu sterben.
 
@@ -815,11 +824,14 @@ python -m tools.faces_reorient --dry-run --limit 50   # gedrehte Fotos neu erken
 python -m tools.persons_check                         # Person auf dem Foto ohne passendes Gesicht? (#57)
 python -m tools.clip_vergleich --video-labels L.json   # CLIP L/14 gegen SigLIP 2 messen (#59), GPU
 python -m tools.reembed_image --dry-run               # SigLIP 2 fuer alle Fotos/Videos (#66), GPU
+python -m tools.caption_etappen --dry-run             # offene Videos beschreiben, in Etappen hinter dem GPU-Tor (#65)
 ```
 
 **Bildmodell (#66).** Szenen-Tags und Bildvektor rechnet `ingest/scene_tagger.py`
-mit dem Modell aus `PHOTOVAULT_IMAGE_MODEL`: `clip` (ViT-L/14, 768 d, Vorgabe
-beim Ingest) oder `siglip2` (ViT-SO400M-14-SigLIP2, 1152 d). Der SigLIP-Vektor
+mit `clip` (ViT-L/14, 768 d) oder `siglip2` (ViT-SO400M-14-SigLIP2, 1152 d).
+Das Einlesen schreibt den Raum, der gelesen wird: `PHOTOVAULT_IMAGE_MODEL` vor
+dem aktiven Raum, ein leerer Index nimmt mit NVIDIA-Karte `siglip2`, sonst
+`clip` (seit 25.11.2026; vorher war `clip` die feste Vorgabe). Der SigLIP-Vektor
 liegt nicht in `photos`, sondern in der Beistell-Collection `photos_siglip2`
 mit denselben Punkt-IDs: Qdrant kann einer bestehenden Collection keinen
 Vektor hinzufügen, und `photos` umzukopieren hieße, alle Namen und Notizen
@@ -828,13 +840,17 @@ lesen SigLIP 2, sobald `photos_siglip2` mindestens 98 % der Punkte mit
 CLIP-Vektor abdeckt (`ingest/image_space.py`), sonst CLIP.
 `tools.reembed_image` füllt den neuen Raum fortsetzbar in Etappen
 (`--minutes`) und fragt das GPU-Tor nicht selbst; `--tags` übernimmt danach
-die SigLIP-Tags für Punkte ohne Beschreibung und sichert die alten nach
-`scene_tags_clip`.
+die SigLIP-Tags für Punkte ohne Beschreibung, sichert die alten nach
+`scene_tags_clip` und baut deren Textvektoren neu, denn die Tags stehen im
+Dokument (`--ohne-text` lässt das weg). `--mit-tags` macht beides in einem Zug;
+das startet auch die Jobs-Seite. Zurück auf CLIP: `PHOTOVAULT_IMAGE_MODEL=clip`.
+Papierkorb und gelöschte Dateien gelten im neuen Raum wie im alten
+(`tests/test_image_space_zugriff.py`).
 
 `tools.clip_vergleich` misst nur lesend, ob ein anderes Bildmodell Szenen-Tags
 und deutsche Bildsuche besser macht. Referenz sind die Beschreibungen des
 Vision-Modells, nicht die alten CLIP-Tags. Braucht `transformers` in der venv
-(Tokenizer von SigLIP 2, `pip install -e ".[bench]"`) und rund 4,5 GB Gewichte
+(Tokenizer von SigLIP 2, seit 25.11.2026 eine normale Abhängigkeit) und rund 4,5 GB Gewichte
 im Modell-Cache. Ergebnis und Lesart: [docs/performance.md](docs/performance.md#bildmodell-clip-l14-gegen-siglip-2).
 
 `tools.faces_reorient` erkennt Fotos mit EXIF-Ausrichtung != 1 neu. Ob die
@@ -983,7 +999,7 @@ vollständige Liste zeigt `/docs` der laufenden API.
 | POST | `/api/jobs/{id}/abort` | Lauf beenden — SIGTERM an die Prozessgruppe (nativ wie Docker) |
 | DELETE | `/api/jobs/{id}` | Einen Eintrag vergessen (nicht den Lauf) |
 | POST | `/api/jobs/prune` | Liste aufräumen — `what=aborted\|finished` |
-| POST | `/api/jobs/run` | Lauf starten — `ingest\|faces\|caption\|reembed\|thumbs\|atlas` |
+| POST | `/api/jobs/run` | Lauf starten — `ingest\|faces\|caption\|reembed\|thumbs\|atlas\|image_space` |
 | POST | `/api/ingest/start` | Ingest starten (Stub) |
 | GET | `/api/ingest/progress` | Stand des jüngsten Ingest-Laufs |
 | GET | `/api/ingest/stats` | Anzahl indizierter Fotos |
@@ -1140,8 +1156,8 @@ eigener Nachlauf (`ingest/caption_pass.py`), über Nacht oder auf Teilmengen
 (`--person`, `--album`). Auf der CPU sind die Beschreibungen nicht gemessen.
 
 **Noch nicht drin:**
-- **Videos:** Für die Beschreibung je Video gibt es noch keinen Messwert ([#65](https://github.com/crack666/photovault/issues/65)).
-- **SigLIP 2:** Das Szenenmodell wechselt von CLIP auf SigLIP 2 ([#66](https://github.com/crack666/photovault/issues/66)). Gemessen am 10.11.2026, nur die Szenenstufe auf der GPU: SigLIP 2 schafft 40 Bilder/s, CLIP 27 Bilder/s ([#59](https://github.com/crack666/photovault/issues/59), [docs/performance.md](docs/performance.md#bildmodell-clip-l14-gegen-siglip-2)). Der Grundindex sollte also nicht langsamer werden. Bis der Wechsel gemessen ist, gelten die CLIP-Zahlen oben.
+- **Videos:** Die Beschreibung kostet auf der RTX 5090 rund 6–8 s je Video ([#65](https://github.com/crack666/photovault/issues/65), gemessen 22. und 25.11.2026, [docs/performance.md](docs/performance.md#videos-probe-und-etappenplan)). Auf anderen Karten ist sie nicht gemessen. Hier stand bis 25.11.2026 „noch kein Messwert“.
+- **SigLIP 2:** Das Szenenmodell wechselt von CLIP auf SigLIP 2 ([#66](https://github.com/crack666/photovault/issues/66)). Gemessen am 10.11.2026, nur die Szenenstufe auf der GPU: SigLIP 2 schafft 40 Bilder/s, CLIP 27 Bilder/s ([#59](https://github.com/crack666/photovault/issues/59), [docs/performance.md](docs/performance.md#bildmodell-clip-l14-gegen-siglip-2)). Der Grundindex sollte also nicht langsamer werden. Auf der CPU sind es rund 0,4 s je Bild (gemessen 25.11.2026, 20 Vorschaubilder, 24 Threads). Die Grundindex-Zahlen oben sind weiter mit CLIP gemessen.
 
 ## Status
 

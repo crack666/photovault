@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from ingest.captioner import Captioner, jpeg_b64, merge_tags, run_captions
+from ingest.gpu_tor import GpuBusy
 from ingest.gpu_tor import Pause as GpuPause
 from ingest.grounding import caption_display
 from ingest.netfs import retry_io
@@ -231,6 +232,8 @@ def run(
     track: bool = True,
     write_exif: bool = True,
     exif_only: bool = False,
+    on_busy=None,
+    deadline: Optional[float] = None,
     **filter_args,
 ) -> dict[str, int]:
     """Captions fuer die ausgewaehlten Fotos erzeugen und Textvektoren erneuern.
@@ -242,6 +245,11 @@ def run(
     Lehnt das GPU-Tor ab (Spiel, Render, fremde Reservierung), pausiert der
     Lauf mit dem Grund im Job-Eintrag und macht danach weiter; die betroffenen
     Fotos zaehlen nicht als fehlgeschlagen (`ingest/gpu_tor.py`).
+
+    `on_busy` ersetzt dieses Warten (etwa durch Aufgeben: es wirft die
+    Ablehnung weiter). Was die Runde bis dahin hatte, wird trotzdem
+    geschrieben. Ab `deadline` (Sekunden wie `time.time()`) faengt keine neue
+    Runde mehr an. Beides braucht `tools.caption_etappen`.
     """
     stats = {
         "selected": 0, "captioned": 0, "unreadable": 0, "failed": 0, "reembedded": 0,
@@ -276,7 +284,7 @@ def run(
     # wir den kleinen Kontext nicht.
     captioner = Captioner(num_ctx=num_ctx)
     embedder = TextEmbedder()
-    pause = GpuPause(job)
+    pause = on_busy or GpuPause(job)
     started = time.time()
 
     def caption_one(photo: Photo) -> None:
@@ -295,14 +303,22 @@ def run(
         photo.scene_tags = merge_tags(photo.scene_tags, structured.get("scene_tags") or [])
 
     for chunk in _chunks(photos, BATCH):
+        if deadline is not None and time.time() >= deadline:
+            logger.info("Frist erreicht, Rest bleibt fuer den naechsten Lauf")
+            break
         _read_images(chunk, io_workers)
         ready = [p for p in chunk if p.image_b64 is not None]
         stats["unreadable"] += len(chunk) - len(ready)
 
-        run_captions(ready, caption_one, workers, on_busy=pause)
+        busy: Optional[GpuBusy] = None
+        try:
+            run_captions(ready, caption_one, workers, on_busy=pause)
+        except GpuBusy as e:
+            busy = e
 
         done = [p for p in ready if p.caption_de]
-        stats["failed"] += len(ready) - len(done)
+        if busy is None:
+            stats["failed"] += len(ready) - len(done)
         if done:
             _write_captions(client, collection, done)
             stats["captioned"] += len(done)
@@ -326,6 +342,11 @@ def run(
             stats["captioned"], len(photos),
             (time.time() - started) / max(1, stats["captioned"]),
         )
+        if busy is not None:
+            if job:
+                job.finish("aborted", phase="GPU belegt", processed=stats["captioned"],
+                           errors=stats["failed"] + stats["unreadable"])
+            raise busy
 
     if job:
         job.finish("done", phase="done", processed=stats["captioned"],
