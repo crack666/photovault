@@ -346,6 +346,16 @@ printf "  Warte, bis PhotoVault bereit ist "
 wait_api 900 "Beim ersten Mal laedt PhotoVault rund 1,5 GB Modelle -- das dauert." \
     || { bad "PhotoVault antwortet nicht auf $url. Protokoll: docker compose logs api"; exit 1; }
 ok "Laeuft: $url"
+# Docker veroeffentlicht die Ports auf allen Schnittstellen, nicht nur auf
+# localhost -- gewollt, damit das Handy im LAN rankommt (photovault#72).
+# Anmeldung gibt es keine; das soll beim Start dastehen, nicht nur im README.
+qd_port="$(grep '^QDRANT_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2)"
+lan_ports="API $port, Qdrant ${qd_port:-6333}"
+if grep -q '^COMPOSE_PROFILES=.*ollama' "$ENV_FILE"; then
+    ol_port="$(grep '^OLLAMA_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2)"
+    lan_ports="$lan_ports, Ollama ${ol_port:-11434}"
+fi
+warn "Im LAN offen, ohne Anmeldung: $lan_ports -- jedes Geraet im Netz sieht das Archiv, Qdrant ist beschreibbar. Mehr: README, 'Von einem anderen Geraet aus'."
 command -v xdg-open >/dev/null && xdg-open "$url" >/dev/null 2>&1
 command -v open >/dev/null && open "$url" >/dev/null 2>&1
 

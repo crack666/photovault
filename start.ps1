@@ -451,6 +451,12 @@ if (-not (Wait-Api $url 900 "Beim ersten Mal laedt PhotoVault rund 1,5 GB Modell
     exit 1
 }
 Ok "Laeuft: $url"
+# Docker veroeffentlicht die Ports auf allen Schnittstellen, nicht nur auf
+# localhost -- gewollt, damit das Handy im LAN rankommt (photovault#72).
+# Anmeldung gibt es keine; das soll beim Start dastehen, nicht nur im README.
+$lanPorts = @("API $port", "Qdrant $(if ($envMap['QDRANT_PORT']) { $envMap['QDRANT_PORT'] } else { 6333 })")
+if ($envMap["COMPOSE_PROFILES"] -match 'ollama') { $lanPorts += "Ollama $(if ($envMap['OLLAMA_PORT']) { $envMap['OLLAMA_PORT'] } else { 11434 })" }
+Warn ("Im LAN offen, ohne Anmeldung: " + ($lanPorts -join ", ") + " -- jedes Geraet im Netz sieht das Archiv, Qdrant ist beschreibbar. Mehr: README, 'Von einem anderen Geraet aus'.")
 Start-Process $url | Out-Null
 
 # --- Zweite Phase: nach der Ordnerwahl beschreibbar einbinden --------------

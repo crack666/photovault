@@ -245,9 +245,25 @@ die Bildbeschreibungen weg; die kommen später und dauern deutlich länger.
 
 ### Von einem anderen Gerät aus
 
-PhotoVault hört standardmäßig nur auf `127.0.0.1` — das ist die richtige
-Voreinstellung, denn **es gibt keine Anmeldung**. Wer die Adresse erreicht,
-sieht alle Fotos, alle Namen und alle Gesichtsvektoren.
+**Es gibt keine Anmeldung.** Wer die Adresse erreicht, sieht alle Fotos, alle
+Namen und alle Gesichtsvektoren. Wie weit die Adresse reicht, hängt vom Start ab:
+
+- **Docker (`start.bat` / `start.sh`)** veröffentlicht die Ports auf **allen
+  Schnittstellen**, also im ganzen LAN — gewollt, damit das Handy im WLAN
+  rankommt (`http://<ip-des-rechners>:8000`). Laut `docker-compose.yml` sind das:
+  - API samt Oberfläche: `API_PORT`, Vorgabe **8000**
+  - Qdrant: `QDRANT_PORT`, Vorgabe **6333** — ohne Schlüssel und **beschreibbar**:
+    wer ihn erreicht, kann den Index lesen, ändern und löschen
+  - Ollama: `OLLAMA_PORT`, Vorgabe **11434** — nur mit dem Profil `ollama`
+    (`COMPOSE_PROFILES=ollama`, setzt das Startskript von sich aus)
+
+  Die tatsächlichen Nummern stehen in der `.env`; die Startskripte nennen sie
+  nach dem Start („Im LAN offen, ohne Anmeldung: …“). Deshalb nur in einem
+  Netz betreiben, dem man traut — nicht im Gäste-WLAN, nicht mit Portfreigabe
+  am Router.
+- **Lokal (`start-local.sh`)** hört der Server standardmäßig nur auf
+  `127.0.0.1` (`API_HOST`). Von einem anderen Gerät geht es dann über
+  Tailscale (unten).
 
 Mit [Tailscale](https://tailscale.com) wird es ohne Portfreigabe im eigenen
 Netz erreichbar, und die Zugangskontrolle übernimmt Tailscale:
